@@ -70,30 +70,35 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
     );
 
   const renderNote = (note: CachedNote) => (
-    <button
+    <div
       key={note.id}
-      className={`tree-row${library.selectedNoteId === note.id ? " selected" : ""}`}
-      onClick={() => library.selectNote(note.id)}
-      title={note.title}
+      className={`tree-item${library.selectedNoteId === note.id ? " selected" : ""}`}
     >
-      <FileText size={14} className="muted" />
-      <span className="label">{note.title || "Untitled"}</span>
-      <Star
-        size={13}
-        fill={note.favorite ? "currentColor" : "none"}
-        onClick={(event) => {
-          event.stopPropagation();
-          void library.toggleFavorite(note.id);
-        }}
-      />
-      <Trash2
-        size={13}
-        onClick={(event) => {
-          event.stopPropagation();
-          void library.trashNote(note.id);
-        }}
-      />
-    </button>
+      <button
+        className="tree-row tree-row-main"
+        onClick={() => library.selectNote(note.id)}
+        title={note.title}
+      >
+        <FileText size={14} className="muted" />
+        <span className="label">{note.title || "Untitled"}</span>
+      </button>
+      <div className="tree-actions">
+        <button
+          className="tree-action"
+          aria-label={`${note.favorite ? "Remove" : "Add"} ${note.title || "Untitled"} ${note.favorite ? "from" : "to"} favorites`}
+          onClick={() => void library.toggleFavorite(note.id)}
+        >
+          <Star size={13} fill={note.favorite ? "currentColor" : "none"} />
+        </button>
+        <button
+          className="tree-action danger"
+          aria-label={`Move ${note.title || "Untitled"} to trash`}
+          onClick={() => void library.trashNote(note.id)}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
   );
 
   const renderFolder = (
@@ -113,35 +118,43 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
 
     return (
       <div key={folder.id}>
-        <button
-          className="tree-row"
-          onClick={() =>
-            toggleSet(expandedFolders, folder.id, setExpandedFolders)
-          }
-          title={folder.name}
-        >
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          {expanded ? (
-            <FolderOpen size={14} className="muted" />
-          ) : (
-            <Folder size={14} className="muted" />
-          )}
-          <span className="label">{folder.name}</span>
-          <FolderPlus
-            size={13}
-            onClick={(event) => {
-              event.stopPropagation();
-              void library.addFolder(projectId, folder.id, "New folder");
-            }}
-          />
-          <Plus
-            size={13}
-            onClick={(event) => {
-              event.stopPropagation();
-              void library.addNote(projectId, folder.id, "Untitled");
-            }}
-          />
-        </button>
+        <div className="tree-item">
+          <button
+            className="tree-row tree-row-main"
+            onClick={() =>
+              toggleSet(expandedFolders, folder.id, setExpandedFolders)
+            }
+            title={folder.name}
+          >
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {expanded ? (
+              <FolderOpen size={14} className="muted" />
+            ) : (
+              <Folder size={14} className="muted" />
+            )}
+            <span className="label">{folder.name}</span>
+          </button>
+          <div className="tree-actions">
+            <button
+              className="tree-action"
+              aria-label={`Add subfolder to ${folder.name}`}
+              onClick={() =>
+                void library.addFolder(projectId, folder.id, "New folder")
+              }
+            >
+              <FolderPlus size={13} />
+            </button>
+            <button
+              className="tree-action"
+              aria-label={`Add note to ${folder.name}`}
+              onClick={() =>
+                void library.addNote(projectId, folder.id, "Untitled")
+              }
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+        </div>
         {expanded ? (
           <div className="tree-children">
             {childFolders.map((child) =>
@@ -166,33 +179,39 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
 
     return (
       <div key={project.id} className="sidebar-section">
-        <button
-          className="tree-row"
-          onClick={() =>
-            toggleSet(expandedProjects, project.id, setExpandedProjects)
-          }
-          title={project.name}
-        >
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <FolderOpen size={14} className="muted" />
-          <span className="label">
-            <strong>{project.name}</strong>
-          </span>
-          <FolderPlus
-            size={13}
-            onClick={(event) => {
-              event.stopPropagation();
-              void library.addFolder(project.id, null, "New folder");
-            }}
-          />
-          <Plus
-            size={13}
-            onClick={(event) => {
-              event.stopPropagation();
-              void library.addNote(project.id, null, "Untitled");
-            }}
-          />
-        </button>
+        <div className="tree-item project-row">
+          <button
+            className="tree-row tree-row-main"
+            onClick={() =>
+              toggleSet(expandedProjects, project.id, setExpandedProjects)
+            }
+            title={project.name}
+          >
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <FolderOpen size={14} className="muted" />
+            <span className="label">
+              <strong>{project.name}</strong>
+            </span>
+          </button>
+          <div className="tree-actions">
+            <button
+              className="tree-action"
+              aria-label={`Add folder to ${project.name}`}
+              onClick={() =>
+                void library.addFolder(project.id, null, "New folder")
+              }
+            >
+              <FolderPlus size={13} />
+            </button>
+            <button
+              className="tree-action"
+              aria-label={`Add note to ${project.name}`}
+              onClick={() => void library.addNote(project.id, null, "Untitled")}
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+        </div>
         {expanded ? (
           <div className="tree-children">
             {rootFolders.map((folder) => renderFolder(folder, project.id, 0))}
@@ -271,6 +290,14 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
                 onClick={() => void library.addProject("My project")}
               >
                 <Plus size={14} /> Create first project
+              </button>
+            ) : null}
+            {library.loaded && library.projects.length > 0 ? (
+              <button
+                className="new-project-button"
+                onClick={() => void library.addProject("New project")}
+              >
+                <Plus size={14} /> New project
               </button>
             ) : null}
           </div>

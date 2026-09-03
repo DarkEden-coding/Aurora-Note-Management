@@ -13,6 +13,37 @@ import { MainEditor } from "./MainEditor.js";
 
 type DrawerKind = "none" | "settings" | "sync";
 
+function NoteTitle({ noteId, title }: { noteId: string; title: string }) {
+  const library = useLibrary();
+  const [draft, setDraft] = useState(title);
+
+  useEffect(() => setDraft(title), [noteId, title]);
+
+  const commit = () => {
+    const next = draft.trim() || "Untitled";
+    setDraft(next);
+    if (next !== title) void library.renameNote(noteId, next);
+  };
+
+  return (
+    <input
+      className="note-title-input"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          setDraft(title);
+          event.currentTarget.blur();
+        }
+      }}
+      aria-label="Note title"
+      maxLength={200}
+    />
+  );
+}
+
 function SyncPill({ onClick }: { onClick: () => void }) {
   const status: SyncStatus = useSyncExternalStore(
     syncEngine.subscribe,
@@ -53,6 +84,15 @@ export function AuthenticatedShell({
     return () => syncEngine.stop();
   }, []);
 
+  useEffect(() => {
+    if (drawer === "none") return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrawer("none");
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [drawer]);
+
   const selectedNote =
     library.notes.find((note) => note.id === library.selectedNoteId) ?? null;
 
@@ -66,9 +106,14 @@ export function AuthenticatedShell({
       <div className="main-column">
         <div className="topbar">
           <div className="title">
-            {selectedNote
-              ? selectedNote.title || "Untitled"
-              : "No note selected"}
+            {selectedNote ? (
+              <NoteTitle
+                noteId={selectedNote.id}
+                title={selectedNote.title || "Untitled"}
+              />
+            ) : (
+              <span>No note selected</span>
+            )}
           </div>
           <SyncPill onClick={() => setDrawer("sync")} />
           <button
@@ -99,17 +144,17 @@ export function AuthenticatedShell({
 
       {drawer === "settings" ? (
         <div className="drawer-overlay" onClick={() => setDrawer("none")}>
-          <div onClick={(event) => event.stopPropagation()}>
-            <AccountSettings userLabel={userLabel} onLoggedOut={onLoggedOut} />
-          </div>
+          <AccountSettings
+            userLabel={userLabel}
+            onLoggedOut={onLoggedOut}
+            onClose={() => setDrawer("none")}
+          />
         </div>
       ) : null}
 
       {drawer === "sync" ? (
         <div className="drawer-overlay" onClick={() => setDrawer("none")}>
-          <div onClick={(event) => event.stopPropagation()}>
-            <SyncStatusPanel />
-          </div>
+          <SyncStatusPanel onClose={() => setDrawer("none")} />
         </div>
       ) : null}
 

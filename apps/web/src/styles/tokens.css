@@ -1,78 +1,88 @@
-/*
- * These CSS custom properties are Aurora's theme token sets. Presentation only:
- * persisted canvas coordinates and dimensions must never depend on these values.
- * Three dark token sets ship: neomorphic (soft extruded surfaces), glass
- * (translucent blurred panels), and minimal (flat high-contrast panels).
- */
+/* Three deliberately distinct dark visual systems. Canvas geometry never consumes these tokens. */
 :root {
   color-scheme: dark;
+  --success: #63d99b;
+  --danger: #ff7d87;
+  --font:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
 }
 
 :root[data-theme="neomorphic"] {
-  --bg: #14161d;
-  --bg-raised: #1b1e27;
-  --surface: #1b1e27;
-  --surface-raised: #212531;
-  --surface-sunken: #12141a;
-  --border: rgba(255, 255, 255, 0.06);
-  --text: #e8eaf0;
-  --text-muted: #9aa1b2;
-  --accent: #7c9cff;
-  --accent-contrast: #0d1020;
-  --danger: #ff7a7a;
+  --bg: #151820;
+  --app-background: radial-gradient(
+    circle at 48% -20%,
+    #242a38 0,
+    #151820 45%,
+    #11131a 100%
+  );
+  --bg-raised: #1d212b;
+  --surface: #1a1e27;
+  --surface-raised: #222733;
+  --surface-sunken: #12151c;
+  --border: rgba(255, 255, 255, 0.065);
+  --text: #f1f3f8;
+  --text-muted: #9fa7b8;
+  --accent: #6c9eff;
+  --accent-strong: #4d83f5;
+  --accent-contrast: #07101f;
   --shadow-outset:
-    8px 8px 16px rgba(0, 0, 0, 0.55), -6px -6px 14px rgba(255, 255, 255, 0.035);
+    9px 9px 18px rgba(5, 7, 11, 0.72), -7px -7px 16px rgba(255, 255, 255, 0.035);
   --shadow-inset:
-    inset 5px 5px 10px rgba(0, 0, 0, 0.5),
-    inset -4px -4px 9px rgba(255, 255, 255, 0.03);
-  --radius: 14px;
+    inset 4px 4px 9px rgba(3, 5, 9, 0.64),
+    inset -3px -3px 8px rgba(255, 255, 255, 0.035);
+  --radius: 16px;
   --blur: 0px;
   --panel-opacity: 1;
   --panel-border: 1px solid var(--border);
-  --gap: 10px;
-  --font: "Inter", "Segoe UI", system-ui, sans-serif;
+  --gap: 12px;
 }
 
 :root[data-theme="glass"] {
-  --bg: #0d1018;
-  --bg-raised: rgba(236, 240, 255, 0.04);
-  --surface: rgba(236, 240, 255, 0.06);
-  --surface-raised: rgba(236, 240, 255, 0.1);
-  --surface-sunken: rgba(0, 0, 0, 0.25);
-  --border: rgba(236, 240, 255, 0.14);
-  --text: #eef1f8;
-  --text-muted: #a7aec2;
-  --accent: #8fd6ff;
-  --accent-contrast: #06121c;
-  --danger: #ff8fa3;
-  --shadow-outset: 0 12px 32px rgba(0, 0, 0, 0.45);
-  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  --radius: 16px;
-  --blur: 18px;
-  --panel-opacity: 0.72;
+  --bg: #080b16;
+  --app-background:
+    linear-gradient(rgba(5, 8, 20, 0.28), rgba(5, 8, 20, 0.54)),
+    url("/assets/aurora-glass-bg.png") center / cover fixed;
+  --bg-raised: rgba(143, 174, 255, 0.1);
+  --surface: rgba(19, 26, 57, 0.52);
+  --surface-raised: rgba(74, 89, 151, 0.36);
+  --surface-sunken: rgba(5, 9, 25, 0.5);
+  --border: rgba(188, 202, 255, 0.22);
+  --text: #f5f6ff;
+  --text-muted: #b4bad1;
+  --accent: #69c8ff;
+  --accent-strong: #5277ff;
+  --accent-contrast: #04101d;
+  --shadow-outset:
+    0 18px 46px rgba(0, 0, 12, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+  --shadow-inset:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 18px rgba(44, 65, 140, 0.2);
+  --radius: 17px;
+  --blur: 22px;
+  --panel-opacity: 0.86;
   --panel-border: 1px solid var(--border);
-  --gap: 10px;
-  --font: "Inter", "Segoe UI", system-ui, sans-serif;
+  --gap: 12px;
 }
 
 :root[data-theme="minimal"] {
-  --bg: #101113;
-  --bg-raised: #16181b;
-  --surface: #16181b;
-  --surface-raised: #1d2023;
-  --surface-sunken: #0b0c0e;
-  --border: #26292e;
-  --text: #f0f1f3;
-  --text-muted: #8b909a;
-  --accent: #c9cdd6;
-  --accent-contrast: #101113;
-  --danger: #e5695f;
-  --shadow-outset: 0 2px 6px rgba(0, 0, 0, 0.4);
-  --shadow-inset: inset 0 0 0 1px var(--border);
-  --radius: 8px;
+  --bg: #0b0d10;
+  --app-background: #0b0d10;
+  --bg-raised: #151922;
+  --surface: #101318;
+  --surface-raised: #1b2230;
+  --surface-sunken: #090b0e;
+  --border: #252b35;
+  --text: #f4f7fb;
+  --text-muted: #8d96a5;
+  --accent: #2583ff;
+  --accent-strong: #1473e6;
+  --accent-contrast: #ffffff;
+  --shadow-outset: none;
+  --shadow-inset: none;
+  --radius: 5px;
   --blur: 0px;
   --panel-opacity: 1;
   --panel-border: 1px solid var(--border);
   --gap: 8px;
-  --font: "Inter", "Segoe UI", system-ui, sans-serif;
 }

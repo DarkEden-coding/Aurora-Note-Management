@@ -11,6 +11,7 @@ import {
   Slash,
   Square,
   StickyNote,
+  Type,
   Minus,
 } from "lucide-react";
 import type { CanvasMode } from "@aurora/shared";
@@ -23,7 +24,8 @@ export type CanvasTool =
   | "rectangle"
   | "ellipse"
   | "arrow"
-  | "sticky";
+  | "sticky"
+  | "text";
 
 export interface CanvasToolbarProps {
   tool: CanvasTool;
@@ -47,6 +49,7 @@ const TOOLS: ToolButton[] = [
   { tool: "select", label: "Select (V)", icon: <MousePointer2 size={16} /> },
   { tool: "pan", label: "Pan (H)", icon: <Hand size={16} /> },
   { tool: "pen", label: "Pen (P)", icon: <Pen size={16} /> },
+  { tool: "text", label: "Text (T)", icon: <Type size={16} /> },
   { tool: "line", label: "Line (L)", icon: <Slash size={16} /> },
   { tool: "rectangle", label: "Rectangle (R)", icon: <Square size={16} /> },
   { tool: "ellipse", label: "Ellipse (E)", icon: <Circle size={16} /> },
@@ -66,52 +69,54 @@ export function CanvasToolbar({
   onZoomReset,
 }: CanvasToolbarProps): ReactNode {
   return (
-    <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
-      <div className="canvas-toolbar-group">
-        {TOOLS.map((button) => (
+    <>
+      <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
+        <div className="canvas-toolbar-group">
+          {TOOLS.map((button) => (
+            <button
+              key={button.tool}
+              type="button"
+              title={button.label}
+              aria-label={button.label}
+              aria-pressed={tool === button.tool}
+              data-active={tool === button.tool ? "true" : "false"}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onToolChange(button.tool)}
+            >
+              {button.icon}
+            </button>
+          ))}
+        </div>
+        <div className="canvas-toolbar-divider" />
+        <div className="canvas-toolbar-group">
           <button
-            key={button.tool}
             type="button"
-            title={button.label}
-            aria-label={button.label}
-            aria-pressed={tool === button.tool}
-            data-active={tool === button.tool ? "true" : "false"}
+            title="Zoom out"
+            aria-label="Zoom out"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => onToolChange(button.tool)}
+            onClick={onZoomOut}
           >
-            {button.icon}
+            <Minus size={16} />
           </button>
-        ))}
-      </div>
-      <div className="canvas-toolbar-divider" />
-      <div className="canvas-toolbar-group">
-        <button
-          type="button"
-          title="Zoom out"
-          aria-label="Zoom out"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onZoomOut}
-        >
-          <Minus size={16} />
-        </button>
-        <button
-          type="button"
-          title="Reset zoom"
-          aria-label="Reset zoom"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onZoomReset}
-        >
-          <Maximize size={16} />
-        </button>
-        <button
-          type="button"
-          title="Zoom in"
-          aria-label="Zoom in"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onZoomIn}
-        >
-          <Plus size={16} />
-        </button>
+          <button
+            type="button"
+            title="Reset zoom"
+            aria-label="Reset zoom"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onZoomReset}
+          >
+            <Maximize size={16} />
+          </button>
+          <button
+            type="button"
+            title="Zoom in"
+            aria-label="Zoom in"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onZoomIn}
+          >
+            <Plus size={16} />
+          </button>
+        </div>
       </div>
       <div className="canvas-statusbar" data-testid="canvas-status">
         <span>{modeLabel(mode)}</span>
@@ -120,7 +125,7 @@ export function CanvasToolbar({
           {objectCount}/{maxObjectCount} objects
         </span>
       </div>
-    </div>
+    </>
   );
 }
 

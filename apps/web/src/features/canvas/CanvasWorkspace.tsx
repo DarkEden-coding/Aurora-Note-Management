@@ -92,7 +92,8 @@ type Gesture =
     }
   | { kind: "create"; tool: CreateTool; start: Point; current: Point };
 
-type CreateTool = "line" | "rectangle" | "ellipse" | "arrow" | "sticky";
+type CreateTool =
+  "line" | "rectangle" | "ellipse" | "arrow" | "sticky" | "text";
 
 const CREATE_TOOLS: readonly string[] = [
   "line",
@@ -100,6 +101,7 @@ const CREATE_TOOLS: readonly string[] = [
   "ellipse",
   "arrow",
   "sticky",
+  "text",
 ];
 
 function isCreateTool(tool: CanvasTool): tool is CreateTool {
@@ -292,13 +294,15 @@ export function CanvasWorkspace({
       const kind =
         createTool === "sticky"
           ? ("sticky-note" as const)
-          : createTool === "rectangle"
-            ? ("rectangle" as const)
-            : createTool === "ellipse"
-              ? ("ellipse" as const)
-              : createTool === "arrow"
-                ? ("arrow" as const)
-                : ("line" as const);
+          : createTool === "text"
+            ? ("rich-text" as const)
+            : createTool === "rectangle"
+              ? ("rectangle" as const)
+              : createTool === "ellipse"
+                ? ("ellipse" as const)
+                : createTool === "arrow"
+                  ? ("arrow" as const)
+                  : ("line" as const);
       const shapePayload: CanvasObject["payload"] =
         kind === "rectangle" || kind === "ellipse"
           ? {
@@ -317,7 +321,9 @@ export function CanvasWorkspace({
         payload:
           createTool === "sticky"
             ? { text: "", color: STICKY_COLOR }
-            : shapePayload,
+            : createTool === "text"
+              ? { doc: { type: "doc", content: [{ type: "paragraph" }] } }
+              : shapePayload,
       });
       appendObject(object);
       selection.select(object.id);
@@ -352,6 +358,7 @@ export function CanvasWorkspace({
       v: "select",
       h: "pan",
       p: "pen",
+      t: "text",
       l: "line",
       r: "rectangle",
       e: "ellipse",
@@ -751,7 +758,7 @@ export function CanvasWorkspace({
       gesture.tool === "line" || gesture.tool === "arrow"
         ? dragBoundsAxis(gesture.start, gesture.current)
         : dragBoundsFree(gesture.start, gesture.current);
-    if (gesture.tool === "sticky") {
+    if (gesture.tool === "sticky" || gesture.tool === "text") {
       previewStickyBounds = raw;
     } else {
       previewShape = makeCanvasObject({
