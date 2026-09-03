@@ -1,9 +1,13 @@
 /* Canvas workspace presentation: viewport surface, layers, page frames, toolbar, status bar, and object chrome. Presentation only; coordinates stay in canvas objects. */
 .canvas-workspace {
-  --aurora-canvas-surface: #1b1d21;
-  --aurora-canvas-ink: #e6e8ec;
-  --aurora-canvas-muted: #9aa1ad;
-  --aurora-canvas-accent: #78a0ff;
+  --aurora-canvas-surface: color-mix(
+    in srgb,
+    var(--surface-sunken) 91%,
+    transparent
+  );
+  --aurora-canvas-ink: var(--text);
+  --aurora-canvas-muted: var(--text-muted);
+  --aurora-canvas-accent: var(--accent);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -228,18 +232,22 @@
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 10px;
-  background: rgba(20, 22, 26, 0.92);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  width: min(920px, calc(100% - 32px));
+  gap: 8px;
+  padding: 7px;
+  border: var(--panel-border);
+  border-radius: calc(var(--radius) - 3px);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(var(--blur));
+  box-shadow: var(--shadow-outset);
 }
 
 .canvas-toolbar-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: space-between;
+  gap: 4px;
+  flex: 1;
 }
 
 .canvas-toolbar-divider {
@@ -253,8 +261,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: clamp(38px, 4.2vw, 52px);
+  height: 44px;
   border: none;
   border-radius: 7px;
   background: transparent;
@@ -282,12 +290,35 @@
   gap: 10px;
   padding: 3px 12px;
   border-radius: 999px;
-  background: rgba(20, 22, 26, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border: var(--panel-border);
+  backdrop-filter: blur(var(--blur));
   font:
     10px/1.6 system-ui,
     sans-serif;
   color: var(--aurora-canvas-muted);
   pointer-events: none;
   white-space: nowrap;
+}
+
+:root[data-theme="minimal"] .canvas-toolbar,
+:root[data-theme="minimal"] .canvas-statusbar {
+  border-radius: 4px;
+}
+
+@media (max-width: 760px) {
+  .canvas-toolbar {
+    max-width: calc(100% - 16px);
+    overflow-x: auto;
+    left: 8px;
+    right: 8px;
+    transform: none;
+  }
+  .canvas-toolbar-group {
+    flex: 0 0 auto;
+  }
+  .canvas-statusbar span:first-child,
+  .canvas-statusbar span:last-child {
+    display: none;
+  }
 }

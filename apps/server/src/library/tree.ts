@@ -47,6 +47,7 @@ export async function getLibraryTree(ownerId: string): Promise<LibraryTree> {
         title: note.title,
         kind: note.kind,
         canvasMode: note.canvasMode,
+        background: note.background,
         favorite: note.favorite,
         trashed: note.trashedAt !== null,
         archived: note.archivedAt !== null,

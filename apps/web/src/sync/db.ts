@@ -1,6 +1,6 @@
 // This module owns Aurora's IndexedDB schema (Dexie): cached library rows, cached canvas objects, the durable outbox, conflict records, and small metadata keys. All offline persistence flows through this database.
 import Dexie, { type EntityTable } from "dexie";
-import type { CanvasObject, DeleteMarker } from "@aurora/shared";
+import type { Background, CanvasObject, DeleteMarker } from "@aurora/shared";
 
 export interface CachedNote {
   id: string;
@@ -10,6 +10,7 @@ export interface CachedNote {
   kind: "canvas" | "pdf";
   /** One of the four shared canvas modes; drives the canvas workspace layout. */
   canvasMode: "infinite" | "fixed-width" | "fixed-height" | "paged";
+  background: Background;
   favorite: boolean;
   trashed: boolean;
   archived: boolean;

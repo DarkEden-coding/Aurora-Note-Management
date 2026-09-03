@@ -55,7 +55,12 @@ export function ConflictDialog(): React.JSX.Element | null {
 
   return (
     <div className="drawer-overlay">
-      <div className="drawer" role="dialog" aria-label="Resolve sync conflict">
+      <div
+        className="drawer panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Resolve sync conflict"
+      >
         <h2>Sync conflict</h2>
         <p style={{ margin: 0, color: "var(--text-muted)" }}>
           This object changed on two devices against the same revision. Choose

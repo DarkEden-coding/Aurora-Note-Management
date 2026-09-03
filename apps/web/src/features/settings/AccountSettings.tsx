@@ -1,5 +1,5 @@
 // This module is Aurora's account settings drawer: theme token selection across the three dark sets, device identity, session label, logout, and passkey-reset guidance.
-import { LogOut, KeyRound } from "lucide-react";
+import { LogOut, KeyRound, X } from "lucide-react";
 import { THEMES, useTheme } from "../../theme/ThemeProvider.js";
 import { getDeviceId } from "../../lib/id.js";
 import { logout } from "../auth/session.js";
@@ -7,16 +7,36 @@ import { logout } from "../auth/session.js";
 export function AccountSettings({
   userLabel,
   onLoggedOut,
+  onClose,
 }: {
   userLabel: string | null;
   onLoggedOut: () => void;
+  onClose: () => void;
 }) {
   const { theme, setTheme } = useTheme();
   const deviceId = getDeviceId();
 
   return (
-    <div className="drawer" role="dialog" aria-label="Account settings">
-      <h2>Account</h2>
+    <div
+      className="drawer panel"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Account settings"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="drawer-header">
+        <div>
+          <span className="eyebrow">Preferences</span>
+          <h2>Account</h2>
+        </div>
+        <button
+          className="icon-button ghost"
+          onClick={onClose}
+          aria-label="Close account settings"
+        >
+          <X size={17} />
+        </button>
+      </div>
 
       <div className="settings-row">
         <span>Theme</span>
@@ -27,7 +47,11 @@ export function AccountSettings({
               className={candidate === theme ? "selected" : ""}
               onClick={() => setTheme(candidate)}
             >
-              {candidate}
+              <span
+                className={`theme-swatch ${candidate}`}
+                aria-hidden="true"
+              />
+              <span>{candidate}</span>
             </button>
           ))}
         </div>

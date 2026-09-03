@@ -5,17 +5,19 @@
 import { useCallback, useRef } from "react";
 import { CanvasWorkspace } from "../features/canvas";
 import type { SyncOperation } from "@aurora/shared";
-import type { CanvasMode } from "@aurora/shared";
+import type { Background, CanvasMode } from "@aurora/shared";
 import { enqueueObjectMutation } from "../sync/outbox.js";
 
 export function MainEditor({
   ownerId,
   noteId,
   canvasMode,
+  background,
 }: {
   ownerId: string;
   noteId: string;
   canvasMode: CanvasMode;
+  background: Background;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -37,6 +39,7 @@ export function MainEditor({
         ownerId={ownerId}
         noteId={noteId}
         mode={canvasMode}
+        background={background}
         onOperation={handleOperation}
       />
     </div>

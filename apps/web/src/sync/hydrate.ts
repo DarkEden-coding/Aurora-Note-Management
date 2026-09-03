@@ -77,6 +77,12 @@ export async function hydrateRegion(params: {
       title: note?.title ?? "Untitled",
       kind: note?.kind ?? "canvas",
       canvasMode: note?.canvasMode ?? "infinite",
+      background: note?.background ?? {
+        pattern: "dot-grid",
+        color: "#1b1d21",
+        patternColor: "#3a3f4a",
+        spacing: 24,
+      },
       favorite: note?.favorite ?? false,
       trashed: note?.trashed ?? false,
       archived: note?.archived ?? false,

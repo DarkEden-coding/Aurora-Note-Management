@@ -276,6 +276,7 @@ function StickyContent({
     <div
       className="canvas-sticky"
       data-editing={editing ? "true" : "false"}
+      style={{ backgroundColor: getStickyColor(object) }}
       onDoubleClick={() => {
         if (interactive) setEditing(true);
       }}

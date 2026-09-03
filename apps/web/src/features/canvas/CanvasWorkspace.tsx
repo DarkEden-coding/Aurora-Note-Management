@@ -11,6 +11,7 @@ import {
 import {
   idSchema,
   type Bounds,
+  type Background,
   type CanvasMode,
   type CanvasObject,
   type SyncOperation,
@@ -64,6 +65,7 @@ export interface CanvasWorkspaceProps {
   noteId: string;
   /** Canvas mode; defaults to "infinite". */
   mode?: CanvasMode;
+  background?: Background;
   /** Canonical objects; when omitted, the workspace loads from the local sync cache and falls back to demo content. */
   objects?: CanvasObject[];
   /** Receives every coalesced upsert/delete operation produced by editing gestures. */
@@ -92,7 +94,8 @@ type Gesture =
     }
   | { kind: "create"; tool: CreateTool; start: Point; current: Point };
 
-type CreateTool = "line" | "rectangle" | "ellipse" | "arrow" | "sticky";
+type CreateTool =
+  "line" | "rectangle" | "ellipse" | "arrow" | "sticky" | "text";
 
 const CREATE_TOOLS: readonly string[] = [
   "line",
@@ -100,6 +103,7 @@ const CREATE_TOOLS: readonly string[] = [
   "ellipse",
   "arrow",
   "sticky",
+  "text",
 ];
 
 function isCreateTool(tool: CanvasTool): tool is CreateTool {
@@ -120,6 +124,7 @@ export function CanvasWorkspace({
   ownerId,
   noteId,
   mode,
+  background,
   objects,
   onOperation,
 }: CanvasWorkspaceProps): ReactNode {
@@ -292,13 +297,15 @@ export function CanvasWorkspace({
       const kind =
         createTool === "sticky"
           ? ("sticky-note" as const)
-          : createTool === "rectangle"
-            ? ("rectangle" as const)
-            : createTool === "ellipse"
-              ? ("ellipse" as const)
-              : createTool === "arrow"
-                ? ("arrow" as const)
-                : ("line" as const);
+          : createTool === "text"
+            ? ("rich-text" as const)
+            : createTool === "rectangle"
+              ? ("rectangle" as const)
+              : createTool === "ellipse"
+                ? ("ellipse" as const)
+                : createTool === "arrow"
+                  ? ("arrow" as const)
+                  : ("line" as const);
       const shapePayload: CanvasObject["payload"] =
         kind === "rectangle" || kind === "ellipse"
           ? {
@@ -317,7 +324,9 @@ export function CanvasWorkspace({
         payload:
           createTool === "sticky"
             ? { text: "", color: STICKY_COLOR }
-            : shapePayload,
+            : createTool === "text"
+              ? { doc: { type: "doc", content: [{ type: "paragraph" }] } }
+              : shapePayload,
       });
       appendObject(object);
       selection.select(object.id);
@@ -352,6 +361,7 @@ export function CanvasWorkspace({
       v: "select",
       h: "pan",
       p: "pen",
+      t: "text",
       l: "line",
       r: "rectangle",
       e: "ellipse",
@@ -751,7 +761,7 @@ export function CanvasWorkspace({
       gesture.tool === "line" || gesture.tool === "arrow"
         ? dragBoundsAxis(gesture.start, gesture.current)
         : dragBoundsFree(gesture.start, gesture.current);
-    if (gesture.tool === "sticky") {
+    if (gesture.tool === "sticky" || gesture.tool === "text") {
       previewStickyBounds = raw;
     } else {
       previewShape = makeCanvasObject({
@@ -815,7 +825,7 @@ export function CanvasWorkspace({
       >
         <div
           className="canvas-background"
-          style={getBackgroundStyle(DEFAULT_BACKGROUND, viewport)}
+          style={getBackgroundStyle(background ?? DEFAULT_BACKGROUND, viewport)}
         />
         <div
           className="canvas-world"
