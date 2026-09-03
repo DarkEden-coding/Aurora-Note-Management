@@ -74,10 +74,10 @@ export async function queryRegionalObjects(
     "owner_id = $1",
     "note_id = $2",
     // Bounds overlap: object region intersects the requested viewport region.
-    "x < $3 + $5",
-    "x + width > $3",
-    "y < $4 + $6",
-    "y + height > $4",
+    "x < $3::double precision + $5::double precision",
+    "x + width > $3::double precision",
+    "y < $4::double precision + $6::double precision",
+    "y + height > $4::double precision",
   ];
   const params: unknown[] = [
     ownerId,
