@@ -19,6 +19,7 @@ export function sessionCookieOptions(env: AuroraEnv): CookieSerializeOptions {
   return {
     path: "/",
     httpOnly: true,
+    signed: true,
     sameSite: "lax",
     secure: new URL(env.AURORA_ORIGIN).protocol === "https:",
     maxAge: env.AURORA_SESSION_TTL_DAYS * 86_400,

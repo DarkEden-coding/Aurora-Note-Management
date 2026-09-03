@@ -27,6 +27,7 @@ describe("loadEnv", () => {
     const env = loadEnv(baseEnv);
     expect(sessionCookieOptions(env).maxAge).toBe(30 * 86_400);
     expect(sessionCookieOptions(env).secure).toBe(false);
+    expect(sessionCookieOptions(env).signed).toBe(true);
   });
 
   it("resolves the upload directory to an absolute path", () => {

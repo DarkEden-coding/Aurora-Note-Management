@@ -29,7 +29,10 @@ const envSchema = z.object({
   AURORA_RP_ID: z.string().min(1),
   AURORA_RP_NAME: z.string().min(1).default("Aurora"),
   AURORA_ORIGIN: z.string().url(),
-  AURORA_SETUP_TOKEN: z.string().min(1).optional(),
+  AURORA_SETUP_TOKEN: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).optional(),
+  ),
   AURORA_LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
