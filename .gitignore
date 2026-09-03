@@ -1,0 +1,9 @@
+# Keep generated output, local secrets, databases, and uploaded user data out of Git.
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.data/
+*.log

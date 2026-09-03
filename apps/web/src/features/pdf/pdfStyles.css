@@ -1,0 +1,42 @@
+/* PDF page presentation: page frame, placeholder, and canvas styles. Presentation only. */
+.pdf-page-view {
+  position: relative;
+  background: #ffffff;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.pdf-page-view-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.pdf-page-view-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+  color: #6b7280;
+  background: repeating-linear-gradient(45deg, #f3f4f6 0 8px, #e5e7eb 8px 16px);
+}
+
+.pdf-page-view-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  text-align: center;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+  color: #b91c1c;
+  background: rgba(255, 255, 255, 0.9);
+}

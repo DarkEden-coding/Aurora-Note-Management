@@ -1,0 +1,10 @@
+{
+  "//": "TypeScript project for Aurora's authoritative Fastify server; checked with noEmit and run through tsx.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["src", "test", "vitest.config.ts"],
+  "exclude": ["dist", "node_modules"]
+}

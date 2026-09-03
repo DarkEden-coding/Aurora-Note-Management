@@ -1,0 +1,293 @@
+/* Canvas workspace presentation: viewport surface, layers, page frames, toolbar, status bar, and object chrome. Presentation only; coordinates stay in canvas objects. */
+.canvas-workspace {
+  --aurora-canvas-surface: #1b1d21;
+  --aurora-canvas-ink: #e6e8ec;
+  --aurora-canvas-muted: #9aa1ad;
+  --aurora-canvas-accent: #78a0ff;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--aurora-canvas-surface);
+  color: var(--aurora-canvas-ink);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+
+.canvas-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.canvas-viewport[data-cursor="pan"] {
+  cursor: grab;
+}
+
+.canvas-viewport[data-cursor="panning"] {
+  cursor: grabbing;
+}
+
+.canvas-viewport[data-cursor="pen"] {
+  cursor: crosshair;
+}
+
+.canvas-viewport[data-cursor="create"] {
+  cursor: crosshair;
+}
+
+.canvas-background {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.canvas-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.canvas-page-frame {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.canvas-page-frame-label {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  font:
+    10px/1.4 system-ui,
+    sans-serif;
+  color: var(--aurora-canvas-muted);
+}
+
+.canvas-scene {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.canvas-scene [data-handle] {
+  pointer-events: auto;
+}
+
+.canvas-scene .canvas-selection-outline {
+  fill: none;
+  stroke: var(--aurora-canvas-accent);
+  stroke-width: 1.5;
+}
+
+.canvas-scene .canvas-selection-handle {
+  fill: #ffffff;
+  stroke: var(--aurora-canvas-accent);
+  stroke-width: 1;
+}
+
+.canvas-create-preview {
+  position: absolute;
+  border: 1px dashed var(--aurora-canvas-accent);
+  border-radius: 4px;
+  background: rgba(120, 160, 255, 0.08);
+  pointer-events: none;
+}
+
+.canvas-html-object {
+  position: absolute;
+  transform-origin: center center;
+}
+
+.canvas-html-object[data-interactive="true"] {
+  cursor: default;
+}
+
+.canvas-move-grip {
+  position: absolute;
+  top: -14px;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--aurora-canvas-accent);
+  color: #14161a;
+  cursor: grab;
+  pointer-events: auto;
+}
+
+/* Sticky notes */
+.canvas-sticky {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  color: #14161a;
+  font-size: 13px;
+}
+
+.canvas-sticky-text {
+  flex: 1;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow: hidden;
+  outline: none;
+  font-family: inherit;
+  cursor: inherit;
+}
+
+.canvas-html-object[data-editing="true"] .canvas-sticky-text {
+  cursor: text;
+  user-select: text;
+}
+
+/* Images */
+.canvas-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.canvas-image-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* Attachments */
+.canvas-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(24, 26, 30, 0.94);
+  box-sizing: border-box;
+}
+
+.canvas-attachment-icon {
+  display: inline-flex;
+  color: var(--aurora-canvas-accent);
+}
+
+.canvas-attachment-name {
+  font:
+    600 12px/1.4 system-ui,
+    sans-serif;
+  color: var(--aurora-canvas-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-attachment-size {
+  font:
+    10px/1.4 system-ui,
+    sans-serif;
+  color: var(--aurora-canvas-muted);
+}
+
+.canvas-attachment-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Toolbar */
+.canvas-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(20, 22, 26, 0.92);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.canvas-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.canvas-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.canvas-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--aurora-canvas-ink);
+  cursor: pointer;
+}
+
+.canvas-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.canvas-toolbar button[data-active="true"] {
+  background: var(--aurora-canvas-accent);
+  color: #14161a;
+}
+
+.canvas-statusbar {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(20, 22, 26, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font:
+    10px/1.6 system-ui,
+    sans-serif;
+  color: var(--aurora-canvas-muted);
+  pointer-events: none;
+  white-space: nowrap;
+}

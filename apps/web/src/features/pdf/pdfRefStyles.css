@@ -1,0 +1,27 @@
+/* Page chrome presentation for embedded PDF references and attachments. Presentation only. */
+.pdf-ref-block {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(24, 26, 30, 0.94);
+  overflow: hidden;
+}
+
+.pdf-ref-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font:
+    600 11px/1.4 system-ui,
+    sans-serif;
+  color: #9aa1ad;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pdf-ref-body {
+  padding: 6px;
+  background: #ffffff;
+  min-height: 0;
+}

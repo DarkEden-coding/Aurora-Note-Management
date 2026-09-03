@@ -1,0 +1,23 @@
+{
+  "name": "aurora",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "npm run typecheck --workspaces --if-present && npm run test --workspaces --if-present",
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w @aurora/server\" \"npm run dev -w @aurora/web\"",
+    "format": "prettier --write .",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

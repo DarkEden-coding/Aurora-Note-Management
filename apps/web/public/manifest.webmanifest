@@ -1,0 +1,10 @@
+{
+  "name": "Aurora",
+  "short_name": "Aurora",
+  "description": "Dark spatial notes with passkey auth and offline sync.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12141a",
+  "theme_color": "#12141a",
+  "icons": []
+}

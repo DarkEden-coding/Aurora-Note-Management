@@ -1,0 +1,47 @@
+# Composes Aurora for self-hosting: one PostgreSQL instance plus the single
+# Aurora image (server + statically served web app). Configure via .env next
+# to this file; see .env.example.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aurora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-aurora}
+    volumes:
+      - aurora-db:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-aurora} -d ${POSTGRES_DB:-aurora}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-aurora}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aurora}
+      AURORA_COOKIE_SECRET: ${AURORA_COOKIE_SECRET:?set AURORA_COOKIE_SECRET in .env (32+ random bytes)}
+      AURORA_RP_ID: ${AURORA_RP_ID:-localhost}
+      AURORA_RP_NAME: ${AURORA_RP_NAME:-Aurora}
+      # Must be the browser-visible origin; passkeys are bound to it.
+      AURORA_ORIGIN: ${AURORA_ORIGIN:-http://localhost:8080}
+      # Optional: pre-provision the one-time enrollment token instead of the
+      # generated one printed to the container log on first start.
+      AURORA_SETUP_TOKEN: ${AURORA_SETUP_TOKEN:-}
+    ports:
+      - "${AURORA_PORT:-8080}:8787"
+    volumes:
+      - aurora-uploads:/data/uploads
+    restart: unless-stopped
+
+volumes:
+  aurora-db:
+  aurora-uploads:

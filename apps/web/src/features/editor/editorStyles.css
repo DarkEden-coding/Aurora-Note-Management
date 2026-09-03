@@ -1,0 +1,136 @@
+/* Rich-text block presentation: editor surface, typography, and ProseMirror table styles. Presentation only; documents stay serialized ProseMirror JSON. */
+.rich-text-block {
+  --aurora-editor-ink: #e6e8ec;
+  --aurora-editor-muted: #9aa1ad;
+  display: flex;
+  flex-direction: column;
+  color: var(--aurora-editor-ink);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.rich-text-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(20, 22, 26, 0.92);
+  margin-bottom: 6px;
+  width: max-content;
+}
+
+.rich-text-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--aurora-editor-ink);
+  cursor: pointer;
+}
+
+.rich-text-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.rich-text-toolbar button[data-active="true"] {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.rich-text-content {
+  outline: none;
+  min-width: 0;
+}
+
+.rich-text-content p:first-child {
+  margin-top: 0;
+}
+
+.rich-text-content p:last-child {
+  margin-bottom: 0;
+}
+
+.rich-text-content h1,
+.rich-text-content h2,
+.rich-text-content h3 {
+  line-height: 1.25;
+  margin: 0.4em 0 0.2em;
+}
+
+.rich-text-content h1 {
+  font-size: 1.6em;
+}
+
+.rich-text-content h2 {
+  font-size: 1.3em;
+}
+
+.rich-text-content h3 {
+  font-size: 1.1em;
+}
+
+.rich-text-content ul,
+.rich-text-content ol {
+  padding-inline-start: 1.4em;
+}
+
+.rich-text-content blockquote {
+  border-inline-start: 3px solid var(--aurora-editor-muted);
+  margin: 0.4em 0;
+  padding-inline-start: 0.8em;
+  color: var(--aurora-editor-muted);
+}
+
+.rich-text-content pre {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+/* ProseMirror tables */
+.rich-text-content table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  overflow: hidden;
+}
+
+.rich-text-content th,
+.rich-text-content td {
+  border: 1px solid var(--aurora-editor-muted);
+  padding: 4px 8px;
+  vertical-align: top;
+  position: relative;
+}
+
+.rich-text-content th {
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 600;
+}
+
+.rich-text-content .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(120, 160, 255, 0.25);
+  pointer-events: none;
+}
+
+.rich-text-content .column-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: rgba(120, 160, 255, 0.8);
+  pointer-events: none;
+}
+
+.rich-text-content.resize-cursor {
+  cursor: col-resize;
+}

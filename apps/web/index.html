@@ -1,0 +1,35 @@
+<!-- This document is the PWA shell that boots Aurora's React app and applies the persisted dark theme before first paint. -->
+<!doctype html>
+<html lang="en" data-theme="neomorphic">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Aurora — dark spatial notes with passkey auth and offline sync."
+    />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="data:," />
+    <title>Aurora</title>
+    <script>
+      // Apply the account-level theme token set before React mounts to avoid a flash of the wrong surface.
+      try {
+        var stored = localStorage.getItem("aurora.theme");
+        if (
+          stored === "neomorphic" ||
+          stored === "glass" ||
+          stored === "minimal"
+        ) {
+          document.documentElement.dataset.theme = stored;
+        }
+      } catch (e) {
+        /* private mode: keep the default theme */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
