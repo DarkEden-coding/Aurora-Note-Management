@@ -25,6 +25,8 @@ export interface LibraryState {
   selectNote: (noteId: string) => void;
   refresh: () => Promise<void>;
   addProject: (name: string) => Promise<void>;
+  renameProject: (projectId: string, name: string) => Promise<void>;
+  deleteProject: (projectId: string) => Promise<void>;
   addFolder: (
     projectId: string,
     parentId: string | null,
@@ -34,7 +36,10 @@ export interface LibraryState {
     projectId: string,
     folderId: string | null,
     title: string,
+    options?: Pick<CachedNote, "canvasMode" | "background">,
   ) => Promise<void>;
+  renameFolder: (folderId: string, name: string) => Promise<void>;
+  deleteFolder: (folderId: string) => Promise<void>;
   toggleFavorite: (noteId: string) => Promise<void>;
   trashNote: (noteId: string) => Promise<void>;
   restoreNote: (noteId: string) => Promise<void>;
@@ -51,6 +56,7 @@ function toCachedNote(note: LibraryTree["notes"][number]): CachedNote {
     title: note.title,
     kind: note.kind,
     canvasMode: note.canvasMode,
+    background: note.background,
     favorite: note.favorite,
     trashed: note.trashed,
     archived: note.archived,
@@ -137,6 +143,21 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     setProjects((current) => [...current, project]);
   }, []);
 
+  const renameProject = useCallback(async (projectId: string, name: string) => {
+    const project = await libraryApi.updateProject(projectId, { name });
+    setProjects((current) =>
+      current.map((item) => (item.id === projectId ? project : item)),
+    );
+  }, []);
+
+  const deleteProject = useCallback(async (projectId: string) => {
+    await libraryApi.deleteProject(projectId);
+    setProjects((current) => current.filter((item) => item.id !== projectId));
+    setFolders((current) =>
+      current.filter((item) => item.projectId !== projectId),
+    );
+  }, []);
+
   const addFolder = useCallback(
     async (projectId: string, parentId: string | null, name: string) => {
       const folder = await libraryApi.createFolder(projectId, parentId, name);
@@ -145,9 +166,57 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const renameFolder = useCallback(async (folderId: string, name: string) => {
+    const folder = await libraryApi.updateFolder(folderId, { name });
+    setFolders((current) =>
+      current.map((item) => (item.id === folderId ? folder : item)),
+    );
+  }, []);
+
+  const deleteFolder = useCallback(
+    async (folderId: string) => {
+      await libraryApi.deleteFolder(folderId);
+      const descendants = new Set([folderId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const folder of folders)
+          if (
+            folder.parentId &&
+            descendants.has(folder.parentId) &&
+            !descendants.has(folder.id)
+          ) {
+            descendants.add(folder.id);
+            changed = true;
+          }
+      }
+      setFolders((current) =>
+        current.filter((item) => !descendants.has(item.id)),
+      );
+      setNotes((current) =>
+        current.map((note) =>
+          note.folderId && descendants.has(note.folderId)
+            ? { ...note, folderId: null }
+            : note,
+        ),
+      );
+    },
+    [folders],
+  );
+
   const addNote = useCallback(
-    async (projectId: string, folderId: string | null, title: string) => {
-      const note = await libraryApi.createNote(projectId, folderId, title);
+    async (
+      projectId: string,
+      folderId: string | null,
+      title: string,
+      options?: Pick<CachedNote, "canvasMode" | "background">,
+    ) => {
+      const note = await libraryApi.createNote(
+        projectId,
+        folderId,
+        title,
+        options,
+      );
       const cached = toCachedNote(note);
       await db.notes.put(cached);
       setNotes((current) => [...current, cached]);
@@ -210,7 +279,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       selectNote,
       refresh,
       addProject,
+      renameProject,
+      deleteProject,
       addFolder,
+      renameFolder,
+      deleteFolder,
       addNote,
       toggleFavorite,
       trashNote,
@@ -228,7 +301,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       selectNote,
       refresh,
       addProject,
+      renameProject,
+      deleteProject,
       addFolder,
+      renameFolder,
+      deleteFolder,
       addNote,
       toggleFavorite,
       trashNote,

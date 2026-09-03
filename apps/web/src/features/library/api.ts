@@ -3,6 +3,7 @@
 // unwrapped and mapped with the shared contract so client and server shapes match.
 import { api, apiPatch, apiPost } from "../../lib/http.js";
 import type {
+  Background,
   CanvasMode,
   LibraryFolder,
   LibraryNote,
@@ -38,6 +39,7 @@ interface NoteJson {
   title: string;
   kind: NoteKind;
   canvasMode: CanvasMode;
+  background: Background;
   favorite: boolean;
   archivedAt: string | null;
   trashedAt: string | null;
@@ -66,6 +68,7 @@ function toNote(json: NoteJson): ClientNote {
     title: json.title,
     kind: json.kind,
     canvasMode: json.canvasMode,
+    background: json.background,
     favorite: json.favorite,
     trashed: json.trashedAt !== null,
     archived: json.archivedAt !== null,
@@ -85,6 +88,21 @@ export async function createProject(name: string): Promise<ClientProject> {
   return toProject(project);
 }
 
+export async function updateProject(
+  projectId: string,
+  patch: { name: string },
+): Promise<ClientProject> {
+  const { project } = await apiPatch<{ project: ProjectJson }>(
+    `/api/projects/${projectId}`,
+    patch,
+  );
+  return toProject(project);
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  await api(`/api/projects/${projectId}`, { method: "DELETE" });
+}
+
 export async function createFolder(
   projectId: string,
   parentId: string | null,
@@ -100,15 +118,32 @@ export async function createFolder(
   return toFolder(folder);
 }
 
+export async function updateFolder(
+  folderId: string,
+  patch: { name: string },
+): Promise<ClientFolder> {
+  const { folder } = await apiPatch<{ folder: FolderJson }>(
+    `/api/folders/${folderId}`,
+    patch,
+  );
+  return toFolder(folder);
+}
+
+export async function deleteFolder(folderId: string): Promise<void> {
+  await api(`/api/folders/${folderId}`, { method: "DELETE" });
+}
+
 export async function createNote(
   projectId: string,
   folderId: string | null,
   title: string,
+  options?: { canvasMode: CanvasMode; background: Background },
 ): Promise<ClientNote> {
   const { note } = await apiPost<{ note: NoteJson }>("/api/notes", {
     projectId,
     ...(folderId ? { folderId } : {}),
     ...(title ? { title } : {}),
+    ...options,
   });
   return toNote(note);
 }

@@ -232,8 +232,9 @@
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px;
+  width: min(920px, calc(100% - 32px));
+  gap: 8px;
+  padding: 7px;
   border: var(--panel-border);
   border-radius: calc(var(--radius) - 3px);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -244,7 +245,9 @@
 .canvas-toolbar-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: space-between;
+  gap: 4px;
+  flex: 1;
 }
 
 .canvas-toolbar-divider {
@@ -258,8 +261,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: clamp(38px, 4.2vw, 52px);
+  height: 44px;
   border: none;
   border-radius: 7px;
   background: transparent;
@@ -310,6 +313,9 @@
     left: 8px;
     right: 8px;
     transform: none;
+  }
+  .canvas-toolbar-group {
+    flex: 0 0 auto;
   }
   .canvas-statusbar span:first-child,
   .canvas-statusbar span:last-child {

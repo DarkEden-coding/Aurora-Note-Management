@@ -1,7 +1,7 @@
 // This module composes Aurora's authenticated shell: sidebar, topbar with sync indicator, the main editor, and the settings/sync/conflict drawers. It holds composition only and owns no feature logic.
 import { useEffect, useState } from "react";
 import { Settings, Wifi, WifiOff } from "lucide-react";
-import { Sidebar } from "../features/library/Sidebar.js";
+import { Sidebar } from "../features/library/LibrarySidebar.js";
 import { useLibrary } from "../features/library/LibraryContext.js";
 import { AccountSettings } from "../features/settings/AccountSettings.js";
 import { SyncStatusPanel } from "../features/settings/SyncStatusPanel.js";
@@ -131,6 +131,7 @@ export function AuthenticatedShell({
               ownerId={ownerId}
               noteId={selectedNote.id}
               canvasMode={selectedNote.canvasMode}
+              background={selectedNote.background}
             />
           ) : (
             <div className="canvas-area">

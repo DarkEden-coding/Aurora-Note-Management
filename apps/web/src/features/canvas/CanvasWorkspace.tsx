@@ -11,6 +11,7 @@ import {
 import {
   idSchema,
   type Bounds,
+  type Background,
   type CanvasMode,
   type CanvasObject,
   type SyncOperation,
@@ -64,6 +65,7 @@ export interface CanvasWorkspaceProps {
   noteId: string;
   /** Canvas mode; defaults to "infinite". */
   mode?: CanvasMode;
+  background?: Background;
   /** Canonical objects; when omitted, the workspace loads from the local sync cache and falls back to demo content. */
   objects?: CanvasObject[];
   /** Receives every coalesced upsert/delete operation produced by editing gestures. */
@@ -122,6 +124,7 @@ export function CanvasWorkspace({
   ownerId,
   noteId,
   mode,
+  background,
   objects,
   onOperation,
 }: CanvasWorkspaceProps): ReactNode {
@@ -822,7 +825,7 @@ export function CanvasWorkspace({
       >
         <div
           className="canvas-background"
-          style={getBackgroundStyle(DEFAULT_BACKGROUND, viewport)}
+          style={getBackgroundStyle(background ?? DEFAULT_BACKGROUND, viewport)}
         />
         <div
           className="canvas-world"

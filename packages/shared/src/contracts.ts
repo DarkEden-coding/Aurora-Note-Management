@@ -136,6 +136,12 @@ export const libraryNoteSchema = z.object({
   title: z.string(),
   kind: noteKindSchema,
   canvasMode: canvasModeSchema,
+  background: backgroundSchema.default({
+    pattern: "dot-grid",
+    color: "#1b1d21",
+    patternColor: "#3a3f4a",
+    spacing: 24,
+  }),
   favorite: z.boolean(),
   trashed: z.boolean(),
   archived: z.boolean(),

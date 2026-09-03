@@ -36,6 +36,7 @@
   --panel-opacity: 1;
   --panel-border: 1px solid var(--border);
   --gap: 12px;
+  --shell-padding: 16px;
 }
 
 :root[data-theme="glass"] {
@@ -63,6 +64,7 @@
   --panel-opacity: 0.86;
   --panel-border: 1px solid var(--border);
   --gap: 12px;
+  --shell-padding: 11px;
 }
 
 :root[data-theme="minimal"] {
@@ -85,4 +87,5 @@
   --panel-opacity: 1;
   --panel-border: 1px solid var(--border);
   --gap: 8px;
+  --shell-padding: 0px;
 }
