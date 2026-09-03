@@ -1,5 +1,5 @@
-// Provides owner-scoped project CRUD and guard checks used by library routes.
-import { conflict, notFound } from "../errors.js";
+// Provides owner-scoped project CRUD used by library routes.
+import { notFound } from "../errors.js";
 import { query } from "../db/pool.js";
 
 export type ProjectRow = {
@@ -112,13 +112,6 @@ export async function updateProject(
 }
 
 export async function deleteProject(ownerId: string, projectId: string) {
-  const notes = await query<{ id: string }>(
-    "SELECT id FROM notes WHERE owner_id = $1 AND project_id = $2 LIMIT 1",
-    [ownerId, projectId],
-  );
-  if (notes.rows[0]) {
-    throw conflict("Project still contains notes; delete or move them first");
-  }
   const result = await query<{ id: string }>(
     "DELETE FROM projects WHERE owner_id = $1 AND id = $2 RETURNING id",
     [ownerId, projectId],

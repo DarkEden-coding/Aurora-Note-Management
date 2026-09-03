@@ -521,7 +521,7 @@ function LibraryDialog({
             Delete{" "}
             <strong>{"value" in state ? state.value : "this item"}</strong>?{" "}
             {state.kind === "confirm-project"
-              ? "Projects containing notes cannot be deleted."
+              ? "All notes and folders inside it will be deleted permanently."
               : "Notes inside this folder will move to the project root."}
           </p>
         ) : (

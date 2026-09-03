@@ -150,13 +150,31 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
-  const deleteProject = useCallback(async (projectId: string) => {
-    await libraryApi.deleteProject(projectId);
-    setProjects((current) => current.filter((item) => item.id !== projectId));
-    setFolders((current) =>
-      current.filter((item) => item.projectId !== projectId),
-    );
-  }, []);
+  const deleteProject = useCallback(
+    async (projectId: string) => {
+      await libraryApi.deleteProject(projectId);
+      const deletedNoteIds = notes
+        .filter((note) => note.projectId === projectId)
+        .map((note) => note.id);
+      await db.notes.bulkDelete(deletedNoteIds);
+      setProjects((current) => current.filter((item) => item.id !== projectId));
+      setFolders((current) =>
+        current.filter((item) => item.projectId !== projectId),
+      );
+      setNotes((current) =>
+        current.filter((note) => note.projectId !== projectId),
+      );
+      setSelectedNoteId((current) =>
+        current && deletedNoteIds.includes(current) ? null : current,
+      );
+      setRecents((current) => {
+        const next = current.filter((id) => !deletedNoteIds.includes(id));
+        localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+        return next;
+      });
+    },
+    [notes],
+  );
 
   const addFolder = useCallback(
     async (projectId: string, parentId: string | null, name: string) => {
