@@ -5,9 +5,6 @@ import { api, apiPatch, apiPost } from "../../lib/http.js";
 import type {
   Background,
   CanvasMode,
-  LibraryFolder,
-  LibraryNote,
-  LibraryProject,
   LibraryTree,
   NoteKind,
 } from "@aurora/shared";

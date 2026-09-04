@@ -4,7 +4,7 @@
 import type { LibraryNote, LibraryTree } from "@aurora/shared";
 import { query } from "../db/pool.js";
 import { mapProject, type ProjectRow } from "./projects.js";
-import { mapFolder, type FolderRow } from "./folders.js";
+import type { FolderRow } from "./folders.js";
 import { mapNote, type NoteRow } from "./map.js";
 
 export async function getLibraryTree(ownerId: string): Promise<LibraryTree> {
@@ -21,7 +21,7 @@ export async function getLibraryTree(ownerId: string): Promise<LibraryTree> {
     ),
     query<NoteRow>(
       `SELECT id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-              favorite, archived_at, trashed_at, revision, created_at, updated_at
+              favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at
        FROM notes WHERE owner_id = $1 ORDER BY updated_at DESC`,
       [ownerId],
     ),

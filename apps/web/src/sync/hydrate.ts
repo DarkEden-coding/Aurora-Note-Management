@@ -4,9 +4,15 @@
 import type { Bounds, RegionalObjectQueryResponse } from "@aurora/shared";
 import { apiPost } from "../lib/http.js";
 import { db } from "./db.js";
+import {
+  HydrationGenerations,
+  newerHydratedObjects,
+  safeMissingObjectIds,
+} from "./hydrateCore.js";
 import { filterChangesForPendingOperations } from "./outboxCore.js";
 
 const OVERSCAN = 1.25;
+const generations = new HydrationGenerations();
 
 export function expandViewport(viewport: Bounds): Bounds {
   const padX = (viewport.width * (OVERSCAN - 1)) / 2;
@@ -21,16 +27,25 @@ export function expandViewport(viewport: Bounds): Bounds {
 
 /**
  * Fetch the regional objects for one note and merge them into the local cache.
- * The noteId travels in the path and the body carries viewport/page filters.
- * A complete regional response also removes cached server objects that disappeared
- * while this device was offline. Queued local objects remain protected.
+ * Only the latest request generation for a note may apply. In addition, object
+ * revisions and a start-of-request revision snapshot protect WebSocket writes
+ * that arrive while HTTP hydration is in flight.
  */
 export async function hydrateRegion(params: {
   noteId: string;
   viewport: Bounds;
   pageId?: string | null;
 }): Promise<RegionalObjectQueryResponse & { deletedObjectIds: string[] }> {
+  const generation = generations.begin(params.noteId);
   const queriedViewport = expandViewport(params.viewport);
+  const cachedAtStart = await db.objects
+    .where("noteId")
+    .equals(params.noteId)
+    .toArray();
+  const startRevisions = new Map(
+    cachedAtStart.map((object) => [object.id, object.revision]),
+  );
+
   const response = await apiPost<RegionalObjectQueryResponse>(
     `/api/notes/${params.noteId}/objects/query`,
     {
@@ -39,15 +54,30 @@ export async function hydrateRegion(params: {
     },
   );
 
-  let visibleObjects = response.objects;
+  // A superseded response must not mutate IndexedDB or the active canvas.
+  if (!generations.isCurrent(params.noteId, generation)) {
+    return { ...response, objects: [], deletedObjectIds: [] };
+  }
+
+  let visibleObjects: RegionalObjectQueryResponse["objects"] = [];
   let deletedObjectIds: string[] = [];
   await db.transaction("rw", db.objects, db.notes, db.outbox, async () => {
+    if (!generations.isCurrent(params.noteId, generation)) return;
+
     const queued = await db.outbox.toArray();
-    visibleObjects = filterChangesForPendingOperations(
+    const pendingSafeObjects = filterChangesForPendingOperations(
       { objects: response.objects, deletedObjectIds: [] },
       queued,
     ).objects;
+    const currentObjects = await db.objects.bulkGet(
+      pendingSafeObjects.map((object) => object.id),
+    );
+    visibleObjects = newerHydratedObjects(pendingSafeObjects, currentObjects);
+
+    if (!generations.isCurrent(params.noteId, generation)) return;
     await db.objects.bulkPut(visibleObjects);
+    if (!generations.isCurrent(params.noteId, generation)) return;
+
     if (!response.truncated) {
       const cached = await db.objects
         .where("noteId")
@@ -59,20 +89,19 @@ export async function hydrateRegion(params: {
           .filter((row) => row.op.noteId === params.noteId)
           .map((row) => row.op.objectId),
       );
-      deletedObjectIds = cached
-        .filter(
-          (object) =>
-            object.bounds.x < queriedViewport.x + queriedViewport.width &&
-            object.bounds.x + object.bounds.width > queriedViewport.x &&
-            object.bounds.y < queriedViewport.y + queriedViewport.height &&
-            object.bounds.y + object.bounds.height > queriedViewport.y &&
-            !returnedIds.has(object.id) &&
-            !queuedIds.has(object.id),
-        )
-        .map((object) => object.id);
+      deletedObjectIds = safeMissingObjectIds({
+        cached,
+        returnedIds,
+        queuedIds,
+        startRevisions,
+        viewport: queriedViewport,
+      });
+      if (!generations.isCurrent(params.noteId, generation)) return;
       await db.objects.bulkDelete(deletedObjectIds);
     }
+
     const note = await db.notes.get(params.noteId);
+    if (!generations.isCurrent(params.noteId, generation)) return;
     const maxObjectRevision = response.objects.reduce(
       (max, object) => Math.max(max, object.revision),
       0,
@@ -99,5 +128,8 @@ export async function hydrateRegion(params: {
     });
   });
 
+  if (!generations.isCurrent(params.noteId, generation)) {
+    return { ...response, objects: [], deletedObjectIds: [] };
+  }
   return { ...response, objects: visibleObjects, deletedObjectIds };
 }

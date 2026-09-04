@@ -23,7 +23,9 @@ function NoteTitle({ noteId, title }: { noteId: string; title: string }) {
   const commit = () => {
     const next = draft.trim() || "Untitled";
     setDraft(next);
-    if (next !== title) void library.renameNote(noteId, next);
+    if (next !== title) {
+      void library.renameNote(noteId, next).catch(() => undefined);
+    }
   };
 
   return (
@@ -70,7 +72,12 @@ function SyncPill({ onClick }: { onClick: () => void }) {
       ? "online"
       : "syncing";
   return (
-    <button className="sync-pill" onClick={onClick} title="Sync status">
+    <button
+      className="sync-pill"
+      onClick={onClick}
+      title="Sync status"
+      aria-label="Open sync status"
+    >
       {status.online ? <Wifi size={13} /> : <WifiOff size={13} />}
       <span className={`sync-dot ${dotClass}`} />
       {status.pendingOperations > 0
@@ -146,6 +153,7 @@ export function AuthenticatedShell({
             className="ghost"
             onClick={() => setDrawer("settings")}
             title="Account settings"
+            aria-label="Open account settings"
           >
             <Settings size={16} />
           </button>

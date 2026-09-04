@@ -13,16 +13,24 @@ export function generateSetupToken(): { token: string; tokenHash: string } {
   return { token, tokenHash };
 }
 
-// Self-hosted Aurora has exactly one owner row; create it on first bootstrap.
+// Self-hosted Aurora has exactly one owner row. The transaction-scoped lock makes
+// the initial read/create sequence atomic across concurrent server processes.
+const BOOTSTRAP_USER_LOCK_KEY = 0x4155524f;
+
 export async function ensureBootstrapUser(): Promise<string> {
-  const existing = await query<{ id: string }>(
-    "SELECT id FROM users ORDER BY created_at LIMIT 1",
-  );
-  if (existing.rows[0]) return existing.rows[0].id;
-  const created = await query<{ id: string }>(
-    "INSERT INTO users DEFAULT VALUES RETURNING id",
-  );
-  return created.rows[0]!.id;
+  return withTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock($1)", [
+      BOOTSTRAP_USER_LOCK_KEY,
+    ]);
+    const existing = await client.query<{ id: string }>(
+      "SELECT id FROM users ORDER BY created_at LIMIT 1",
+    );
+    if (existing.rows[0]) return existing.rows[0].id;
+    const created = await client.query<{ id: string }>(
+      "INSERT INTO users DEFAULT VALUES RETURNING id",
+    );
+    return created.rows[0]!.id;
+  });
 }
 
 export type BootstrapStatus = {

@@ -6,7 +6,6 @@ import type { AuroraEnv } from "../env.js";
 import { requireSessionPreHandler } from "../auth/sessions.js";
 import {
   backgroundSchema,
-  canvasObjectKindSchema,
   noteKindSchema,
   noteCanvasModeSchema,
 } from "./request-schemas.js";
@@ -49,7 +48,9 @@ const createNoteSchema = z.object({
   projectId: z.string().uuid(),
   folderId: z.string().uuid().optional(),
   title: z.string().max(200).optional(),
-  kind: noteKindSchema.optional(),
+  // Full PDF-note creation is not implemented; reject it instead of creating
+  // a note that cannot retain or resolve its source PDF.
+  kind: z.literal("canvas").optional(),
   canvasMode: noteCanvasModeSchema.optional(),
   background: backgroundSchema.optional(),
 });

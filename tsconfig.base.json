@@ -6,6 +6,8 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",

@@ -17,9 +17,9 @@ export interface StrokePoint {
 // rich-text:          { doc: ProseMirrorJSON }
 // stroke:             { points: [x, y, pressure][], color: string, baseWidth: number }
 // line | arrow:       { start, end, color, strokeWidth, lineStyle }
-// rectangle | ellipse:{ color, fill, strokeWidth, lineStyle, cornerRadius? }
+// rectangle | ellipse:{ color, fill, fillOpacity, strokeWidth, lineStyle, cornerRadius? }
 // sticky-note:        { text: string, color: string }
-// image:              { src: string, alt: string }
+// image:              { fileId: string, alt: string } (legacy: { src, alt })
 // attachment:         { name: string, size: number, fileId: string }
 // pdf-page-reference: { sourceNoteId: string, pageNumber: number, pdfUrl?: string }
 
@@ -86,6 +86,14 @@ export function getShapeColor(o: CanvasObject): string {
 export function getShapeFill(o: CanvasObject): string | null {
   const fill = o.payload.fill;
   return typeof fill === "string" ? fill : null;
+}
+
+/** Reads the persisted fill opacity percentage; legacy filled shapes were opaque. */
+export function getShapeFillOpacity(o: CanvasObject): number {
+  const opacity = o.payload.fillOpacity;
+  return typeof opacity === "number" && Number.isFinite(opacity)
+    ? Math.max(0, Math.min(100, opacity))
+    : 100;
 }
 
 export type ShapeLineStyle = "solid" | "dashed" | "dotted";
@@ -202,7 +210,23 @@ export function getStickyColor(o: CanvasObject): string {
   return typeof o.payload.color === "string" ? o.payload.color : "#f7d774";
 }
 
+/** Creates the durable payload used by newly uploaded canvas images. */
+export function makeImagePayload(
+  fileId: string,
+  alt: string,
+): CanvasObject["payload"] {
+  return { fileId, alt };
+}
+
+export function getImageFileId(o: CanvasObject): string | null {
+  const fileId = o.payload.fileId;
+  return typeof fileId === "string" && fileId.length > 0 ? fileId : null;
+}
+
+/** Derives the authenticated file route, retaining legacy/external `src` payloads. */
 export function getImageSrc(o: CanvasObject): string | null {
+  const fileId = getImageFileId(o);
+  if (fileId !== null) return `/api/files/${encodeURIComponent(fileId)}`;
   return typeof o.payload.src === "string" ? o.payload.src : null;
 }
 

@@ -1,9 +1,7 @@
 // Canvas workspace composition: four canvas modes, viewport transform with overscan culling, backgrounds, selection/move/resize gestures, pen capture with palm rejection, mouse/touch navigation, paged page frames, and object creation. Edits emit coalesced SyncOperations through onOperation; object rendering is delegated to ObjectRenderer, and the sync cache supplies objects when the prop is omitted.
 import type React from "react";
 import {
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -22,7 +20,8 @@ import {
 } from "@aurora/shared";
 import { db } from "../../sync/db";
 import { syncEngine } from "../../sync/engine";
-import { Lock, Trash2, Unlock } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { CanvasScrollbars } from "./CanvasScrollbars";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
   DrawingPlacementPanel,
@@ -47,9 +46,9 @@ import {
   getShapeColor,
   getShapeCornerRadius,
   getShapeFill,
+  getShapeFillOpacity,
   getShapeLineStyle,
   getShapeStrokeWidth,
-  getStrokeBaseWidth,
   handleAtPoint,
   handlePositions,
   hitTestLineObject,
@@ -57,6 +56,7 @@ import {
   hitTestTopmostStroke,
   lineGeometryFromDrag,
   makeCanvasObject,
+  makeImagePayload,
   moveObjectToBounds,
   nextZIndex,
   pointsToBounds,
@@ -75,7 +75,6 @@ import {
 import {
   DEMO_OWNER_ID,
   MAX_OBJECTS_PER_NOTE,
-  type CanvasScrollBounds,
   canvasScrollBounds,
   canvasSurfaceFrames,
   clampBoundsToMode,
@@ -167,7 +166,7 @@ async function readImageSize(
   }
 }
 
-/** Uploads one image and returns its authenticated download URL. */
+/** Uploads one image and returns its durable server file ID. */
 async function uploadImage(file: File): Promise<string> {
   const body = new FormData();
   body.append("file", file);
@@ -176,7 +175,7 @@ async function uploadImage(file: File): Promise<string> {
   const result = (await response.json()) as { file?: { id?: unknown } };
   if (typeof result.file?.id !== "string")
     throw new Error("Upload returned no file ID");
-  return `/api/files/${result.file.id}`;
+  return result.file.id;
 }
 
 const CREATE_TOOLS: readonly string[] = [
@@ -212,6 +211,7 @@ function drawingStyleFromObject(object: CanvasObject): DrawingStyle {
   return {
     strokeColor: getShapeColor(object),
     fillColor: getShapeFill(object),
+    fillOpacity: getShapeFillOpacity(object),
     strokeWidth: getShapeStrokeWidth(object),
     lineStyle: getShapeLineStyle(object),
     cornerRadius: getShapeCornerRadius(object),
@@ -274,6 +274,7 @@ export function CanvasWorkspace({
   const [drawingStyle, setDrawingStyle] = useState<DrawingStyle>(() => ({
     strokeColor: palette[0] ?? "#000000",
     fillColor: null,
+    fillOpacity: 100,
     strokeWidth: 2,
     lineStyle: "solid",
     cornerRadius: 2,
@@ -540,7 +541,7 @@ export function CanvasWorkspace({
       try {
         for (const [index, file] of images.slice(0, available).entries()) {
           const dimensions = await readImageSize(file);
-          const src = await uploadImage(file);
+          const fileId = await uploadImage(file);
           const size = fitImageSize(dimensions.width, dimensions.height);
           appendObject(
             makeCanvasObject({
@@ -554,7 +555,7 @@ export function CanvasWorkspace({
                 activeMode,
               ),
               zIndex: nextZIndex(objectsRef.current),
-              payload: { src, alt: file.name },
+              payload: makeImagePayload(fileId, file.name),
             }),
           );
         }
@@ -611,7 +612,10 @@ export function CanvasWorkspace({
         strokeWidth: drawingStyle.strokeWidth,
         lineStyle: drawingStyle.lineStyle,
         ...(kind === "rectangle" || kind === "ellipse"
-          ? { fill: drawingStyle.fillColor }
+          ? {
+              fill: drawingStyle.fillColor,
+              fillOpacity: drawingStyle.fillOpacity,
+            }
           : {}),
         ...(kind === "rectangle"
           ? { cornerRadius: drawingStyle.cornerRadius }
@@ -1289,6 +1293,9 @@ export function CanvasWorkspace({
         ...(patch.fillColor !== undefined || "fillColor" in patch
           ? { fill: patch.fillColor }
           : {}),
+        ...(patch.fillOpacity !== undefined
+          ? { fillOpacity: patch.fillOpacity }
+          : {}),
         ...(patch.strokeWidth !== undefined
           ? { strokeWidth: patch.strokeWidth }
           : {}),
@@ -1448,7 +1455,10 @@ export function CanvasWorkspace({
         strokeWidth: drawingStyle.strokeWidth,
         lineStyle: drawingStyle.lineStyle,
         ...(gesture.tool === "rectangle" || gesture.tool === "ellipse"
-          ? { fill: drawingStyle.fillColor }
+          ? {
+              fill: drawingStyle.fillColor,
+              fillOpacity: drawingStyle.fillOpacity,
+            }
           : {}),
         ...(gesture.tool === "rectangle"
           ? { cornerRadius: drawingStyle.cornerRadius }
@@ -1845,192 +1855,6 @@ export function CanvasWorkspace({
           onViewportChange={setViewport}
         />
       ) : null}
-    </div>
-  );
-}
-
-function CanvasScrollbars({
-  bounds,
-  viewport,
-  visibleWidth,
-  visibleHeight,
-  canLockX,
-  canLockY,
-  lockedX,
-  lockedY,
-  onToggleLock,
-  onViewportChange,
-}: {
-  bounds: CanvasScrollBounds;
-  viewport: { x: number; y: number; zoom: number };
-  visibleWidth: number;
-  visibleHeight: number;
-  canLockX: boolean;
-  canLockY: boolean;
-  lockedX: boolean;
-  lockedY: boolean;
-  onToggleLock: (axis: "x" | "y") => void;
-  onViewportChange: Dispatch<
-    SetStateAction<{
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      zoom: number;
-    }>
-  >;
-}): ReactNode {
-  const overflowsX = bounds.contentWidth > visibleWidth;
-  const overflowsY = bounds.contentHeight > visibleHeight;
-  const ratioX = Math.max(
-    0.08,
-    Math.min(0.9, visibleWidth / bounds.contentWidth),
-  );
-  const ratioY = Math.max(
-    0.08,
-    Math.min(0.9, visibleHeight / bounds.contentHeight),
-  );
-  const rangeX = bounds.maxX - bounds.minX;
-  const rangeY = bounds.maxY - bounds.minY;
-  const progressX = Math.max(
-    0,
-    Math.min(1, (viewport.x - bounds.minX) / rangeX),
-  );
-  const progressY = Math.max(
-    0,
-    Math.min(1, (viewport.y - bounds.minY) / rangeY),
-  );
-  const [active, setActive] = useState({ x: true, y: true });
-  const hideTimers = useRef<{ x?: number; y?: number }>({});
-  const previousPosition = useRef({ x: viewport.x, y: viewport.y });
-
-  const showAxis = useCallback((axis: "x" | "y"): void => {
-    window.clearTimeout(hideTimers.current[axis]);
-    setActive((current) => ({ ...current, [axis]: true }));
-    hideTimers.current[axis] = window.setTimeout(
-      () => setActive((current) => ({ ...current, [axis]: false })),
-      1200,
-    );
-  }, []);
-
-  useEffect(() => {
-    if (viewport.x !== previousPosition.current.x) showAxis("x");
-    if (viewport.y !== previousPosition.current.y) showAxis("y");
-    previousPosition.current = { x: viewport.x, y: viewport.y };
-  }, [showAxis, viewport.x, viewport.y]);
-
-  useEffect(() => {
-    showAxis("x");
-    showAxis("y");
-    return () => {
-      window.clearTimeout(hideTimers.current.x);
-      window.clearTimeout(hideTimers.current.y);
-    };
-  }, [showAxis]);
-
-  const move = (
-    event: React.PointerEvent<HTMLDivElement>,
-    axis: "x" | "y",
-    ratio: number,
-  ): void => {
-    if ((axis === "x" && lockedX) || (axis === "y" && lockedY)) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const trackSize = axis === "x" ? rect.width : rect.height;
-    const pointer =
-      axis === "x" ? event.clientX - rect.left : event.clientY - rect.top;
-    const progress = Math.max(
-      0,
-      Math.min(1, (pointer / trackSize - ratio / 2) / (1 - ratio)),
-    );
-    onViewportChange((current) => ({
-      ...current,
-      [axis]:
-        axis === "x"
-          ? bounds.minX + progress * rangeX
-          : bounds.minY + progress * rangeY,
-    }));
-  };
-  const pointerDown = (
-    event: React.PointerEvent<HTMLDivElement>,
-    axis: "x" | "y",
-    ratio: number,
-  ): void => {
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    move(event, axis, ratio);
-  };
-  const pointerMove = (
-    event: React.PointerEvent<HTMLDivElement>,
-    axis: "x" | "y",
-    ratio: number,
-  ): void => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    event.stopPropagation();
-    move(event, axis, ratio);
-  };
-  const lockButton = (axis: "x" | "y", locked: boolean): ReactNode => (
-    <button
-      type="button"
-      className={`canvas-axis-lock ${axis === "x" ? "horizontal" : "vertical"}`}
-      aria-label={`${locked ? "Unlock" : "Lock"} ${axis === "x" ? "horizontal" : "vertical"} canvas movement`}
-      aria-pressed={locked}
-      title={`${locked ? "Unlock" : "Lock"} ${axis === "x" ? "horizontal" : "vertical"} movement`}
-      onPointerDown={(event) => event.stopPropagation()}
-      onPointerUp={(event) => event.stopPropagation()}
-      onClick={() => onToggleLock(axis)}
-    >
-      {locked ? <Lock size={12} /> : <Unlock size={12} />}
-    </button>
-  );
-
-  return (
-    <div className="canvas-scrollbars" aria-label="Canvas scroll controls">
-      {overflowsX ? (
-        <div
-          className="canvas-scrollbar horizontal"
-          data-active={active.x && !lockedX}
-          role="scrollbar"
-          aria-label="Horizontal canvas position"
-          aria-orientation="horizontal"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(progressX * 100)}
-          onPointerDown={(event) => pointerDown(event, "x", ratioX)}
-          onPointerMove={(event) => pointerMove(event, "x", ratioX)}
-        >
-          <span
-            className="canvas-scrollbar-thumb"
-            style={{
-              width: `${ratioX * 100}%`,
-              left: `${progressX * (1 - ratioX) * 100}%`,
-            }}
-          />
-        </div>
-      ) : null}
-      {overflowsY ? (
-        <div
-          className="canvas-scrollbar vertical"
-          data-active={active.y && !lockedY}
-          role="scrollbar"
-          aria-label="Vertical canvas position"
-          aria-orientation="vertical"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(progressY * 100)}
-          onPointerDown={(event) => pointerDown(event, "y", ratioY)}
-          onPointerMove={(event) => pointerMove(event, "y", ratioY)}
-        >
-          <span
-            className="canvas-scrollbar-thumb"
-            style={{
-              height: `${ratioY * 100}%`,
-              top: `${progressY * (1 - ratioY) * 100}%`,
-            }}
-          />
-        </div>
-      ) : null}
-      {canLockX ? lockButton("x", lockedX) : null}
-      {canLockY ? lockButton("y", lockedY) : null}
     </div>
   );
 }

@@ -1,11 +1,6 @@
 // Defines Aurora's domain errors and maps them to HTTP responses for Fastify error handling.
 import { createReadStream } from "node:fs";
-import type {
-  FastifyError,
-  FastifyInstance,
-  FastifyReply,
-  FastifyRequest,
-} from "fastify";
+import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 
 export class DomainError extends Error {

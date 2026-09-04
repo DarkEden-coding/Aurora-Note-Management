@@ -3,12 +3,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { CanvasObject } from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
-import { notFound } from "../errors.js";
+import { invalid, notFound } from "../errors.js";
 import { query, withTransaction } from "../db/pool.js";
 import { requireSessionPreHandler } from "../auth/sessions.js";
 import { broadcastToOwner } from "../sync/ws.js";
 import {
-  loadObjectForUpdate,
   mapCanvasObject,
   touchNote,
   upsertObject,
@@ -39,6 +38,14 @@ export type SnapshotPayload = {
   pages: PageJson[];
   objects: CanvasObject[];
 };
+
+/** Returns a revision newer than both the deleted/cached object and note watermark. */
+export function nextRestoredObjectRevision(
+  previousRevision: number | undefined,
+  noteRevision: number,
+): number {
+  return Math.max(previousRevision ?? -1, noteRevision) + 1;
+}
 
 type SnapshotRow = {
   id: string;
@@ -77,7 +84,7 @@ export async function createSnapshot(
   return withTransaction(async (client) => {
     const note = await client.query<NoteRow>(
       `SELECT id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-              favorite, archived_at, trashed_at, revision, created_at, updated_at
+              favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at
        FROM notes WHERE owner_id = $1 AND id = $2 FOR UPDATE`,
       [ownerId, noteId],
     );
@@ -143,53 +150,142 @@ export async function getSnapshot(
   return row;
 }
 
-// Restore strategy: snapshot objects become current truth with fresh monotonic revisions; objects
-// added since the snapshot are removed so the note matches the recorded state exactly.
+// Restore every entity captured by the snapshot in one transaction. Canvas objects
+// receive fresh monotonic revisions, while note metadata and pages return to the
+// captured values. Any FK failure rolls the entire restore back.
 export async function restoreSnapshot(
   ownerId: string,
   snapshotId: string,
-): Promise<{ note: NoteJson; objects: CanvasObject[] }> {
+): Promise<{ note: NoteJson; pages: PageJson[]; objects: CanvasObject[] }> {
   const snapshot = await getSnapshot(ownerId, snapshotId);
   const payload = snapshot.payload;
   const restored = await withTransaction(async (client) => {
-    await client.query(
-      "SELECT id FROM notes WHERE owner_id = $1 AND id = $2 FOR UPDATE",
+    const lockedNote = await client.query<{
+      id: string;
+      pdf_file_id: string | null;
+      revision: number;
+    }>(
+      "SELECT id, pdf_file_id, revision FROM notes WHERE owner_id = $1 AND id = $2 FOR UPDATE",
       [ownerId, snapshot.note_id],
     );
-    const live = await client.query<{ id: string }>(
-      "SELECT id FROM canvas_objects WHERE owner_id = $1 AND note_id = $2",
+    if (!lockedNote.rows[0]) throw notFound("Note");
+    if (
+      payload.note.id !== snapshot.note_id ||
+      payload.note.ownerId !== ownerId ||
+      payload.pages.some(
+        (page) => page.ownerId !== ownerId || page.noteId !== snapshot.note_id,
+      ) ||
+      payload.objects.some(
+        (object) =>
+          object.ownerId !== ownerId || object.noteId !== snapshot.note_id,
+      )
+    ) {
+      throw invalid("Snapshot payload ownership does not match its note");
+    }
+
+    const liveObjects = await client.query<{ id: string; revision: number }>(
+      `SELECT id, revision FROM canvas_objects
+       WHERE owner_id = $1 AND note_id = $2 FOR UPDATE`,
       [ownerId, snapshot.note_id],
+    );
+    const previousRevisions = new Map(
+      liveObjects.rows.map((row) => [row.id, Number(row.revision)]),
     );
     const snapshotIds = new Set(payload.objects.map((object) => object.id));
+    const deletedObjectIds = liveObjects.rows
+      .filter((row) => !snapshotIds.has(row.id))
+      .map((row) => row.id);
+
+    // Replacing children avoids page-index uniqueness conflicts when pages were
+    // reordered after the snapshot. It is safe because this transaction owns the note.
+    await client.query(
+      "DELETE FROM canvas_objects WHERE owner_id = $1 AND note_id = $2",
+      [ownerId, snapshot.note_id],
+    );
+    await client.query(
+      "DELETE FROM pages WHERE owner_id = $1 AND note_id = $2",
+      [ownerId, snapshot.note_id],
+    );
+
+    const pages: PageJson[] = [];
+    for (const page of payload.pages) {
+      const inserted = await client.query<PageRow>(
+        `INSERT INTO pages
+           (id, owner_id, note_id, page_index, width, height, background)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, owner_id, note_id, page_index, width, height, background,
+                   created_at, updated_at`,
+        [
+          page.id,
+          ownerId,
+          snapshot.note_id,
+          page.pageIndex,
+          page.width,
+          page.height,
+          JSON.stringify(page.background),
+        ],
+      );
+      const row = inserted.rows[0]!;
+      pages.push({
+        id: row.id,
+        ownerId: row.owner_id,
+        noteId: row.note_id,
+        pageIndex: Number(row.page_index),
+        width: Number(row.width),
+        height: Number(row.height),
+        background: mergeBackground(row.background),
+      });
+    }
+
+    const pageIds = new Set(payload.pages.map((page) => page.id));
     const objects: CanvasObject[] = [];
     for (const object of payload.objects) {
-      const current = await loadObjectForUpdate(client, ownerId, object.id);
+      if (object.pageId && !pageIds.has(object.pageId)) {
+        throw invalid("Snapshot object refers to a page outside the snapshot");
+      }
       objects.push(
         await upsertObject(
           client,
           ownerId,
           object,
-          current ? current.revision + 1 : 0,
+          nextRestoredObjectRevision(
+            previousRevisions.get(object.id),
+            Number(lockedNote.rows[0].revision),
+          ),
         ),
       );
     }
-    const deletedObjectIds = live.rows
-      .filter((row) => !snapshotIds.has(row.id))
-      .map((row) => row.id);
-    if (deletedObjectIds.length > 0) {
-      await client.query(
-        "DELETE FROM canvas_objects WHERE owner_id = $1 AND id = ANY($2::uuid[])",
-        [ownerId, deletedObjectIds],
-      );
-    }
-    await touchNote(client, ownerId, snapshot.note_id);
+
     const note = await client.query<NoteRow>(
-      `SELECT id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-              favorite, archived_at, trashed_at, revision, created_at, updated_at
-       FROM notes WHERE owner_id = $1 AND id = $2`,
-      [ownerId, snapshot.note_id],
+      `UPDATE notes SET
+         project_id = $3, folder_id = $4, title = $5, kind = $6,
+         canvas_mode = $7, background = $8, favorite = $9,
+         archived_at = $10, trashed_at = $11, pdf_file_id = $12,
+         revision = revision + 1, updated_at = now()
+       WHERE owner_id = $1 AND id = $2
+       RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode,
+                 background, favorite, archived_at, trashed_at, revision,
+                 pdf_file_id, created_at, updated_at`,
+      [
+        ownerId,
+        snapshot.note_id,
+        payload.note.projectId,
+        payload.note.folderId,
+        payload.note.title,
+        payload.note.kind,
+        payload.note.canvasMode,
+        JSON.stringify(payload.note.background),
+        payload.note.favorite,
+        payload.note.archivedAt,
+        payload.note.trashedAt,
+        // Snapshots written before schema version 2 did not capture this field;
+        // preserve the live PDF attachment rather than silently clearing it.
+        Object.hasOwn(payload.note, "pdfFileId")
+          ? payload.note.pdfFileId
+          : lockedNote.rows[0].pdf_file_id,
+      ],
     );
-    return { note: mapNote(note.rows[0]!), objects, deletedObjectIds };
+    return { note: mapNote(note.rows[0]!), pages, objects, deletedObjectIds };
   });
 
   broadcastToOwner(ownerId, {
@@ -200,18 +296,11 @@ export async function restoreSnapshot(
     originOperationId: snapshotId,
     serverTimestamp: new Date().toISOString(),
   });
-  return { note: restored.note, objects: restored.objects };
-}
-
-// Snapshots follow the same 30-day retention window as other history.
-export async function pruneExpiredSnapshots(
-  retentionDays: number,
-): Promise<number> {
-  const result = await query<{ id: string }>(
-    `DELETE FROM snapshots WHERE created_at < now() - ($1 || ' days')::interval RETURNING id`,
-    [String(retentionDays)],
-  );
-  return result.rows.length;
+  return {
+    note: restored.note,
+    pages: restored.pages,
+    objects: restored.objects,
+  };
 }
 
 const createSnapshotBodySchema = z.object({

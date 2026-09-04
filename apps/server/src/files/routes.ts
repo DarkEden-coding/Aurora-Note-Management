@@ -20,6 +20,14 @@ const listQuerySchema = z.object({
 });
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+export function downloadDisposition(mimeType: string): "inline" | "attachment" {
+  const normalized = mimeType.trim().toLowerCase().split(";", 1)[0];
+  if (normalized === "image/svg+xml") return "attachment";
+  return normalized?.startsWith("image/") || normalized === "application/pdf"
+    ? "inline"
+    : "attachment";
+}
+
 export function registerFileRoutes(app: FastifyInstance, env: AuroraEnv): void {
   const preHandler = requireSessionPreHandler(env);
 
@@ -46,12 +54,16 @@ export function registerFileRoutes(app: FastifyInstance, env: AuroraEnv): void {
         }
         throw error;
       }
-      const metadata = await upsertFileMetadata(request.ownerId!, {
-        digest: upload.digest,
-        size: upload.size,
-        mimeType,
-        originalName,
-      });
+      const metadata = await upsertFileMetadata(
+        request.ownerId!,
+        {
+          digest: upload.digest,
+          size: upload.size,
+          mimeType,
+          originalName,
+        },
+        env.AURORA_UPLOAD_DIR,
+      );
       return reply.status(201).send({ file: metadata });
     },
   );
@@ -69,9 +81,7 @@ export function registerFileRoutes(app: FastifyInstance, env: AuroraEnv): void {
       const { id } = idParamSchema.parse(request.params);
       const target = await openDownload(env, request.ownerId!, id);
       const mimeType = target.metadata.mime_type;
-      const inline =
-        mimeType.startsWith("image/") || mimeType === "application/pdf";
-      const disposition = inline ? "inline" : "attachment";
+      const disposition = downloadDisposition(mimeType);
       const filename = sanitizeFilename(target.metadata.original_name);
       const stream = createDownloadStream(target);
       return reply

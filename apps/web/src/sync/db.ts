@@ -1,6 +1,15 @@
 // This module owns Aurora's IndexedDB schema (Dexie): cached library rows, cached canvas objects, the durable outbox, conflict records, and small metadata keys. All offline persistence flows through this database.
 import Dexie, { type EntityTable } from "dexie";
-import type { Background, CanvasObject, DeleteMarker } from "@aurora/shared";
+import type {
+  Background,
+  CanvasObject,
+  DeleteMarker,
+  LibraryFolder,
+  LibraryProject,
+} from "@aurora/shared";
+
+export type CachedProject = LibraryProject;
+export type CachedFolder = LibraryFolder;
 
 export interface CachedNote {
   id: string;
@@ -48,6 +57,8 @@ export interface MetaRow {
 }
 
 export class AuroraDb extends Dexie {
+  projects!: EntityTable<CachedProject, "id">;
+  folders!: EntityTable<CachedFolder, "id">;
   notes!: EntityTable<CachedNote, "id">;
   objects!: EntityTable<CachedObject, "id">;
   outbox!: EntityTable<OutboxRow, "id">;
@@ -57,6 +68,17 @@ export class AuroraDb extends Dexie {
   constructor() {
     super("aurora");
     this.version(1).stores({
+      notes: "id, projectId, folderId, updatedAt, lastOpenedAt",
+      objects: "id, noteId, [noteId+revision], updatedAt",
+      outbox: "id, createdAt, nextAttemptAt, status",
+      conflicts: "id, noteId, objectId, createdAt",
+      meta: "key",
+    });
+    // Version 2 adds the missing container rows so an offline launch can
+    // reconstruct the same project/folder tree that cached notes belong to.
+    this.version(2).stores({
+      projects: "id, order",
+      folders: "id, projectId, parentId",
       notes: "id, projectId, folderId, updatedAt, lastOpenedAt",
       objects: "id, noteId, [noteId+revision], updatedAt",
       outbox: "id, createdAt, nextAttemptAt, status",

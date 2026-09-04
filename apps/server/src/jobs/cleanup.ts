@@ -1,7 +1,8 @@
-// Retention job: removes expired records while leaving content-addressed bytes untouched to prevent upload cleanup races.
+// Retention job: removes expired records and safely reclaims unreferenced upload bytes.
 import { fileURLToPath } from "node:url";
 import type { AuroraEnv } from "../env.js";
-import { query } from "../db/pool.js";
+import { getPool, query } from "../db/pool.js";
+import { deleteFileBytes } from "../files/store.js";
 
 export async function cleanupExpiredTrash(
   retentionDays: number,
@@ -51,26 +52,165 @@ export async function cleanupSnapshots(retentionDays: number): Promise<number> {
   return result.rows.length;
 }
 
-// Files become unreferenced when no object payload and no pdf note points at them.
+// This predicate supports both the newer explicit fileId payload and the URL-only
+// image payload currently written by the web client. Query strings/fragments and
+// absolute same-origin URLs are accepted because their path still ends in the ID.
+export const FILE_REFERENCE_PREDICATE = `
+  o.owner_id = f.owner_id
+  AND (
+    o.payload ->> 'fileId' = f.id::text
+    OR split_part(
+         split_part(COALESCE(o.payload ->> 'src', ''), '#', 1),
+         '?', 1
+       ) LIKE '%/api/files/' || f.id::text
+  )
+`;
+
+const SNAPSHOT_FILE_REFERENCE_PREDICATE = `
+  s.owner_id = f.owner_id
+  AND (
+    s.payload -> 'note' ->> 'pdfFileId' = f.id::text
+    OR snapshot_object -> 'payload' ->> 'fileId' = f.id::text
+    OR split_part(
+         split_part(
+           COALESCE(snapshot_object -> 'payload' ->> 'src', ''), '#', 1
+         ), '?', 1
+       ) LIKE '%/api/files/' || f.id::text
+  )
+`;
+
+const CONFLICT_FILE_REFERENCE_PREDICATE = `
+  c.owner_id = f.owner_id
+  AND c.resolved_at IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM unnest(ARRAY[c.base_object, c.incoming_object]) conflict_object
+    WHERE conflict_object -> 'payload' ->> 'fileId' = f.id::text
+       OR split_part(
+            split_part(
+              COALESCE(conflict_object -> 'payload' ->> 'src', ''), '#', 1
+            ), '?', 1
+          ) LIKE '%/api/files/' || f.id::text
+  )
+`;
+
+// Digest advisory locks are shared with metadata publication. They prevent a new
+// metadata row for identical bytes from appearing between the final DB check and
+// unlinking the content-addressed file.
 export async function cleanupUnreferencedFiles(
-  _uploadDir: string,
+  uploadDir: string,
 ): Promise<{ removed: string[]; bytesRemoved: string[] }> {
-  const removed = await query<{ id: string; sha256: string }>(
-    `DELETE FROM files f
-     WHERE NOT EXISTS (
-       SELECT 1 FROM canvas_objects o
-       WHERE o.owner_id = f.owner_id AND o.payload ->> 'fileId' = f.id::text
-     )
-       AND NOT EXISTS (
-       SELECT 1 FROM notes n
-       WHERE n.pdf_file_id = f.id
-     )
-     RETURNING id, sha256`,
-  );
-  // ponytail: orphaned bytes may grow with repeated deleted uploads; add a
-  // digest advisory lock shared by upload publication and cleanup before
-  // deleting bytes automatically.
-  return { removed: removed.rows.map((row) => row.id), bytesRemoved: [] };
+  const client = await getPool().connect();
+  const lockedDigests: string[] = [];
+  let inTransaction = false;
+  try {
+    await client.query("BEGIN");
+    inTransaction = true;
+    const candidates = await client.query<{ id: string; sha256: string }>(
+      `SELECT f.id, f.sha256
+       FROM files f
+       WHERE NOT EXISTS (
+         SELECT 1 FROM canvas_objects o WHERE ${FILE_REFERENCE_PREDICATE}
+       )
+         AND NOT EXISTS (
+           SELECT 1 FROM notes n
+           WHERE n.owner_id = f.owner_id AND n.pdf_file_id = f.id
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM snapshots s
+           LEFT JOIN LATERAL jsonb_array_elements(
+             CASE WHEN jsonb_typeof(s.payload -> 'objects') = 'array'
+               THEN s.payload -> 'objects' ELSE '[]'::jsonb END
+           ) snapshot_object ON true
+           WHERE ${SNAPSHOT_FILE_REFERENCE_PREDICATE}
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM conflicts c
+           WHERE ${CONFLICT_FILE_REFERENCE_PREDICATE}
+         )
+       ORDER BY f.sha256, f.id`,
+    );
+
+    // Session locks deliberately survive COMMIT until byte removal completes.
+    for (const digest of [
+      ...new Set(candidates.rows.map((row) => row.sha256)),
+    ]) {
+      await client.query(
+        "SELECT pg_advisory_lock(hashtextextended($1, 1096110671))",
+        [digest],
+      );
+      lockedDigests.push(digest);
+    }
+
+    const ids = candidates.rows.map((row) => row.id);
+    const removed =
+      ids.length === 0
+        ? { rows: [] as { id: string; sha256: string }[] }
+        : await client.query<{ id: string; sha256: string }>(
+            `DELETE FROM files f
+             WHERE f.id = ANY($1::uuid[])
+               AND NOT EXISTS (
+                 SELECT 1 FROM canvas_objects o WHERE ${FILE_REFERENCE_PREDICATE}
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM notes n
+                 WHERE n.owner_id = f.owner_id AND n.pdf_file_id = f.id
+               )
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM snapshots s
+                 LEFT JOIN LATERAL jsonb_array_elements(
+                   CASE WHEN jsonb_typeof(s.payload -> 'objects') = 'array'
+                     THEN s.payload -> 'objects' ELSE '[]'::jsonb END
+                 ) snapshot_object ON true
+                 WHERE ${SNAPSHOT_FILE_REFERENCE_PREDICATE}
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM conflicts c
+                 WHERE ${CONFLICT_FILE_REFERENCE_PREDICATE}
+               )
+             RETURNING f.id, f.sha256`,
+            [ids],
+          );
+    await client.query("COMMIT");
+    inTransaction = false;
+
+    const bytesRemoved: string[] = [];
+    for (const digest of [...new Set(removed.rows.map((row) => row.sha256))]) {
+      const stillReferenced = await client.query<{ exists: boolean }>(
+        "SELECT EXISTS (SELECT 1 FROM files WHERE sha256 = $1) AS exists",
+        [digest],
+      );
+      if (!stillReferenced.rows[0]?.exists) {
+        try {
+          await deleteFileBytes({ AURORA_UPLOAD_DIR: uploadDir }, digest);
+          bytesRemoved.push(digest);
+        } catch {
+          // Metadata is already gone and no live row references these bytes. A
+          // later cleanup can retry; never report an unlink that did not happen.
+        }
+      }
+    }
+    return {
+      removed: removed.rows.map((row) => row.id),
+      bytesRemoved,
+    };
+  } catch (error) {
+    if (inTransaction) await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    try {
+      for (const digest of lockedDigests.reverse()) {
+        await client.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1, 1096110671))",
+          [digest],
+        );
+      }
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export type CleanupReport = {
@@ -117,7 +257,6 @@ export async function main(): Promise<void> {
   );
 }
 
-// Run directly: execute cleanup and exit non-zero on failure.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch((error: unknown) => {
     console.error(error);

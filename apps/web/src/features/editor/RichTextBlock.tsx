@@ -11,11 +11,6 @@ import {
   Table as TableIcon,
 } from "lucide-react";
 
-export const EMPTY_DOC: Record<string, unknown> = {
-  type: "doc",
-  content: [{ type: "paragraph" }],
-};
-
 export interface RichTextBlockProps {
   /** Serialized ProseMirror JSON document for the block content. */
   content: Record<string, unknown>;

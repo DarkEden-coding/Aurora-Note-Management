@@ -6,7 +6,6 @@ import { useSession } from "./features/auth/session.js";
 import { LibraryProvider } from "./features/library/LibraryContext.js";
 import { AuthenticatedShell } from "./shell/AuthenticatedShell.js";
 import { ErrorBoundary } from "./shell/ErrorBoundary.js";
-import { ThemeProvider } from "./theme/ThemeProvider.js";
 
 export function App() {
   const {

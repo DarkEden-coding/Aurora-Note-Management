@@ -3,7 +3,7 @@
 // a `bounds` object, so every mapping goes through this module.
 import pg from "pg";
 import type { CanvasObject, RegionalObjectQuery } from "@aurora/shared";
-import { forbidden } from "../errors.js";
+import { forbidden, invalid } from "../errors.js";
 import { query } from "../db/pool.js";
 
 // Regional read response; server-local until promoted into @aurora/shared contracts.
@@ -120,6 +120,24 @@ export async function loadObjectForUpdate(
   return row ? mapCanvasObject(row) : null;
 }
 
+const UUID_PATTERN =
+  "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}";
+const FILE_URL_PATTERN = new RegExp(`/api/files/(${UUID_PATTERN})(?:[?#]|$)`);
+const UUID_EXACT_PATTERN = new RegExp(`^${UUID_PATTERN}$`);
+
+export function localFileIdFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = payload as { fileId?: unknown; src?: unknown };
+  if (
+    typeof value.fileId === "string" &&
+    UUID_EXACT_PATTERN.test(value.fileId)
+  ) {
+    return value.fileId;
+  }
+  if (typeof value.src !== "string") return null;
+  return FILE_URL_PATTERN.exec(value.src)?.[1] ?? null;
+}
+
 // Authoritative single-object upsert: the server assigns the revision (monotonic) and
 // timestamps; incoming objects arrive in the shared wire shape with a `bounds` object.
 export async function upsertObject(
@@ -128,6 +146,27 @@ export async function upsertObject(
   incoming: CanvasObject,
   revision: number,
 ): Promise<CanvasObject> {
+  const localFileId = localFileIdFromPayload(incoming.payload);
+  if (localFileId) {
+    const file = await client.query<{ sha256: string }>(
+      "SELECT sha256 FROM files WHERE owner_id = $1 AND id = $2",
+      [ownerId, localFileId],
+    );
+    const digest = file.rows[0]?.sha256;
+    if (!digest) throw invalid("Canvas object refers to a missing upload");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 1096110671))",
+      [digest],
+    );
+    const stillPresent = await client.query<{ id: string }>(
+      "SELECT id FROM files WHERE owner_id = $1 AND id = $2",
+      [ownerId, localFileId],
+    );
+    if (!stillPresent.rows[0]) {
+      throw invalid("Canvas object refers to a missing upload");
+    }
+  }
+
   const result = await client.query<CanvasObjectRow>(
     `INSERT INTO canvas_objects
        (id, owner_id, note_id, page_id, kind, x, y, width, height, rotation, z_index, locked, group_id, payload, revision, created_at, updated_at)
@@ -147,6 +186,9 @@ export async function upsertObject(
        payload = EXCLUDED.payload,
        revision = EXCLUDED.revision,
        updated_at = now()
+     -- UUIDs are global. A collision must never turn an owner-scoped insert into
+     -- an update of another owner's row.
+     WHERE canvas_objects.owner_id = EXCLUDED.owner_id
      RETURNING id, owner_id, note_id, page_id, kind, x, y, width, height, rotation,
                z_index, locked, group_id, payload, revision, created_at, updated_at`,
     [
@@ -167,7 +209,9 @@ export async function upsertObject(
       revision,
     ],
   );
-  return mapCanvasObject(result.rows[0]!);
+  const row = result.rows[0];
+  if (!row) throw forbidden("Canvas object");
+  return mapCanvasObject(row);
 }
 
 export async function deleteObject(

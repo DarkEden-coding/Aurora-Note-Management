@@ -14,7 +14,6 @@ import {
 import {
   bootstrapStatus,
   ensureBootstrapUser,
-  issueSetupTokenIfAbsent,
   markEnrolled,
 } from "./bootstrap.js";
 import {
@@ -22,7 +21,6 @@ import {
   generatePasskeyLoginOptions,
   generatePasskeyRegistrationOptions,
   getBootstrapUser,
-  listCredentials,
   loginWithPasskey,
   registerPasskey,
 } from "./webauthn.js";

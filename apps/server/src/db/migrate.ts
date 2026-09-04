@@ -1,4 +1,4 @@
-// Applies apps/server/src/db/migrations/*.sql in order exactly once and reports migration status.
+// Applies apps/server/src/db/migrations/*.sql in order exactly once.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,12 @@ export async function runMigrations(
   dir: string = DEFAULT_MIGRATIONS_DIR,
 ): Promise<string[]> {
   const client = await pool.connect();
+  let lockHeld = false;
   try {
+    // A session-level lock spans the individual per-migration transactions and
+    // also serializes creation of the migration ledger on a fresh database.
+    await client.query("SELECT pg_advisory_lock(1096110671)");
+    lockHeld = true;
     await client.query(`
       CREATE TABLE IF NOT EXISTS aurora_migrations (
         name text PRIMARY KEY,
@@ -54,28 +59,14 @@ export async function runMigrations(
     }
     return appliedNow;
   } finally {
-    client.release();
+    try {
+      if (lockHeld) {
+        await client.query("SELECT pg_advisory_unlock(1096110671)");
+      }
+    } finally {
+      client.release();
+    }
   }
-}
-
-export async function migrationStatus(
-  pool: pg.Pool,
-  dir: string = DEFAULT_MIGRATIONS_DIR,
-): Promise<{ name: string; applied: boolean }[]> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS aurora_migrations (
-      name text PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    )
-  `);
-  const applied = await pool.query<{ name: string }>(
-    "SELECT name FROM aurora_migrations",
-  );
-  const appliedNames = new Set(applied.rows.map((row) => row.name));
-  return listMigrationFiles(dir).map((name) => ({
-    name,
-    applied: appliedNames.has(name),
-  }));
 }
 
 async function main(): Promise<void> {

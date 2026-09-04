@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { DrawingPalette } from "@aurora/shared";
 import { Settings2 } from "lucide-react";
-import type { CanvasTool } from "./CanvasToolbar";
 import { DrawingColorPalette } from "./DrawingColorPalette";
 import type { ShapeLineStyle } from "./objects";
 
@@ -10,6 +9,8 @@ export type VectorTool = "rectangle" | "ellipse" | "line" | "arrow";
 export interface DrawingStyle {
   strokeColor: string;
   fillColor: string | null;
+  /** Fill/background opacity as a percentage. */
+  fillOpacity: number;
   strokeWidth: number;
   lineStyle: ShapeLineStyle;
   cornerRadius: number;
@@ -94,6 +95,29 @@ export function DrawingStyleControls({
         }
         onChange={onPaletteChange}
       />
+
+      {supportsFill && style.fillColor !== null ? (
+        <label className="drawing-property-field">
+          Fill opacity
+          <span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              aria-label="Fill opacity"
+              value={style.fillOpacity}
+              onChange={(event) =>
+                onPreview({ fillOpacity: Number(event.target.value) })
+              }
+              onPointerUp={onCommit}
+              onPointerCancel={onCommit}
+              onBlur={onCommit}
+            />
+            <output>{Math.round(style.fillOpacity)}%</output>
+          </span>
+        </label>
+      ) : null}
 
       {kind !== "pen" ? (
         <>

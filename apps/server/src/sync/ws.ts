@@ -26,13 +26,6 @@ function removeConnection(ownerId: string, socket: WebSocket): void {
   if (sockets.size === 0) connections.delete(ownerId);
 }
 
-export function connectionCount(ownerId?: string): number {
-  if (ownerId) return connections.get(ownerId)?.size ?? 0;
-  let total = 0;
-  for (const sockets of connections.values()) total += sockets.size;
-  return total;
-}
-
 export function broadcastToOwner(
   ownerId: string,
   event: OwnerBroadcastEvent,

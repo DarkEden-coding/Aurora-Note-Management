@@ -7,9 +7,13 @@ import {
   dragBoundsFree,
   fitImageSize,
   getArrowHeadGeometry,
+  getImageFileId,
+  getImageSrc,
   getLineEndpoints,
   getShapeCornerRadius,
   getShapeDashArray,
+  getShapeFill,
+  getShapeFillOpacity,
   getShapeLineStyle,
   getStrokePoints,
   hitTestLineObject,
@@ -17,6 +21,7 @@ import {
   hitTestTopmostStroke,
   lineGeometryFromDrag,
   makeCanvasObject,
+  makeImagePayload,
   moveObjectToBounds,
   nextZIndex,
   pointsToBounds,
@@ -64,6 +69,27 @@ describe("image imports", () => {
       height: 80,
     });
   });
+
+  it("persists file IDs, derives authenticated sources, and supports legacy src", () => {
+    expect(makeImagePayload("uploaded-id", "diagram.png")).toEqual({
+      fileId: "uploaded-id",
+      alt: "diagram.png",
+    });
+    const image = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c011",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "image",
+      bounds: { x: 0, y: 0, width: 20, height: 20 },
+      zIndex: 1,
+      payload: { fileId: "file/id", src: "blob:stale" },
+    });
+    expect(getImageFileId(image)).toBe("file/id");
+    expect(getImageSrc(image)).toBe("/api/files/file%2Fid");
+    expect(
+      getImageSrc({ ...image, payload: { src: "https://legacy/image" } }),
+    ).toBe("https://legacy/image");
+  });
 });
 
 describe("payload conventions", () => {
@@ -82,6 +108,32 @@ describe("payload conventions", () => {
       payload: { points: [[1, 2], "nope", [1, 2, "x"]] },
     });
     expect(getStrokePoints(bad)).toEqual([]);
+  });
+
+  it("reads transparent fills and clamped opacity with an opaque legacy fallback", () => {
+    const shape = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c012",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "ellipse",
+      bounds: { x: 0, y: 0, width: 20, height: 20 },
+      zIndex: 1,
+      payload: {},
+    });
+    expect(getShapeFill(shape)).toBeNull();
+    expect(getShapeFillOpacity(shape)).toBe(100);
+    expect(
+      getShapeFillOpacity({
+        ...shape,
+        payload: { fill: "red", fillOpacity: 37 },
+      }),
+    ).toBe(37);
+    expect(
+      getShapeFillOpacity({ ...shape, payload: { fillOpacity: 140 } }),
+    ).toBe(100);
+    expect(
+      getShapeFillOpacity({ ...shape, payload: { fillOpacity: -5 } }),
+    ).toBe(0);
   });
 
   it("reads vector line styles and clamps rectangle radius", () => {

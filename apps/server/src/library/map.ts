@@ -22,6 +22,7 @@ export type NoteJson = {
   archivedAt: string | null;
   trashedAt: string | null;
   revision: number;
+  pdfFileId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -100,6 +101,7 @@ export type NoteRow = {
   archived_at: Date | null;
   trashed_at: Date | null;
   revision: number;
+  pdf_file_id: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -119,6 +121,7 @@ export function mapNote(row: NoteRow): NoteJson {
     archivedAt: row.archived_at ? row.archived_at.toISOString() : null,
     trashedAt: row.trashed_at ? row.trashed_at.toISOString() : null,
     revision: row.revision,
+    pdfFileId: row.pdf_file_id,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

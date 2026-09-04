@@ -1,7 +1,6 @@
 // Process entry point: validates configuration, prepares bootstrap state, and listens.
 // This module must always run without a live database while type checking; runtime DB use is explicit.
 import fs from "node:fs/promises";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnv, type AuroraEnv } from "./env.js";
 import { buildServer } from "./app.js";

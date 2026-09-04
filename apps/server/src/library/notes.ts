@@ -19,7 +19,7 @@ import {
 
 const NOTE_SELECT = `
   SELECT id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-         favorite, archived_at, trashed_at, revision, created_at, updated_at
+         favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at
   FROM notes
 `;
 
@@ -96,7 +96,6 @@ export async function createNote(
     projectId: string;
     folderId?: string | undefined;
     title?: string | undefined;
-    kind?: "canvas" | "pdf" | undefined;
     canvasMode?: CanvasMode | undefined;
     background?: Background | undefined;
   },
@@ -118,13 +117,13 @@ export async function createNote(
     `INSERT INTO notes (owner_id, project_id, folder_id, title, kind, canvas_mode, background)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-               favorite, archived_at, trashed_at, revision, created_at, updated_at`,
+               favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at`,
     [
       ownerId,
       input.projectId,
       input.folderId ?? null,
       input.title ?? "Untitled note",
-      input.kind ?? "canvas",
+      "canvas",
       input.canvasMode ?? "infinite",
       JSON.stringify(background),
     ],
@@ -178,7 +177,7 @@ export async function updateNote(
        canvas_mode = COALESCE($6, canvas_mode), ${noteUpdateAssignments().join(", ")}
      WHERE owner_id = $1 AND id = $2
      RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-               favorite, archived_at, trashed_at, revision, created_at, updated_at`,
+               favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at`,
     [
       ownerId,
       noteId,
@@ -201,7 +200,7 @@ export async function setNoteArchived(
     `UPDATE notes SET archived_at = ${archived ? "now()" : "NULL"}, ${noteUpdateAssignments().join(", ")}
      WHERE owner_id = $1 AND id = $2
      RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-               favorite, archived_at, trashed_at, revision, created_at, updated_at`,
+               favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at`,
     [ownerId, noteId],
   );
   return mapNote(result.rows[0]!);
@@ -217,7 +216,7 @@ export async function setNoteFavorite(
     `UPDATE notes SET favorite = $3, ${noteUpdateAssignments().join(", ")}
      WHERE owner_id = $1 AND id = $2
      RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-               favorite, archived_at, trashed_at, revision, created_at, updated_at`,
+               favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at`,
     [ownerId, noteId, favorite],
   );
   return mapNote(result.rows[0]!);
@@ -233,7 +232,7 @@ export async function setNoteTrashed(
     `UPDATE notes SET trashed_at = ${trashed ? "now()" : "NULL"}, ${noteUpdateAssignments().join(", ")}
      WHERE owner_id = $1 AND id = $2
      RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-               favorite, archived_at, trashed_at, revision, created_at, updated_at`,
+               favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at`,
     [ownerId, noteId],
   );
   return mapNote(result.rows[0]!);

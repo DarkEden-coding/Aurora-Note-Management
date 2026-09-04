@@ -5,7 +5,7 @@ import path from "node:path";
 import { once } from "node:events";
 import type { Readable } from "node:stream";
 import { invalid, notFound, payloadTooLarge } from "../errors.js";
-import { query } from "../db/pool.js";
+import { query, withTransaction } from "../db/pool.js";
 
 // File metadata transport type; server-local until promoted into @aurora/shared contracts.
 export type FileMetadata = {
@@ -139,15 +139,31 @@ export async function upsertFileMetadata(
     mimeType: string;
     originalName: string;
   },
+  uploadDir: string,
 ): Promise<FileMetadata> {
-  const result = await query<FileRow>(
-    `INSERT INTO files (owner_id, sha256, size, mime_type, original_name)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (owner_id, sha256) DO UPDATE SET original_name = EXCLUDED.original_name
-     RETURNING id, owner_id, sha256, size, mime_type, original_name, created_at`,
-    [ownerId, upload.digest, upload.size, upload.mimeType, upload.originalName],
-  );
-  return mapFile(result.rows[0]!);
+  return withTransaction(async (client) => {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 1096110671))",
+      [upload.digest],
+    );
+    // Cleanup may have won a race after this upload published its digest path.
+    // Never commit metadata unless the bytes still exist while holding the same lock.
+    await fs.promises.access(absoluteFilePath(uploadDir, upload.digest));
+    const result = await client.query<FileRow>(
+      `INSERT INTO files (owner_id, sha256, size, mime_type, original_name)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (owner_id, sha256) DO UPDATE SET original_name = EXCLUDED.original_name
+       RETURNING id, owner_id, sha256, size, mime_type, original_name, created_at`,
+      [
+        ownerId,
+        upload.digest,
+        upload.size,
+        upload.mimeType,
+        upload.originalName,
+      ],
+    );
+    return mapFile(result.rows[0]!);
+  });
 }
 
 export async function getFileMetadata(
@@ -194,7 +210,7 @@ export function createDownloadStream(target: DownloadTarget): fs.ReadStream {
 }
 
 export async function deleteFileBytes(
-  env: AuroraFileEnv,
+  env: Pick<AuroraFileEnv, "AURORA_UPLOAD_DIR">,
   digest: string,
 ): Promise<void> {
   await fs.promises.rm(absoluteFilePath(env.AURORA_UPLOAD_DIR, digest), {

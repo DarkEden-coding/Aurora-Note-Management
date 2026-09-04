@@ -1,6 +1,6 @@
 // Owns opaque session tokens: creation, secure cookie flags, DB-backed validation, and revocation.
 import crypto from "node:crypto";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import type { CookieSerializeOptions } from "@fastify/cookie";
 import type { AuroraEnv } from "../env.js";
 import { unauthorized } from "../errors.js";

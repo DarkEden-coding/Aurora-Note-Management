@@ -18,7 +18,7 @@ import { registerWsRoutes } from "./sync/ws.js";
 import { registerFileRoutes } from "./files/routes.js";
 import { registerSearchRoutes } from "./search/search.js";
 import { registerSnapshotRoutes } from "./history/snapshots.js";
-import { registerBackupRoutes } from "./backup/export.js";
+import { registerExportRoutes } from "./backup/export.js";
 import "./http/request-context.js";
 
 export type BuildServerOptions = {
@@ -92,7 +92,7 @@ export async function buildServer(
   registerFileRoutes(app, env);
   registerSearchRoutes(app, env);
   registerSnapshotRoutes(app, env);
-  registerBackupRoutes(app, env);
+  registerExportRoutes(app, env);
 
   return app;
 }

@@ -1,6 +1,6 @@
 // Deterministic demo content so CanvasWorkspace is visibly functional when objects are omitted. Demo objects use the payload conventions documented in objects.ts.
 import type { CanvasObject } from "@aurora/shared";
-import { EMPTY_DOC } from "../editor";
+import { EMPTY_DOC } from "../editor/document";
 import { DEMO_OWNER_ID } from "./pageLayout";
 import { makeCanvasObject, setStrokePayload } from "./objects";
 

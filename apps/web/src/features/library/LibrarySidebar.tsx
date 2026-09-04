@@ -1,5 +1,5 @@
 // Aurora's library tree, creation dialogs, and pointer-positioned context menus.
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  RotateCcw,
   Search,
   Star,
   Trash2,
@@ -33,7 +34,8 @@ type DialogState =
         | "rename-folder"
         | "rename-note"
         | "confirm-project"
-        | "confirm-folder";
+        | "confirm-folder"
+        | "confirm-note-delete";
       id: string;
       value: string;
     };
@@ -70,6 +72,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   );
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [trashExpanded, setTrashExpanded] = useState(false);
   const query = library.search.trim().toLowerCase();
   const matches = useMemo(
     () =>
@@ -308,8 +311,10 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
           id: target.item.id,
           value: target.item.title,
         });
-      if (action === "favorite") void library.toggleFavorite(target.item.id);
-      if (action === "delete") void library.trashNote(target.item.id);
+      if (action === "favorite")
+        void library.toggleFavorite(target.item.id).catch(() => undefined);
+      if (action === "delete")
+        void library.trashNote(target.item.id).catch(() => undefined);
     }
   };
   return (
@@ -329,6 +334,19 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             )}
           </button>
         </div>
+        {library.mutationError ? (
+          <div className="error-text" role="alert">
+            {library.mutationError}{" "}
+            <button
+              type="button"
+              className="ghost"
+              onClick={library.clearMutationError}
+              aria-label="Dismiss library error"
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
         {collapsed ? null : (
           <>
             <div className="field library-search">
@@ -351,6 +369,61 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
                 {library.notes.filter((note) => note.favorite).map(renderNote)}
               </div>
             ) : null}
+            <div className="sidebar-section">
+              <button
+                type="button"
+                className="sidebar-section-title"
+                aria-expanded={trashExpanded}
+                onClick={() => setTrashExpanded((expanded) => !expanded)}
+              >
+                <Trash2 size={12} /> Trash ({library.trashedNotes.length})
+              </button>
+              {trashExpanded ? (
+                library.trashedNotes.length > 0 ? (
+                  library.trashedNotes.map((note) => (
+                    <div className="tree-item" key={note.id}>
+                      <div
+                        className="tree-row tree-row-main"
+                        title={note.title}
+                      >
+                        <FileText size={16} className="muted" />
+                        <span className="label">
+                          {note.title || "Untitled"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="tree-action"
+                        aria-label={`Restore ${note.title || "Untitled"}`}
+                        onClick={() =>
+                          void library
+                            .restoreNote(note.id)
+                            .catch(() => undefined)
+                        }
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="tree-action danger"
+                        aria-label={`Delete ${note.title || "Untitled"} permanently`}
+                        onClick={() =>
+                          setDialog({
+                            kind: "confirm-note-delete",
+                            id: note.id,
+                            value: note.title || "Untitled",
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="tree-row muted">Trash is empty</div>
+                )
+              ) : null}
+            </div>
             <div className="sidebar-section">
               <div className="sidebar-section-title">Projects</div>
               {library.projects.map(renderProject)}
@@ -440,6 +513,7 @@ function LibraryDialog({
   const [pattern, setPattern] = useState<Background["pattern"]>("dot-grid");
   const [color, setColor] = useState(NOTE_COLORS[0]!);
   const [error, setError] = useState("");
+  const dialogRef = useRef<HTMLFormElement>(null);
   const destructive = state.kind.startsWith("confirm-");
   const note = state.kind === "note";
   const title =
@@ -448,8 +522,47 @@ function LibraryDialog({
       : note
         ? "Create note"
         : destructive
-          ? `Delete ${state.kind === "confirm-project" ? "project" : "folder"}?`
+          ? state.kind === "confirm-note-delete"
+            ? "Delete note permanently?"
+            : `Delete ${state.kind === "confirm-project" ? "project" : "folder"}?`
           : `Rename ${state.kind.replace("rename-", "")}`;
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    const firstControl =
+      dialogRef.current?.querySelector<HTMLElement>(
+        "input, select, textarea",
+      ) ?? dialogRef.current?.querySelector<HTMLElement>("button");
+    firstControl?.focus();
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
+    };
+  }, [onClose]);
+
+  const keepFocusInDialog = (event: React.KeyboardEvent<HTMLFormElement>) => {
+    if (event.key !== "Tab") return;
+    const controls = [
+      ...(dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? []),
+    ];
+    if (controls.length === 0) return;
+    const first = controls[0]!;
+    const last = controls[controls.length - 1]!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
@@ -478,7 +591,9 @@ function LibraryDialog({
         await library.renameNote(state.id, name.trim() || "Untitled");
       else if (state.kind === "confirm-project")
         await library.deleteProject(state.id);
-      else await library.deleteFolder(state.id);
+      else if (state.kind === "confirm-folder")
+        await library.deleteFolder(state.id);
+      else await library.deleteNoteForever(state.id);
       onClose();
     } catch (cause) {
       setError(
@@ -496,10 +611,12 @@ function LibraryDialog({
       }}
     >
       <form
+        ref={dialogRef}
         className="library-dialog panel"
         role="dialog"
         aria-modal="true"
         aria-labelledby="library-dialog-title"
+        onKeyDown={keepFocusInDialog}
         onSubmit={(event) => void submit(event)}
       >
         <div className="drawer-header">
@@ -522,7 +639,9 @@ function LibraryDialog({
             <strong>{"value" in state ? state.value : "this item"}</strong>?{" "}
             {state.kind === "confirm-project"
               ? "All notes and folders inside it will be deleted permanently."
-              : "Notes inside this folder will move to the project root."}
+              : state.kind === "confirm-folder"
+                ? "Notes inside this folder will move to the project root."
+                : "This cannot be undone."}
           </p>
         ) : (
           <div className="field">
@@ -590,7 +709,11 @@ function LibraryDialog({
             />
           </>
         ) : null}
-        {error ? <div className="error-text">{error}</div> : null}
+        {error ? (
+          <div className="error-text" role="alert">
+            {error}
+          </div>
+        ) : null}
         <div className="dialog-actions">
           <button type="button" className="ghost" onClick={onClose}>
             Cancel

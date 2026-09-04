@@ -7,9 +7,3 @@ export type {
   LibraryProject,
   LibraryTree,
 } from "@aurora/shared";
-
-/** Notes the user opened recently, newest first, tracked in the local cache. */
-export interface RecentNote {
-  noteId: string;
-  openedAt: number;
-}

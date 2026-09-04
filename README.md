@@ -9,7 +9,7 @@ The repository is built from the contracts in [`docs/ARCHITECTURE.md`](docs/ARCH
 ## Layout
 
 - `apps/web` — React PWA; talks only to `/api/...` HTTP routes and `/sync/ws`.
-- `apps/server` — authoritative Fastify service; owns auth, library, canvas, sync, files, search, snapshots, backups.
+- `apps/server` — authoritative Fastify service; owns auth, library, canvas, sync, files, search, snapshots, and metadata exports.
 - `packages/shared` — the single transport contract (zod schemas) used by both runtimes.
 
 ## Local development
@@ -38,6 +38,19 @@ at container start. For non-localhost hosts, terminate TLS in a reverse proxy
 (for example Caddy/nginx) that forwards `/`, `/api`, and `/sync/ws` to the app
 service, and set `AURORA_ORIGIN`/`AURORA_RP_ID` accordingly — passkeys require a
 secure context.
+
+### Retention and exports
+
+Compose starts the application only; it does **not** schedule retention cleanup. If
+retention is desired, an operator must explicitly schedule
+`docker compose exec -T app npm run jobs:cleanup -w @aurora/server` from the
+host (for example, with cron or a platform scheduler). Validate file references
+and test the command against a copy of production data before automating it.
+
+`GET /api/export` produces an NDJSON metadata export, not a restorable
+backup. It does not include uploaded file bytes and Aurora has no import or
+restore workflow. Maintain separate, tested PostgreSQL and upload-volume
+backups for disaster recovery.
 
 ## Checks
 

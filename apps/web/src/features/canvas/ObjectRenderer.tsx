@@ -1,10 +1,19 @@
 // Renders individual canvas objects: SVG shapes and pressure strokes for the scene layer, HTML for rich text, media, attachments, and embedded PDF references. Renderer stays presentation-only; mutations flow through callbacks.
-import { type ReactNode, useRef, useState } from "react";
+import { lazy, Suspense, type ReactNode, useRef, useState } from "react";
 import type { CanvasObject } from "@aurora/shared";
 import { FileText, GripHorizontal } from "lucide-react";
-import { EMPTY_DOC, RichTextBlock } from "../editor";
-import { describePageReference, PdfPageView } from "../pdf";
+import { EMPTY_DOC } from "../editor/document";
+import { describePageReference } from "../pdf/annotations";
+import "../editor/editorStyles.css";
+import "../pdf/pdfStyles.css";
+import "../pdf/pdfRefStyles.css";
 import "./pdfRefChrome.css";
+const RichTextBlock = lazy(async () => ({
+  default: (await import("../editor/RichTextBlock")).RichTextBlock,
+}));
+const PdfPageView = lazy(async () => ({
+  default: (await import("../pdf/PdfPageView")).PdfPageView,
+}));
 import {
   getAttachmentName,
   getAttachmentSize,
@@ -17,6 +26,7 @@ import {
   getShapeCornerRadius,
   getShapeDashArray,
   getShapeFill,
+  getShapeFillOpacity,
   getShapeStrokeWidth,
   getStickyColor,
   getStickyText,
@@ -88,6 +98,7 @@ export function SceneObject({ object }: { object: CanvasObject }): ReactNode {
             object.payload.lineStyle === "dotted" ? "round" : undefined
           }
           fill={getShapeFill(object) ?? "none"}
+          fillOpacity={getShapeFillOpacity(object) / 100}
         />
       );
     }
@@ -106,6 +117,7 @@ export function SceneObject({ object }: { object: CanvasObject }): ReactNode {
             object.payload.lineStyle === "dotted" ? "round" : undefined
           }
           fill={getShapeFill(object) ?? "none"}
+          fillOpacity={getShapeFillOpacity(object) / 100}
         />
       );
     }
@@ -221,12 +233,14 @@ function HtmlContent({
           className="rich-text-block"
           data-rich-text-editable={editable ? "true" : "false"}
         >
-          <RichTextBlock
-            content={doc}
-            editable={editable}
-            autoFocus={editable}
-            onChange={(json) => callbacks.onRichTextChange(object.id, json)}
-          />
+          <Suspense fallback={null}>
+            <RichTextBlock
+              content={doc}
+              editable={editable}
+              autoFocus={editable}
+              onChange={(json) => callbacks.onRichTextChange(object.id, json)}
+            />
+          </Suspense>
         </div>
       );
     }
@@ -344,11 +358,13 @@ function PdfRefContent({ object }: { object: CanvasObject }): ReactNode {
         </span>
       </div>
       <div className="pdf-ref-body">
-        <PdfPageView
-          pdfUrl={ref.pdfUrl}
-          pageNumber={ref.pageNumber - 1}
-          targetWidth={Math.max(120, object.bounds.width - 12)}
-        />
+        <Suspense fallback={null}>
+          <PdfPageView
+            pdfUrl={ref.pdfUrl}
+            pageNumber={ref.pageNumber - 1}
+            targetWidth={Math.max(120, object.bounds.width - 12)}
+          />
+        </Suspense>
       </div>
     </div>
   );

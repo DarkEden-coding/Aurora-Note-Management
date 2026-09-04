@@ -2,7 +2,7 @@
 // canvas to the sync layer: editing operations flow through enqueueObjectMutation
 // (durable outbox + local cache) and the note's canvas mode comes from the library
 // cache. Viewport rendering, modes, culling, and object editing stay in the canvas.
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { CanvasWorkspace } from "../features/canvas";
 import type { SyncOperation } from "@aurora/shared";
 import type { Background, CanvasMode, DrawingPalette } from "@aurora/shared";
@@ -25,6 +25,7 @@ export function MainEditor({
   onDrawingPaletteChange: (drawingPalette: DrawingPalette) => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
 
   // Every coalesced canvas operation enters the durable outbox; the upserted
   // object is already the local cache version, so acknowledgements can advance
@@ -35,11 +36,32 @@ export function MainEditor({
       ...(operation.mutation.type === "upsert"
         ? { upsertedObject: operation.mutation.object }
         : {}),
-    }).then(() => syncEngine.requestFlush());
+    })
+      .then(() => {
+        setPersistenceError(null);
+        syncEngine.requestFlush();
+      })
+      .catch((error: unknown) => {
+        setPersistenceError(
+          error instanceof Error
+            ? `Could not save this edit offline: ${error.message}`
+            : "Could not save this edit offline",
+        );
+      });
   }, []);
 
   return (
     <div className="canvas-area" ref={containerRef}>
+      {persistenceError ? (
+        <button
+          type="button"
+          className="canvas-import-error"
+          role="alert"
+          onClick={() => setPersistenceError(null)}
+        >
+          {persistenceError}
+        </button>
+      ) : null}
       <CanvasWorkspace
         ownerId={ownerId}
         noteId={noteId}

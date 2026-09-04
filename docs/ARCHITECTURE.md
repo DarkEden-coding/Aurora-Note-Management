@@ -8,7 +8,7 @@ Aurora has three workspaces:
 
 - `apps/web` is a React PWA. It renders only objects near the viewport, writes edits to IndexedDB first, and synchronizes an ordered outbox over HTTP and WebSocket.
 - `apps/server` is the authoritative Fastify service. It owns authentication, authorization, object revisions, regional reads, uploads, search, snapshots, and broadcasts.
-- `packages/shared` contains transport schemas and domain types. Neither app may redefine an API payload locally.
+- `packages/shared` contains cross-runtime transport schemas and domain types. Endpoint-local response types may remain in an owning module until both runtimes consume them.
 
 A single deployment runs the web/server image with PostgreSQL and a mounted upload directory. PostgreSQL stores relations and one row per canvas object. Uploaded bytes stay on disk under content-derived names.
 
@@ -20,7 +20,7 @@ A single deployment runs the web/server image with PostgreSQL and a mounted uplo
 4. Every mutation carries an operation ID, device ID, object base revision, and client timestamp. The server makes operation IDs idempotent and assigns authoritative revisions.
 5. Offline edits enter IndexedDB before network transmission. An acknowledged operation leaves the outbox only after its resulting revision is stored locally.
 6. Binary uploads never enter sync messages. Sync carries file metadata and references only.
-7. PDF notes retain the original PDF. Annotations use page-relative coordinates, and embedded page references resolve live against the source note.
+7. Embedded PDF page-reference objects retain page-relative coordinates. Full PDF-note creation and source-note resolution are not supported yet, so the API rejects new PDF notes.
 8. Theme tokens affect presentation only. Persisted canvas coordinates and dimensions do not depend on theme CSS.
 
 ## Web modules
@@ -43,10 +43,10 @@ Feature modules can depend on `packages/shared` and small shared UI primitives. 
 - `canvas`: regional object queries and authoritative object mutation transactions.
 - `sync`: idempotent operation ingestion, conflict records, revision acknowledgements, and owner-scoped WebSocket broadcasts.
 - `files`: size-limited streaming uploads, content hashing, metadata, and safe downloads.
-- `pdf`: PDF-note metadata and source-page reference resolution.
+- `pdf`: reserved for future PDF-note metadata and source-page reference resolution.
 - `search`: PostgreSQL full-text search over permitted text and filenames.
 - `history`: 30-day snapshots and restoration.
-- `export`: native backup archives plus note export jobs.
+- `export`: NDJSON metadata export plus note export jobs. The metadata export is not a restorable backup.
 
 Route handlers validate shared schemas, call one domain function, and translate known domain errors. SQL stays in its owning server module.
 
@@ -54,7 +54,9 @@ Route handlers validate shared schemas, call one domain function, and translate 
 
 Core tables are users, passkey credentials, sessions, projects, folders, notes, pages, canvas objects, files, operations, conflicts, snapshots, and note links. Folders use an adjacency-list parent ID with a transaction check that prevents cycles. Canvas objects store bounds in indexed numeric columns and type-specific payload in JSONB. Object and note revisions increase monotonically inside the same mutation transaction.
 
-Files use immutable content-derived disk paths. Metadata rows control ownership and references. Deleting a note first moves it to trash. A cleanup job removes expired trash, unreferenced bytes, expired sessions, old operations, and snapshots older than 30 days.
+Files use immutable content-derived disk paths. Metadata rows control ownership and references. Deleting a note first moves it to trash. Cleanup is a standalone command, not an application or Compose scheduler. An operator must explicitly arrange its execution. It removes expired trash, unreferenced file metadata and bytes, expired sessions, old operations, and snapshots older than 30 days. Test it against a copy of production data before scheduling it.
+
+The `/api/export` endpoint is an NDJSON metadata export, not a restorable backup. It omits uploaded bytes and Aurora has no import or restore path. Disaster recovery requires separate, tested backups of both PostgreSQL and the upload volume.
 
 ## Rendering and performance
 
