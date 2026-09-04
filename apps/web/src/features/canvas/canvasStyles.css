@@ -333,6 +333,77 @@
   white-space: nowrap;
 }
 
+.canvas-scrollbar {
+  position: absolute;
+  z-index: 12;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-sunken) 88%, transparent);
+  box-shadow: var(--shadow-inset);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.canvas-scrollbar.horizontal {
+  right: 34px;
+  bottom: 36px;
+  left: 14px;
+  height: 10px;
+}
+
+.canvas-scrollbar.vertical {
+  top: 82px;
+  right: 12px;
+  bottom: 58px;
+  width: 10px;
+}
+
+.canvas-scrollbar-thumb {
+  position: absolute;
+  display: block;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 66%, var(--surface-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, white 12%);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: background 140ms ease;
+}
+
+.canvas-scrollbar.horizontal .canvas-scrollbar-thumb {
+  top: -1px;
+  height: 10px;
+  min-height: 0;
+}
+
+.canvas-scrollbar.vertical .canvas-scrollbar-thumb {
+  left: -1px;
+  width: 10px;
+  min-width: 0;
+}
+
+.canvas-scrollbar:hover .canvas-scrollbar-thumb {
+  background: var(--accent);
+}
+
+:root[data-theme="neomorphic"] .canvas-scrollbar {
+  box-shadow:
+    inset 3px 3px 7px rgba(3, 5, 9, 0.58),
+    inset -2px -2px 5px rgba(255, 255, 255, 0.035);
+}
+
+:root[data-theme="minimal"] .canvas-scrollbar {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+:root[data-theme="minimal"] .canvas-scrollbar-thumb {
+  border-radius: 1px;
+  box-shadow: none;
+}
+
 :root[data-theme="minimal"] .canvas-toolbar,
 :root[data-theme="minimal"] .canvas-statusbar {
   border-radius: 4px;

@@ -1,7 +1,9 @@
 // Canvas workspace composition: four canvas modes, viewport transform with overscan culling, backgrounds, selection/move/resize gestures, pen capture with palm rejection, mouse/touch navigation, paged page frames, and object creation. Edits emit coalesced SyncOperations through onOperation; object rendering is delegated to ObjectRenderer, and the sync cache supplies objects when the prop is omitted.
 import type React from "react";
 import {
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -50,6 +52,8 @@ import {
 import {
   DEMO_OWNER_ID,
   MAX_OBJECTS_PER_NOTE,
+  type CanvasScrollBounds,
+  canvasScrollBounds,
   canvasSurfaceFrames,
   clampBoundsToMode,
   translateBoundsInMode,
@@ -131,14 +135,21 @@ export function CanvasWorkspace({
   const activeMode: CanvasMode = mode ?? "infinite";
   const isControlled = objects !== undefined;
 
-  const { viewport, containerRef, containerSize, panBy, zoomAt, toCanvas } =
-    useViewport({
-      x: -64,
-      y: -96,
-      width: 0,
-      height: 0,
-      zoom: 1,
-    });
+  const {
+    viewport,
+    setViewport,
+    containerRef,
+    containerSize,
+    panBy,
+    zoomAt,
+    toCanvas,
+  } = useViewport({
+    x: -64,
+    y: -96,
+    width: 0,
+    height: 0,
+    zoom: 1,
+  });
 
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [tool, setTool] = useState<CanvasTool>("select");
@@ -737,6 +748,31 @@ export function CanvasWorkspace({
     width: containerSize.width > 0 ? containerSize.width / zoom : 0,
     height: containerSize.height > 0 ? containerSize.height / zoom : 0,
   };
+  const scrollBounds = useMemo(
+    () =>
+      canvasScrollBounds(displayObjects, activeMode, view.width, view.height),
+    [displayObjects, activeMode, view.width, view.height],
+  );
+  const centeredModeRef = useRef("");
+
+  useEffect(() => {
+    if (scrollBounds === null) return;
+    const identity = `${noteId}:${activeMode}`;
+    const shouldCenter = centeredModeRef.current !== identity;
+    if (shouldCenter) centeredModeRef.current = identity;
+    setViewport((current) => {
+      const nextX = shouldCenter
+        ? (scrollBounds.contentWidth - view.width) / 2
+        : Math.max(scrollBounds.minX, Math.min(current.x, scrollBounds.maxX));
+      const preferredTop = -80 / current.zoom;
+      const nextY = shouldCenter
+        ? Math.max(scrollBounds.minY, preferredTop)
+        : Math.max(scrollBounds.minY, Math.min(current.y, scrollBounds.maxY));
+      return nextX === current.x && nextY === current.y
+        ? current
+        : { ...current, x: nextX, y: nextY };
+    });
+  }, [activeMode, noteId, scrollBounds, setViewport, view.width]);
   const visible = sortByZIndex(
     queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN),
   );
@@ -975,6 +1011,137 @@ export function CanvasWorkspace({
         onZoomOut={zoomOut}
         onZoomReset={zoomReset}
       />
+      {scrollBounds ? (
+        <CanvasScrollbars
+          bounds={scrollBounds}
+          viewport={viewport}
+          visibleWidth={view.width}
+          visibleHeight={view.height}
+          onViewportChange={setViewport}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CanvasScrollbars({
+  bounds,
+  viewport,
+  visibleWidth,
+  visibleHeight,
+  onViewportChange,
+}: {
+  bounds: CanvasScrollBounds;
+  viewport: { x: number; y: number; zoom: number };
+  visibleWidth: number;
+  visibleHeight: number;
+  onViewportChange: Dispatch<
+    SetStateAction<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      zoom: number;
+    }>
+  >;
+}) {
+  const ratioX = Math.max(
+    0.08,
+    Math.min(0.9, visibleWidth / (bounds.contentWidth + visibleWidth)),
+  );
+  const ratioY = Math.max(
+    0.08,
+    Math.min(0.9, visibleHeight / (bounds.contentHeight + visibleHeight)),
+  );
+  const progressX = Math.max(
+    0,
+    Math.min(1, (viewport.x - bounds.minX) / bounds.contentWidth),
+  );
+  const progressY = Math.max(
+    0,
+    Math.min(1, (viewport.y - bounds.minY) / bounds.contentHeight),
+  );
+
+  const move = (
+    event: React.PointerEvent<HTMLDivElement>,
+    axis: "x" | "y",
+    ratio: number,
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const trackSize = axis === "x" ? rect.width : rect.height;
+    const pointer =
+      axis === "x" ? event.clientX - rect.left : event.clientY - rect.top;
+    const progress = Math.max(
+      0,
+      Math.min(1, (pointer / trackSize - ratio / 2) / (1 - ratio)),
+    );
+    onViewportChange((current) => ({
+      ...current,
+      [axis]:
+        axis === "x"
+          ? bounds.minX + progress * bounds.contentWidth
+          : bounds.minY + progress * bounds.contentHeight,
+    }));
+  };
+  const pointerDown = (
+    event: React.PointerEvent<HTMLDivElement>,
+    axis: "x" | "y",
+    ratio: number,
+  ) => {
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    move(event, axis, ratio);
+  };
+  const pointerMove = (
+    event: React.PointerEvent<HTMLDivElement>,
+    axis: "x" | "y",
+    ratio: number,
+  ) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    event.stopPropagation();
+    move(event, axis, ratio);
+  };
+
+  return (
+    <div className="canvas-scrollbars" aria-label="Canvas scroll controls">
+      <div
+        className="canvas-scrollbar horizontal"
+        role="scrollbar"
+        aria-label="Horizontal canvas position"
+        aria-orientation="horizontal"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progressX * 100)}
+        onPointerDown={(event) => pointerDown(event, "x", ratioX)}
+        onPointerMove={(event) => pointerMove(event, "x", ratioX)}
+      >
+        <span
+          className="canvas-scrollbar-thumb"
+          style={{
+            width: `${ratioX * 100}%`,
+            left: `${progressX * (1 - ratioX) * 100}%`,
+          }}
+        />
+      </div>
+      <div
+        className="canvas-scrollbar vertical"
+        role="scrollbar"
+        aria-label="Vertical canvas position"
+        aria-orientation="vertical"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progressY * 100)}
+        onPointerDown={(event) => pointerDown(event, "y", ratioY)}
+        onPointerMove={(event) => pointerMove(event, "y", ratioY)}
+      >
+        <span
+          className="canvas-scrollbar-thumb"
+          style={{
+            height: `${ratioY * 100}%`,
+            top: `${progressY * (1 - ratioY) * 100}%`,
+          }}
+        />
+      </div>
     </div>
   );
 }

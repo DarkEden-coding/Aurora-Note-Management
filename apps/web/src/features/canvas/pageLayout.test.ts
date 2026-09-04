@@ -8,6 +8,7 @@ import {
   clampBoundsToMode,
   clampBoundsToRegion,
   canvasSurfaceFrames,
+  canvasScrollBounds,
   fixedAxis,
   pageFrameAtPoint,
   pageFrames,
@@ -100,6 +101,34 @@ describe("mode clamping", () => {
 
     expect(canvasSurfaceFrames([], "paged")).toEqual(pageFrames([], "paged"));
     expect(canvasSurfaceFrames([], "infinite")).toEqual([]);
+  });
+
+  it("limits overscroll to half a viewport and grows with open-axis content", () => {
+    const view = { width: 400, height: 600 };
+    const base = canvasScrollBounds([], "paged", view.width, view.height)!;
+    expect(base.minX).toBe(-200);
+    expect(base.maxX).toBe(PAGE_WIDTH - 200);
+    expect(base.minY).toBe(-300);
+    expect(base.maxY).toBe(PAGE_HEIGHT - 300);
+
+    const tall = canvasScrollBounds(
+      [objectAt({ x: 10, y: 1800, width: 20, height: 100 })],
+      "fixed-width",
+      view.width,
+      view.height,
+    )!;
+    expect(tall.contentHeight).toBe(1900);
+    expect(tall.maxY).toBe(1600);
+
+    const wide = canvasScrollBounds(
+      [objectAt({ x: 1400, y: 10, width: 100, height: 20 })],
+      "fixed-height",
+      view.width,
+      view.height,
+    )!;
+    expect(wide.contentWidth).toBe(1500);
+    expect(wide.maxX).toBe(1300);
+    expect(canvasScrollBounds([], "infinite", 400, 600)).toBeNull();
   });
 
   it("reports the fixed axis per mode", () => {

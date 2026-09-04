@@ -167,6 +167,53 @@ export function canvasSurfaceFrames(
   }
 }
 
+export interface CanvasScrollBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  contentWidth: number;
+  contentHeight: number;
+}
+
+/** Scroll limits allow no more than half a viewport beyond constrained content. */
+export function canvasScrollBounds(
+  objects: CanvasObject[],
+  mode: CanvasMode,
+  visibleWidth: number,
+  visibleHeight: number,
+): CanvasScrollBounds | null {
+  if (mode === "infinite" || visibleWidth <= 0 || visibleHeight <= 0) {
+    return null;
+  }
+
+  const objectRight = objects.reduce(
+    (max, object) => Math.max(max, object.bounds.x + object.bounds.width),
+    0,
+  );
+  const objectBottom = objects.reduce(
+    (max, object) => Math.max(max, object.bounds.y + object.bounds.height),
+    0,
+  );
+  const contentWidth =
+    mode === "fixed-height" ? Math.max(PAGE_WIDTH, objectRight) : PAGE_WIDTH;
+  const contentHeight =
+    mode === "paged"
+      ? pageFrames(objects, mode).at(-1)!.y + PAGE_HEIGHT
+      : mode === "fixed-width"
+        ? Math.max(PAGE_HEIGHT, objectBottom)
+        : PAGE_HEIGHT;
+
+  return {
+    minX: -visibleWidth / 2,
+    maxX: contentWidth - visibleWidth / 2,
+    minY: -visibleHeight / 2,
+    maxY: contentHeight - visibleHeight / 2,
+    contentWidth,
+    contentHeight,
+  };
+}
+
 /** Maps a canvas point to the page frame containing it, for paged-mode page attribution. */
 export function pageFrameAtPoint(
   objects: CanvasObject[],
