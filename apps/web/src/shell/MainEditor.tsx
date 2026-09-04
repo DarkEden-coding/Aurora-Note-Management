@@ -6,6 +6,7 @@ import { useCallback, useRef } from "react";
 import { CanvasWorkspace } from "../features/canvas";
 import type { SyncOperation } from "@aurora/shared";
 import type { Background, CanvasMode, DrawingPalette } from "@aurora/shared";
+import { syncEngine } from "../sync/engine.js";
 import { enqueueObjectMutation } from "../sync/outbox.js";
 
 export function MainEditor({
@@ -34,7 +35,7 @@ export function MainEditor({
       ...(operation.mutation.type === "upsert"
         ? { upsertedObject: operation.mutation.object }
         : {}),
-    });
+    }).then(() => syncEngine.requestFlush());
   }, []);
 
   return (

@@ -8,6 +8,7 @@ import { requireSession } from "../auth/sessions.js";
 export type OwnerBroadcastEvent = ServerEvent;
 
 const connections = new Map<string, Set<WebSocket>>();
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 function addConnection(ownerId: string, socket: WebSocket): void {
   let sockets = connections.get(ownerId);
@@ -63,12 +64,27 @@ export function registerWsRoutes(app: FastifyInstance, env: AuroraEnv): void {
         return;
       }
       addConnection(ownerId, socket);
-      socket.on("close", () => {
-        removeConnection(ownerId, socket);
+      let alive = true;
+      const heartbeat = setInterval(() => {
+        if (!alive) {
+          socket.terminate();
+          return;
+        }
+        alive = false;
+        socket.ping();
+      }, HEARTBEAT_INTERVAL_MS);
+      heartbeat.unref();
+      socket.on("pong", () => {
+        alive = true;
       });
-      socket.on("error", () => {
+      const cleanup = (): void => {
+        clearInterval(heartbeat);
         removeConnection(ownerId, socket);
-        socket.close();
+      };
+      socket.on("close", cleanup);
+      socket.on("error", () => {
+        cleanup();
+        socket.terminate();
       });
     },
   );

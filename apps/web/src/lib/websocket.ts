@@ -23,6 +23,19 @@ export class ReconnectingWebSocket {
     this.open();
   }
 
+  /** Replace the current connection immediately, bypassing reconnect backoff. */
+  reconnect(): void {
+    if (this.closedByUser) return;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    if (this.socket) {
+      this.socket.onclose = null;
+      this.socket.close();
+      this.socket = null;
+    }
+    this.open();
+  }
+
   close(): void {
     this.closedByUser = true;
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);

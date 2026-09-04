@@ -25,11 +25,19 @@ export interface RemoteChangeEvent {
 }
 
 const FLUSH_INTERVAL_MS = 5_000;
+const FLUSH_DEBOUNCE_MS = 100;
 
 class SyncEngine {
   private socket: ReconnectingWebSocket | null = null;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private scheduledFlush: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
+  private flushAgain = false;
+  private hasConnected = false;
+  private lastHydration: {
+    noteId: string;
+    viewport: { x: number; y: number; width: number; height: number };
+  } | null = null;
   private status: SyncStatus = {
     state: "closed",
     pendingOperations: 0,
@@ -79,7 +87,18 @@ class SyncEngine {
     this.socket = new ReconnectingWebSocket(
       `${protocol}://${location.host}/sync/ws`,
       {
-        onState: (state) => this.setStatus({ state }),
+        onState: (state) => {
+          this.setStatus({ state });
+          if (state !== "open") return;
+          this.requestFlush(0);
+          if (this.hasConnected && this.lastHydration) {
+            void this.hydrate(
+              this.lastHydration.noteId,
+              this.lastHydration.viewport,
+            );
+          }
+          this.hasConnected = true;
+        },
         onMessage: (data) => void this.handleServerEvent(data as ServerEvent),
       },
     );
@@ -88,7 +107,8 @@ class SyncEngine {
     this.flushTimer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
     window.addEventListener("online", this.handleOnline);
     window.addEventListener("offline", this.handleOffline);
-    void this.flush();
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    this.requestFlush(0);
     void this.loadConflicts();
     void this.refreshCounts();
   }
@@ -98,18 +118,32 @@ class SyncEngine {
     this.socket = null;
     if (this.flushTimer !== null) clearInterval(this.flushTimer);
     this.flushTimer = null;
+    if (this.scheduledFlush !== null) clearTimeout(this.scheduledFlush);
+    this.scheduledFlush = null;
+    this.flushAgain = false;
+    this.hasConnected = false;
     window.removeEventListener("online", this.handleOnline);
     window.removeEventListener("offline", this.handleOffline);
+    document.removeEventListener(
+      "visibilitychange",
+      this.handleVisibilityChange,
+    );
   }
 
   private handleOnline = (): void => {
     this.setStatus({ online: true });
-    void this.flush();
+    this.socket?.reconnect();
+    this.requestFlush(0);
     void this.loadConflicts();
   };
 
   private handleOffline = (): void => {
     this.setStatus({ online: false });
+  };
+
+  private handleVisibilityChange = (): void => {
+    if (document.visibilityState !== "visible" || !navigator.onLine) return;
+    this.socket?.reconnect();
   };
 
   private async handleServerEvent(event: ServerEvent): Promise<void> {
@@ -171,6 +205,7 @@ class SyncEngine {
     noteId: string,
     viewport: { x: number; y: number; width: number; height: number },
   ): Promise<void> {
+    this.lastHydration = { noteId, viewport };
     // Delta hydration (sinceRevision) is only valid once objects exist in the
     // cache; a first open must fetch the region without a revision filter.
     const response = await hydrateRegion({ noteId, viewport }).catch(
@@ -188,6 +223,22 @@ class SyncEngine {
     await this.refreshCounts();
   }
 
+  /** Flush soon after durable enqueue, coalescing bursts into one HTTP batch. */
+  requestFlush = (delayMs = FLUSH_DEBOUNCE_MS): void => {
+    if (this.flushing) {
+      this.flushAgain = true;
+      return;
+    }
+    if (this.scheduledFlush !== null) {
+      if (delayMs > 0) return;
+      clearTimeout(this.scheduledFlush);
+    }
+    this.scheduledFlush = setTimeout(() => {
+      this.scheduledFlush = null;
+      void this.flush();
+    }, delayMs);
+  };
+
   private async flush(): Promise<void> {
     if (this.flushing || !navigator.onLine) return;
     this.flushing = true;
@@ -197,6 +248,10 @@ class SyncEngine {
       this.setStatus({ lastSyncAt: Date.now() });
     } finally {
       this.flushing = false;
+      if (this.flushAgain) {
+        this.flushAgain = false;
+        this.requestFlush(0);
+      }
     }
   }
 }
