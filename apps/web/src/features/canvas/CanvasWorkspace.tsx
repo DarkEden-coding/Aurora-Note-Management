@@ -50,8 +50,8 @@ import {
 import {
   DEMO_OWNER_ID,
   MAX_OBJECTS_PER_NOTE,
+  canvasSurfaceFrames,
   clampBoundsToMode,
-  pageFrames,
   translateBoundsInMode,
 } from "./pageLayout";
 import { usePenCapture } from "./usePenCapture";
@@ -740,7 +740,11 @@ export function CanvasWorkspace({
   const visible = sortByZIndex(
     queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN),
   );
-  const frames = pageFrames(displayObjects, activeMode);
+  const surfaceFrames = canvasSurfaceFrames(displayObjects, activeMode);
+  const pageBackgroundStyle = getBackgroundStyle(
+    background ?? DEFAULT_BACKGROUND,
+    { x: 0, y: 0, width: 0, height: 0, zoom: 1 },
+  );
 
   const cursor =
     gesture?.kind === "pan"
@@ -800,7 +804,11 @@ export function CanvasWorkspace({
   };
 
   return (
-    <div className="canvas-workspace" data-testid="canvas-workspace">
+    <div
+      className="canvas-workspace"
+      data-mode={activeMode}
+      data-testid="canvas-workspace"
+    >
       <div
         ref={containerRef}
         className="canvas-viewport"
@@ -823,28 +831,39 @@ export function CanvasWorkspace({
           handlePointerCancel(e);
         }}
       >
-        <div
-          className="canvas-background"
-          style={getBackgroundStyle(background ?? DEFAULT_BACKGROUND, viewport)}
-        />
+        {activeMode === "infinite" ? (
+          <div
+            className="canvas-background"
+            style={getBackgroundStyle(
+              background ?? DEFAULT_BACKGROUND,
+              viewport,
+            )}
+          />
+        ) : null}
         <div
           className="canvas-world"
           style={{
             transform: `translate(${-viewport.x * zoom}px, ${-viewport.y * zoom}px) scale(${zoom})`,
           }}
         >
-          {frames.map((frame, index) => (
+          {surfaceFrames.map((frame, index) => (
             <div
               key={index}
               className="canvas-page-frame"
+              data-canvas-mode={activeMode}
               style={{
                 left: frame.x,
                 top: frame.y,
                 width: frame.width,
                 height: frame.height,
+                ...pageBackgroundStyle,
               }}
             >
-              <span className="canvas-page-frame-label">Page {index + 1}</span>
+              {activeMode === "paged" ? (
+                <span className="canvas-page-frame-label">
+                  Page {index + 1}
+                </span>
+              ) : null}
             </div>
           ))}
 

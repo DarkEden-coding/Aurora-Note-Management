@@ -5,6 +5,7 @@ import { boundsContainPoint, translateBounds } from "./viewport";
 export const PAGE_WIDTH = 816; // 8.5in at 96dpi
 export const PAGE_HEIGHT = 1056; // 11in at 96dpi
 export const PAGE_GAP = 24;
+const OPEN_AXIS_EXTENT = 100_000;
 
 export const MAX_OBJECTS_PER_NOTE = 1000;
 
@@ -122,6 +123,44 @@ export function pageFrames(
       return [{ x: 0, y: 0, width: pageWidth, height: pageHeight }];
     case "fixed-height":
       return [{ x: 0, y: 0, width: pageWidth, height: pageHeight }];
+    case "infinite":
+    default:
+      return [];
+  }
+}
+
+/**
+ * Visual writing surfaces for each mode. Fixed-axis modes use a very large
+ * surface on their open axis so the patterned sheet remains continuous while
+ * panning; paged mode keeps separate finite sheets with a visible gap.
+ */
+export function canvasSurfaceFrames(
+  objects: CanvasObject[],
+  mode: CanvasMode,
+  pageWidth: number = PAGE_WIDTH,
+  pageHeight: number = PAGE_HEIGHT,
+): Bounds[] {
+  switch (mode) {
+    case "fixed-width":
+      return [
+        {
+          x: 0,
+          y: -OPEN_AXIS_EXTENT / 2,
+          width: pageWidth,
+          height: OPEN_AXIS_EXTENT,
+        },
+      ];
+    case "fixed-height":
+      return [
+        {
+          x: -OPEN_AXIS_EXTENT / 2,
+          y: 0,
+          width: OPEN_AXIS_EXTENT,
+          height: pageHeight,
+        },
+      ];
+    case "paged":
+      return pageFrames(objects, mode, pageWidth, pageHeight);
     case "infinite":
     default:
       return [];

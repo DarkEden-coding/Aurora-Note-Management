@@ -31,6 +31,7 @@
   overflow: hidden;
   touch-action: none;
   user-select: none;
+  background: color-mix(in srgb, var(--bg) 78%, var(--surface-sunken));
 }
 
 .canvas-viewport[data-cursor="pan"] {
@@ -64,9 +65,41 @@
 
 .canvas-page-frame {
   position: absolute;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, white 8%);
+  border-radius: calc(var(--radius) * 0.55);
+  box-shadow: var(--shadow-outset);
   pointer-events: none;
+}
+
+.canvas-page-frame[data-canvas-mode="fixed-width"] {
+  border-top: 0;
+  border-bottom: 0;
+  border-radius: 0;
+}
+
+.canvas-page-frame[data-canvas-mode="fixed-height"] {
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+:root[data-theme="neomorphic"] .canvas-page-frame {
+  border-color: rgba(255, 255, 255, 0.09);
+  box-shadow:
+    18px 18px 34px rgba(3, 5, 9, 0.82),
+    -10px -10px 26px rgba(255, 255, 255, 0.055),
+    inset 1px 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+:root[data-theme="glass"] .canvas-page-frame {
+  box-shadow:
+    0 24px 60px rgba(0, 0, 12, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme="minimal"] .canvas-page-frame {
+  border-radius: 2px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
 }
 
 .canvas-page-frame-label {
@@ -77,6 +110,7 @@
     10px/1.4 system-ui,
     sans-serif;
   color: var(--aurora-canvas-muted);
+  letter-spacing: 0.04em;
 }
 
 .canvas-scene {

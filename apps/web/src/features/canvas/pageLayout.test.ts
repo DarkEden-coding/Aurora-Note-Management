@@ -7,6 +7,7 @@ import {
   PAGE_WIDTH,
   clampBoundsToMode,
   clampBoundsToRegion,
+  canvasSurfaceFrames,
   fixedAxis,
   pageFrameAtPoint,
   pageFrames,
@@ -84,6 +85,21 @@ describe("paged layout", () => {
 });
 
 describe("mode clamping", () => {
+  it("builds a patterned writing surface only inside each constrained mode", () => {
+    const fixedWidth = canvasSurfaceFrames([], "fixed-width")[0]!;
+    expect(fixedWidth.x).toBe(0);
+    expect(fixedWidth.width).toBe(PAGE_WIDTH);
+    expect(fixedWidth.height).toBeGreaterThan(PAGE_HEIGHT * 10);
+
+    const fixedHeight = canvasSurfaceFrames([], "fixed-height")[0]!;
+    expect(fixedHeight.y).toBe(0);
+    expect(fixedHeight.height).toBe(PAGE_HEIGHT);
+    expect(fixedHeight.width).toBeGreaterThan(PAGE_WIDTH * 10);
+
+    expect(canvasSurfaceFrames([], "paged")).toEqual(pageFrames([], "paged"));
+    expect(canvasSurfaceFrames([], "infinite")).toEqual([]);
+  });
+
   it("reports the fixed axis per mode", () => {
     expect(fixedAxis("infinite")).toBe("none");
     expect(fixedAxis("fixed-width")).toBe("x");
