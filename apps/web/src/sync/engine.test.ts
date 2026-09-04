@@ -10,7 +10,7 @@ import {
 } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  flushOutbox: vi.fn(async () => ({ sent: 0, remaining: 0 })),
+  flushOutbox: vi.fn(async () => ({ sent: 0, remaining: 0, changes: [] })),
 }));
 
 vi.mock("../lib/http.js", () => ({
@@ -68,7 +68,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.useFakeTimers();
-  mocks.flushOutbox.mockResolvedValue({ sent: 0, remaining: 0 });
+  mocks.flushOutbox.mockResolvedValue({ sent: 0, remaining: 0, changes: [] });
   syncEngine.start();
   await vi.advanceTimersByTimeAsync(0);
   mocks.flushOutbox.mockClear();
@@ -97,7 +97,8 @@ describe("requestFlush", () => {
     mocks.flushOutbox.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          finishFirstFlush = () => resolve({ sent: 1, remaining: 0 });
+          finishFirstFlush = () =>
+            resolve({ sent: 1, remaining: 0, changes: [] });
         }),
     );
 

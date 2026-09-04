@@ -4,6 +4,7 @@
 import type { Bounds, RegionalObjectQueryResponse } from "@aurora/shared";
 import { apiPost } from "../lib/http.js";
 import { db } from "./db.js";
+import { filterChangesForPendingOperations } from "./outboxCore.js";
 
 const OVERSCAN = 1.25;
 
@@ -38,14 +39,20 @@ export async function hydrateRegion(params: {
     },
   );
 
+  let visibleObjects = response.objects;
   let deletedObjectIds: string[] = [];
   await db.transaction("rw", db.objects, db.notes, db.outbox, async () => {
-    await db.objects.bulkPut(response.objects);
+    const queued = await db.outbox.toArray();
+    visibleObjects = filterChangesForPendingOperations(
+      { objects: response.objects, deletedObjectIds: [] },
+      queued,
+    ).objects;
+    await db.objects.bulkPut(visibleObjects);
     if (!response.truncated) {
-      const [cached, queued] = await Promise.all([
-        db.objects.where("noteId").equals(params.noteId).toArray(),
-        db.outbox.toArray(),
-      ]);
+      const cached = await db.objects
+        .where("noteId")
+        .equals(params.noteId)
+        .toArray();
       const returnedIds = new Set(response.objects.map((object) => object.id));
       const queuedIds = new Set(
         queued
@@ -92,5 +99,5 @@ export async function hydrateRegion(params: {
     });
   });
 
-  return { ...response, deletedObjectIds };
+  return { ...response, objects: visibleObjects, deletedObjectIds };
 }

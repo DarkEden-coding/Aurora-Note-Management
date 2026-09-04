@@ -8,6 +8,7 @@ import { ReconnectingWebSocket, type SocketState } from "../lib/websocket.js";
 import { db } from "./db.js";
 import { hydrateRegion } from "./hydrate.js";
 import { flushOutbox } from "./outbox.js";
+import { filterChangesForPendingOperations } from "./outboxCore.js";
 
 export interface SyncStatus {
   state: SocketState;
@@ -148,11 +149,15 @@ class SyncEngine {
 
   private async handleServerEvent(event: ServerEvent): Promise<void> {
     if (event.type === "objects-changed") {
-      // Remote edits update the durable local object cache first, then notify
-      // live views so open canvases reflect the authoritative versions.
+      // Never replace a newer local draft with a server snapshot. Its outbox
+      // acknowledgement will advance the draft's revision without changing content.
+      const changes = filterChangesForPendingOperations(
+        event,
+        await db.outbox.toArray(),
+      );
       await db.transaction("rw", db.objects, async () => {
-        await db.objects.bulkPut(event.objects);
-        await db.objects.bulkDelete(event.deletedObjectIds);
+        await db.objects.bulkPut(changes.objects);
+        await db.objects.bulkDelete(changes.deletedObjectIds);
       });
       const maxRevision = event.objects.reduce(
         (max, object) => Math.max(max, object.revision),
@@ -163,17 +168,18 @@ class SyncEngine {
           .update(event.noteId, { revision: maxRevision })
           .catch(() => undefined);
       }
-      for (const listener of this.remoteListeners) {
-        listener({
-          noteId: event.noteId,
-          objects: event.objects,
-          deletedObjectIds: event.deletedObjectIds,
-        });
+      if (changes.objects.length > 0 || changes.deletedObjectIds.length > 0) {
+        this.notifyRemoteChange({ noteId: event.noteId, ...changes });
       }
     }
     // note-changed carries metadata-only updates; counts refresh below.
     this.setStatus({ lastSyncAt: Date.now() });
     await this.refreshCounts();
+  }
+
+  /** Deliver reconciled object changes to every active feature listener. */
+  private notifyRemoteChange(event: RemoteChangeEvent): void {
+    for (const listener of this.remoteListeners) listener(event);
   }
 
   /** Refresh unresolved server conflicts so lost responses and other devices remain visible. */
@@ -212,13 +218,11 @@ class SyncEngine {
       () => null,
     );
     if (response) {
-      for (const listener of this.remoteListeners) {
-        listener({
-          noteId,
-          objects: response.objects,
-          deletedObjectIds: response.deletedObjectIds,
-        });
-      }
+      this.notifyRemoteChange({
+        noteId,
+        objects: response.objects,
+        deletedObjectIds: response.deletedObjectIds,
+      });
     }
     await this.refreshCounts();
   }
@@ -242,7 +246,10 @@ class SyncEngine {
     if (this.flushing || !navigator.onLine) return;
     this.flushing = true;
     try {
-      await flushOutbox();
+      const result = await flushOutbox();
+      for (const change of result.changes) {
+        this.notifyRemoteChange(change);
+      }
       await this.refreshCounts();
       this.setStatus({ lastSyncAt: Date.now() });
     } finally {

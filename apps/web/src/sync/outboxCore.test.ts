@@ -1,15 +1,36 @@
 // These Vitest checks cover Aurora's pure outbox logic — retry backoff, due-batch selection, and acknowledgement reduction — without IndexedDB or network.
 import { describe, expect, it } from "vitest";
-import type { SyncAck, SyncOperation } from "@aurora/shared";
+import type { CanvasObject, SyncAck, SyncOperation } from "@aurora/shared";
 import {
   applyAck,
   buildOperation,
   computeBackoffMs,
+  filterChangesForPendingOperations,
   markAttemptFailed,
   OUTBOX_BATCH_SIZE,
+  preserveLocalDraft,
   selectDueBatch,
 } from "./outboxCore.js";
 import type { OutboxRow } from "./db.js";
+
+function makeObject(id: string, revision: number, text: string): CanvasObject {
+  return {
+    id,
+    ownerId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    noteId: "22222222-2222-4222-8222-222222222222",
+    pageId: null,
+    kind: "rich-text",
+    bounds: { x: 0, y: 0, width: 100, height: 100 },
+    rotation: 0,
+    zIndex: 1,
+    locked: false,
+    groupId: null,
+    payload: { text },
+    revision,
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:00:01.000Z",
+  };
+}
 
 function makeOp(id: string, createdAt: number): SyncOperation {
   return buildOperation({
@@ -35,6 +56,55 @@ function makeRow(id: string, overrides: Partial<OutboxRow> = {}): OutboxRow {
     ...overrides,
   };
 }
+
+describe("server change reconciliation", () => {
+  it("keeps pending local objects while allowing unrelated remote changes", () => {
+    const localId = "33333333-3333-4333-8333-333333333333";
+    const remoteId = "44444444-4444-4444-8444-444444444444";
+    const changes = filterChangesForPendingOperations(
+      {
+        objects: [
+          makeObject(localId, 4, "stale server text"),
+          makeObject(remoteId, 1, "remote drawing"),
+        ],
+        deletedObjectIds: [localId, remoteId],
+      },
+      [makeRow("pending")],
+    );
+
+    expect(changes.objects.map((object) => object.id)).toEqual([remoteId]);
+    expect(changes.deletedObjectIds).toEqual([remoteId]);
+  });
+
+  it("advances a newer draft revision without replacing its content", () => {
+    const objectId = "33333333-3333-4333-8333-333333333333";
+    const draft = makeRow("newer", {
+      createdAt: 2_000,
+      op: {
+        ...makeOp("newer", 2_000),
+        baseRevision: 4,
+        mutation: {
+          type: "upsert",
+          object: makeObject(objectId, 3, "latest local text"),
+        },
+      },
+    });
+
+    const result = preserveLocalDraft(
+      makeObject(objectId, 4, "older acknowledged text"),
+      [draft],
+      "acknowledged",
+    );
+
+    expect(result.object.payload).toEqual({ text: "latest local text" });
+    expect(result.object.revision).toBe(4);
+    expect(result.updatedRow?.op.baseRevision).toBe(4);
+    expect(result.updatedRow?.op.mutation).toEqual({
+      type: "upsert",
+      object: result.object,
+    });
+  });
+});
 
 describe("computeBackoffMs", () => {
   it("doubles from the base and caps", () => {

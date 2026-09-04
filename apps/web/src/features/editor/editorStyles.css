@@ -71,8 +71,11 @@
 }
 
 .rich-text-content {
-  outline: none;
   min-width: 0;
+}
+
+.rich-text-content .ProseMirror {
+  outline: none;
 }
 
 .rich-text-content p:first-child {

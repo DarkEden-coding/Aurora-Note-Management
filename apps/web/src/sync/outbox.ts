@@ -2,7 +2,12 @@
 import type { CanvasObject, SyncOperation } from "@aurora/shared";
 import { ApiError, apiPost } from "../lib/http.js";
 import { db } from "./db.js";
-import { applyAck, markAttemptFailed, selectDueBatch } from "./outboxCore.js";
+import {
+  applyAck,
+  markAttemptFailed,
+  preserveLocalDraft,
+  selectDueBatch,
+} from "./outboxCore.js";
 
 interface AckBatchResponse {
   acks: import("@aurora/shared").SyncAck[];
@@ -96,16 +101,28 @@ async function enqueueObjectMutationNow(params: {
 async function storeAckedRevision(
   op: SyncOperation,
   ack: import("@aurora/shared").SyncAck,
-): Promise<void> {
+): Promise<CanvasObject | null> {
+  const pendingEnqueue = enqueueChains.get(`${op.noteId}:${op.objectId}`);
+  if (pendingEnqueue) await pendingEnqueue.catch(() => undefined);
+
   if (ack.object) {
-    await db.objects.put(ack.object);
+    const preserved = preserveLocalDraft(
+      ack.object,
+      await db.outbox.toArray(),
+      op.id,
+    );
+    if (preserved.updatedRow) await db.outbox.put(preserved.updatedRow);
+    await db.objects.put(preserved.object);
     await db.notes.update(op.noteId, { revision: ack.object.revision });
-  } else if (op.mutation.type === "upsert") {
+    return preserved.object;
+  }
+  if (op.mutation.type === "upsert") {
     // Server did not echo the object; store the sent version so outbox removal still has local state.
     await db.objects.put(op.mutation.object);
-  } else {
-    await db.objects.delete(op.objectId);
+    return op.mutation.object;
   }
+  await db.objects.delete(op.objectId);
+  return null;
 }
 
 /**
@@ -133,12 +150,20 @@ async function recordServerConflict(
   });
 }
 
+export interface AcknowledgedChange {
+  noteId: string;
+  objects: CanvasObject[];
+  deletedObjectIds: string[];
+}
+
 /** Flush every due operation batch until the queue is drained or the network fails. */
 export async function flushOutbox(): Promise<{
   sent: number;
   remaining: number;
+  changes: AcknowledgedChange[];
 }> {
   let sent = 0;
+  const changes: AcknowledgedChange[] = [];
 
   for (;;) {
     const rows = await db.outbox.toArray();
@@ -176,7 +201,12 @@ export async function flushOutbox(): Promise<{
       if (!op) continue;
       if (ack.status === "applied" || ack.status === "duplicate") {
         // Durability rule: only store the revision, then remove from the outbox.
-        await storeAckedRevision(op, ack);
+        const object = await storeAckedRevision(op, ack);
+        changes.push({
+          noteId: op.noteId,
+          objects: object ? [object] : [],
+          deletedObjectIds: object ? [] : [op.objectId],
+        });
       }
       if (ack.status === "conflict") {
         // The server recorded the conflict and consumed this operation; surface it
@@ -206,5 +236,5 @@ export async function flushOutbox(): Promise<{
   }
 
   const remaining = await db.outbox.count();
-  return { sent, remaining };
+  return { sent, remaining, changes };
 }

@@ -1,10 +1,77 @@
 // This module holds Aurora's pure outbox logic — batch selection, retry backoff, and acknowledgement reduction — with no IndexedDB or network dependency so it can be unit-tested directly and is used by the durable outbox.
-import type { SyncAck, SyncOperation } from "@aurora/shared";
+import type { CanvasObject, SyncAck, SyncOperation } from "@aurora/shared";
 import type { OutboxRow } from "./db.js";
 
 export const OUTBOX_BATCH_SIZE = 50;
 export const BACKOFF_BASE_MS = 1_000;
 export const BACKOFF_CAP_MS = 5 * 60 * 1_000;
+
+export interface ServerChanges {
+  objects: CanvasObject[];
+  deletedObjectIds: string[];
+}
+
+/** Keep server snapshots away from objects that still have unsynced local work. */
+export function filterChangesForPendingOperations(
+  changes: ServerChanges,
+  rows: OutboxRow[],
+): ServerChanges {
+  const pendingObjectIds = new Set(rows.map((row) => row.op.objectId));
+  return {
+    objects: changes.objects.filter(
+      (object) => !pendingObjectIds.has(object.id),
+    ),
+    deletedObjectIds: changes.deletedObjectIds.filter(
+      (objectId) => !pendingObjectIds.has(objectId),
+    ),
+  };
+}
+
+export interface PreservedDraft {
+  object: CanvasObject;
+  updatedRow?: OutboxRow;
+}
+
+/** Apply an acknowledged revision to a newer local draft without replacing its content. */
+export function preserveLocalDraft(
+  authoritative: CanvasObject,
+  rows: OutboxRow[],
+  acknowledgedOperationId: string,
+): PreservedDraft {
+  const draftRow = rows
+    .filter(
+      (row) =>
+        row.id !== acknowledgedOperationId &&
+        row.op.objectId === authoritative.id &&
+        row.op.mutation.type === "upsert",
+    )
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (!draftRow || draftRow.op.mutation.type !== "upsert") {
+    return { object: authoritative };
+  }
+
+  const object = {
+    ...draftRow.op.mutation.object,
+    ownerId: authoritative.ownerId,
+    noteId: authoritative.noteId,
+    revision: authoritative.revision,
+    createdAt: authoritative.createdAt,
+  };
+  return {
+    object,
+    updatedRow: {
+      ...draftRow,
+      op: {
+        ...draftRow.op,
+        baseRevision: Math.max(
+          draftRow.op.baseRevision,
+          authoritative.revision,
+        ),
+        mutation: { type: "upsert", object },
+      },
+    },
+  };
+}
 
 /** Capped exponential backoff: 1s, 2s, 4s, ... up to the cap. */
 export function computeBackoffMs(attempt: number): number {
