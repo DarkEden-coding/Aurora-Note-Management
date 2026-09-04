@@ -47,7 +47,19 @@
 }
 
 .canvas-viewport[data-cursor="eraser"] {
-  cursor: cell;
+  cursor: none;
+}
+
+.canvas-eraser-preview {
+  position: absolute;
+  z-index: 9;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--aurora-canvas-ink);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 65%, transparent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 .canvas-viewport[data-cursor="create"] {
@@ -305,6 +317,7 @@
   background: transparent;
   color: var(--aurora-canvas-ink);
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .canvas-toolbar button:hover {
@@ -323,7 +336,7 @@
 
 .canvas-statusbar {
   position: absolute;
-  bottom: 8px;
+  bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
@@ -352,20 +365,59 @@
   box-shadow: var(--shadow-inset);
   cursor: pointer;
   touch-action: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.canvas-scrollbar[data-active="true"],
+.canvas-scrollbar:hover {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .canvas-scrollbar.horizontal {
   right: 34px;
-  bottom: 36px;
-  left: 14px;
+  bottom: 8px;
+  left: 38px;
   height: 10px;
 }
 
 .canvas-scrollbar.vertical {
   top: 82px;
-  right: 12px;
-  bottom: 58px;
+  right: 8px;
+  bottom: 42px;
   width: 10px;
+}
+
+.canvas-axis-lock {
+  position: absolute;
+  z-index: 13;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: var(--panel-border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--aurora-canvas-muted);
+  box-shadow: var(--shadow-outset);
+  touch-action: manipulation;
+}
+
+.canvas-axis-lock[aria-pressed="true"] {
+  color: var(--aurora-canvas-accent);
+}
+
+.canvas-axis-lock.horizontal {
+  bottom: 2px;
+  left: 8px;
+}
+
+.canvas-axis-lock.vertical {
+  right: 1px;
+  bottom: 10px;
 }
 
 .canvas-scrollbar-thumb {
@@ -430,7 +482,6 @@
   .canvas-toolbar-group {
     flex: 0 0 auto;
   }
-  .canvas-statusbar span:first-child,
   .canvas-statusbar span:last-child {
     display: none;
   }

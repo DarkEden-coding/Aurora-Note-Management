@@ -17,8 +17,6 @@ import {
   Minus,
   Undo2,
 } from "lucide-react";
-import type { CanvasMode } from "@aurora/shared";
-
 export type CanvasTool =
   | "select"
   | "pan"
@@ -33,7 +31,6 @@ export type CanvasTool =
 
 export interface CanvasToolbarProps {
   tool: CanvasTool;
-  mode: CanvasMode;
   zoom: number;
   objectCount: number;
   maxObjectCount: number;
@@ -68,7 +65,6 @@ const TOOLS: ToolButton[] = [
 
 export function CanvasToolbar({
   tool,
-  mode,
   zoom,
   objectCount,
   maxObjectCount,
@@ -93,7 +89,8 @@ export function CanvasToolbar({
               aria-label={button.label}
               aria-pressed={tool === button.tool}
               data-active={tool === button.tool ? "true" : "false"}
-              onPointerDown={(e) => e.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
               onClick={() => onToolChange(button.tool)}
             >
               {button.icon}
@@ -106,7 +103,8 @@ export function CanvasToolbar({
             type="button"
             title="Zoom out"
             aria-label="Zoom out"
-            onPointerDown={(e) => e.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
             onClick={onZoomOut}
           >
             <Minus size={16} />
@@ -115,7 +113,8 @@ export function CanvasToolbar({
             type="button"
             title="Reset zoom"
             aria-label="Reset zoom"
-            onPointerDown={(e) => e.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
             onClick={onZoomReset}
           >
             <Maximize size={16} />
@@ -124,7 +123,8 @@ export function CanvasToolbar({
             type="button"
             title="Zoom in"
             aria-label="Zoom in"
-            onPointerDown={(e) => e.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
             onClick={onZoomIn}
           >
             <Plus size={16} />
@@ -137,7 +137,8 @@ export function CanvasToolbar({
             title="Undo (Ctrl+Z)"
             aria-label="Undo"
             disabled={!canUndo}
-            onPointerDown={(e) => e.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
             onClick={onUndo}
           >
             <Undo2 size={16} />
@@ -147,7 +148,8 @@ export function CanvasToolbar({
             title="Redo (Ctrl+Shift+Z)"
             aria-label="Redo"
             disabled={!canRedo}
-            onPointerDown={(e) => e.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
             onClick={onRedo}
           >
             <Redo2 size={16} />
@@ -155,7 +157,6 @@ export function CanvasToolbar({
         </div>
       </div>
       <div className="canvas-statusbar" data-testid="canvas-status">
-        <span>{modeLabel(mode)}</span>
         <span>{Math.round(zoom * 100)}%</span>
         <span>
           {objectCount}/{maxObjectCount} objects
@@ -163,18 +164,4 @@ export function CanvasToolbar({
       </div>
     </>
   );
-}
-
-function modeLabel(mode: CanvasMode): string {
-  switch (mode) {
-    case "fixed-width":
-      return "Fixed width";
-    case "fixed-height":
-      return "Fixed height";
-    case "paged":
-      return "Paged";
-    case "infinite":
-    default:
-      return "Infinite";
-  }
 }

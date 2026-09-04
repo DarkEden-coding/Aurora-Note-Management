@@ -10,6 +10,7 @@ import { syncEngine, type SyncStatus } from "../sync/engine.js";
 import { useSyncExternalStore } from "react";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { MainEditor } from "./MainEditor.js";
+import type { CanvasMode } from "@aurora/shared";
 
 type DrawerKind = "none" | "settings" | "sync";
 
@@ -42,6 +43,20 @@ function NoteTitle({ noteId, title }: { noteId: string; title: string }) {
       maxLength={200}
     />
   );
+}
+
+/** Human-readable canvas extent shown beside connectivity state. */
+function canvasModeLabel(mode: CanvasMode): string {
+  switch (mode) {
+    case "fixed-width":
+      return "Fixed width";
+    case "fixed-height":
+      return "Fixed height";
+    case "paged":
+      return "Paged";
+    case "infinite":
+      return "Infinite";
+  }
 }
 
 function SyncPill({ onClick }: { onClick: () => void }) {
@@ -115,7 +130,14 @@ export function AuthenticatedShell({
               <span>No note selected</span>
             )}
           </div>
-          <SyncPill onClick={() => setDrawer("sync")} />
+          <div className="connection-status">
+            <SyncPill onClick={() => setDrawer("sync")} />
+            {selectedNote ? (
+              <span className="canvas-mode-indicator">
+                {canvasModeLabel(selectedNote.canvasMode)}
+              </span>
+            ) : null}
+          </div>
           <button
             className="ghost"
             onClick={() => setDrawer("settings")}

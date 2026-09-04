@@ -36,7 +36,10 @@ export interface UseViewportResult {
 
 const EMPTY_SIZE: ContainerSize = { width: 0, height: 0 };
 
-export function useViewport(initial: Viewport): UseViewportResult {
+export function useViewport(
+  initial: Viewport,
+  panLocks: { x: boolean; y: boolean } = { x: false, y: false },
+): UseViewportResult {
   const [viewport, setViewport] = useState<Viewport>(initial);
   const [containerSize, setContainerSize] = useState<ContainerSize>(EMPTY_SIZE);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -44,20 +47,33 @@ export function useViewport(initial: Viewport): UseViewportResult {
 
   containerSizeRef.current = containerSize;
 
-  const zoomAt = useCallback((anchorScreen: Point, nextZoom: number) => {
-    setViewport((prev) =>
-      zoomViewportAround(
-        prev,
-        anchorScreen,
-        clampZoom(nextZoom),
-        containerSizeRef.current ?? EMPTY_SIZE,
-      ),
-    );
-  }, []);
+  const zoomAt = useCallback(
+    (anchorScreen: Point, nextZoom: number) => {
+      setViewport((prev) => {
+        const next = zoomViewportAround(
+          prev,
+          anchorScreen,
+          clampZoom(nextZoom),
+          containerSizeRef.current ?? EMPTY_SIZE,
+        );
+        return {
+          ...next,
+          x: panLocks.x ? prev.x : next.x,
+          y: panLocks.y ? prev.y : next.y,
+        };
+      });
+    },
+    [panLocks.x, panLocks.y],
+  );
 
-  const panBy = useCallback((dxScreen: number, dyScreen: number) => {
-    setViewport((prev) => panViewport(prev, dxScreen, dyScreen));
-  }, []);
+  const panBy = useCallback(
+    (dxScreen: number, dyScreen: number) => {
+      setViewport((prev) =>
+        panViewport(prev, panLocks.x ? 0 : dxScreen, panLocks.y ? 0 : dyScreen),
+      );
+    },
+    [panLocks.x, panLocks.y],
+  );
 
   const toCanvas = useCallback(
     (p: Point): Point => {
