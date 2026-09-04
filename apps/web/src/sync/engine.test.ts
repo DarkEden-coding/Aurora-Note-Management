@@ -80,9 +80,9 @@ afterEach(() => {
 });
 
 describe("requestFlush", () => {
-  it("coalesces a burst and starts syncing within 100 ms", async () => {
+  it("coalesces a burst and syncs 100 ms after its last edit", async () => {
     syncEngine.requestFlush();
-    syncEngine.requestFlush();
+    await vi.advanceTimersByTimeAsync(75);
     syncEngine.requestFlush();
 
     await vi.advanceTimersByTimeAsync(99);

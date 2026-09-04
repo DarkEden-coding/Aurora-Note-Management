@@ -4,11 +4,10 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import { EDITOR_EXTENSIONS } from "./extensions";
 import {
   Bold,
-  ChevronDown,
   Heading1,
   Italic,
   List,
-  SlidersHorizontal,
+  Settings2,
   Table as TableIcon,
 } from "lucide-react";
 
@@ -66,7 +65,7 @@ export function RichTextBlock({
   useEffect(() => {
     if (!editor || content === lastEmittedRef.current) return;
     lastEmittedRef.current = content;
-    editor.commands.setContent(content as never);
+    editor.commands.setContent(content as never, { emitUpdate: false });
   }, [editor, content]);
 
   useEffect(() => {
@@ -101,9 +100,7 @@ export function RichTextBlock({
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => setToolbarOpen((current) => !current)}
           >
-            <SlidersHorizontal size={18} />
-            <span>Format</span>
-            <ChevronDown size={16} data-open={toolbarOpen} />
+            <Settings2 size={16} />
           </button>
           {toolbarOpen ? (
             <div className="rich-text-toolbar-controls">

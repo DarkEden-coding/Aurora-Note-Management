@@ -230,7 +230,6 @@ class SyncEngine {
       return;
     }
     if (this.scheduledFlush !== null) {
-      if (delayMs > 0) return;
       clearTimeout(this.scheduledFlush);
     }
     this.scheduledFlush = setTimeout(() => {
