@@ -6,6 +6,7 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1074,7 +1075,7 @@ export function CanvasWorkspace({
   );
   const centeredModeRef = useRef("");
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (scrollBounds === null) return;
     const identity = `${noteId}:${activeMode}`;
     const shouldCenter = centeredModeRef.current !== identity;
@@ -1091,7 +1092,15 @@ export function CanvasWorkspace({
         ? current
         : { ...current, x: nextX, y: nextY };
     });
-  }, [activeMode, noteId, scrollBounds, setViewport, view.width]);
+  }, [
+    activeMode,
+    noteId,
+    scrollBounds,
+    setViewport,
+    view.width,
+    viewport.x,
+    viewport.y,
+  ]);
   const visible = sortByZIndex(
     queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN),
   );
@@ -1408,13 +1417,15 @@ function CanvasScrollbars({
     0.08,
     Math.min(0.9, visibleHeight / bounds.contentHeight),
   );
+  const rangeX = bounds.maxX - bounds.minX;
+  const rangeY = bounds.maxY - bounds.minY;
   const progressX = Math.max(
     0,
-    Math.min(1, (viewport.x - bounds.minX) / bounds.contentWidth),
+    Math.min(1, (viewport.x - bounds.minX) / rangeX),
   );
   const progressY = Math.max(
     0,
-    Math.min(1, (viewport.y - bounds.minY) / bounds.contentHeight),
+    Math.min(1, (viewport.y - bounds.minY) / rangeY),
   );
   const [active, setActive] = useState({ x: true, y: true });
   const hideTimers = useRef<{ x?: number; y?: number }>({});
@@ -1462,8 +1473,8 @@ function CanvasScrollbars({
       ...current,
       [axis]:
         axis === "x"
-          ? bounds.minX + progress * bounds.contentWidth
-          : bounds.minY + progress * bounds.contentHeight,
+          ? bounds.minX + progress * rangeX
+          : bounds.minY + progress * rangeY,
     }));
   };
   const pointerDown = (

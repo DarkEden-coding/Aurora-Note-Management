@@ -176,7 +176,7 @@ export interface CanvasScrollBounds {
   contentHeight: number;
 }
 
-/** Scroll limits allow no more than half a viewport beyond constrained content. */
+/** Scroll limits keep at least one quarter of each constrained axis on screen. */
 export function canvasScrollBounds(
   objects: CanvasObject[],
   mode: CanvasMode,
@@ -205,10 +205,10 @@ export function canvasScrollBounds(
         : PAGE_HEIGHT;
 
   return {
-    minX: -visibleWidth / 2,
-    maxX: contentWidth - visibleWidth / 2,
-    minY: -visibleHeight / 2,
-    maxY: contentHeight - visibleHeight / 2,
+    minX: -visibleWidth * 0.75,
+    maxX: contentWidth - visibleWidth * 0.25,
+    minY: -visibleHeight * 0.75,
+    maxY: contentHeight - visibleHeight * 0.25,
     contentWidth,
     contentHeight,
   };

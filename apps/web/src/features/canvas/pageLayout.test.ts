@@ -103,13 +103,13 @@ describe("mode clamping", () => {
     expect(canvasSurfaceFrames([], "infinite")).toEqual([]);
   });
 
-  it("limits overscroll to half a viewport and grows with open-axis content", () => {
+  it("keeps one quarter of the writable area on screen and grows with content", () => {
     const view = { width: 400, height: 600 };
     const base = canvasScrollBounds([], "paged", view.width, view.height)!;
-    expect(base.minX).toBe(-200);
-    expect(base.maxX).toBe(PAGE_WIDTH - 200);
-    expect(base.minY).toBe(-300);
-    expect(base.maxY).toBe(PAGE_HEIGHT - 300);
+    expect(base.minX).toBe(-300);
+    expect(base.maxX).toBe(PAGE_WIDTH - 100);
+    expect(base.minY).toBe(-450);
+    expect(base.maxY).toBe(PAGE_HEIGHT - 150);
 
     const tall = canvasScrollBounds(
       [objectAt({ x: 10, y: 1800, width: 20, height: 100 })],
@@ -118,7 +118,7 @@ describe("mode clamping", () => {
       view.height,
     )!;
     expect(tall.contentHeight).toBe(1900);
-    expect(tall.maxY).toBe(1600);
+    expect(tall.maxY).toBe(1750);
 
     const wide = canvasScrollBounds(
       [objectAt({ x: 1400, y: 10, width: 100, height: 20 })],
@@ -127,7 +127,7 @@ describe("mode clamping", () => {
       view.height,
     )!;
     expect(wide.contentWidth).toBe(1500);
-    expect(wide.maxX).toBe(1300);
+    expect(wide.maxX).toBe(1400);
     expect(canvasScrollBounds([], "infinite", 400, 600)).toBeNull();
   });
 
