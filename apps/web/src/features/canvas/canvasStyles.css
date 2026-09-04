@@ -631,6 +631,29 @@
   height: 28px;
 }
 
+.canvas-tablet-delete {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse) and (min-width: 600px) {
+  .canvas-tablet-delete {
+    position: absolute;
+    right: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid #d66;
+    border-radius: 50%;
+    background: var(--surface-raised);
+    color: #e77;
+    box-shadow: var(--shadow-outset);
+    touch-action: manipulation;
+  }
+}
+
 .shape-properties-button {
   display: inline-flex;
   align-items: center;

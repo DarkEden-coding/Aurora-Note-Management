@@ -22,7 +22,7 @@ import {
 } from "@aurora/shared";
 import { db } from "../../sync/db";
 import { syncEngine } from "../../sync/engine";
-import { Lock, Unlock } from "lucide-react";
+import { Lock, Trash2, Unlock } from "lucide-react";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
   DrawingPlacementPanel,
@@ -1489,8 +1489,8 @@ export function CanvasWorkspace({
     zoomAt({ x: containerSize.width / 2, y: containerSize.height / 2 }, 1);
   };
   const placementTool = tool === "pen" || isVectorTool(tool) ? tool : null;
-  const shapeControlsPosition =
-    tool === "select" && selectedDrawingStyle !== null && primaryObject !== null
+  const objectControlsPosition =
+    tool === "select" && primaryObject !== null && !primaryObject.locked
       ? {
           left: Math.max(
             8,
@@ -1602,6 +1602,18 @@ export function CanvasWorkspace({
             </div>
           ))}
 
+          {visible
+            .filter((object) => object.kind === "image")
+            .map((object) => (
+              <HtmlObject
+                key={object.id}
+                object={object}
+                interactive={tool === "select" && !object.locked}
+                selected={selection.isSelected(object.id)}
+                callbacks={htmlCallbacks}
+              />
+            ))}
+
           {view.width > 0 && view.height > 0 ? (
             <svg
               className="canvas-scene"
@@ -1685,6 +1697,7 @@ export function CanvasWorkspace({
             .filter(
               (o) =>
                 o.kind !== "stroke" &&
+                o.kind !== "image" &&
                 o.kind !== "rectangle" &&
                 o.kind !== "ellipse" &&
                 o.kind !== "line" &&
@@ -1716,42 +1729,57 @@ export function CanvasWorkspace({
             style={{ left: eraserPointer.x, top: eraserPointer.y }}
           />
         ) : null}
-        {shapeControlsPosition !== null && selectedDrawingStyle !== null ? (
+        {objectControlsPosition !== null ? (
           <div
             className="shape-properties-anchor"
             data-canvas-controls="true"
             data-side={
-              shapeControlsPosition.left > containerSize.width / 2
+              objectControlsPosition.left > containerSize.width / 2
                 ? "left"
                 : "right"
             }
             data-vertical={
-              shapeControlsPosition.top > containerSize.height / 2
+              objectControlsPosition.top > containerSize.height / 2
                 ? "up"
                 : "down"
             }
-            style={shapeControlsPosition}
+            style={objectControlsPosition}
             onPointerDown={(event) => event.stopPropagation()}
             onPointerMove={(event) => event.stopPropagation()}
             onPointerUp={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
           >
-            <ShapePropertiesButton
-              open={shapePropertiesOpen}
-              onToggle={() => setShapePropertiesOpen((current) => !current)}
-            />
-            {shapePropertiesOpen && isVectorObject(primaryObject) ? (
+            <button
+              type="button"
+              className="canvas-tablet-delete"
+              aria-label="Delete selected object"
+              title="Delete"
+              onClick={deleteSelection}
+            >
+              <Trash2 size={14} />
+            </button>
+            {selectedDrawingStyle !== null ? (
+              <ShapePropertiesButton
+                open={shapePropertiesOpen}
+                onToggle={() => setShapePropertiesOpen((current) => !current)}
+              />
+            ) : null}
+            {shapePropertiesOpen &&
+            selectedDrawingStyle !== null &&
+            isVectorObject(primaryObject) ? (
               <div
                 className="shape-properties-popover"
                 role="group"
                 aria-label="Selected shape properties"
                 style={{
                   maxHeight:
-                    shapeControlsPosition.top > containerSize.height / 2
-                      ? Math.max(180, shapeControlsPosition.top - 48)
+                    objectControlsPosition.top > containerSize.height / 2
+                      ? Math.max(180, objectControlsPosition.top - 48)
                       : Math.max(
                           180,
-                          containerSize.height - shapeControlsPosition.top - 76,
+                          containerSize.height -
+                            objectControlsPosition.top -
+                            76,
                         ),
                 }}
               >
