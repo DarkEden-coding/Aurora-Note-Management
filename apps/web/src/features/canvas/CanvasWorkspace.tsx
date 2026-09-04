@@ -43,6 +43,7 @@ import { buildDemoObjects } from "./DemoContent";
 import {
   applyResize,
   dragBoundsFree,
+  fitImageSize,
   getShapeColor,
   getShapeCornerRadius,
   getShapeFill,
@@ -151,6 +152,33 @@ const EMPTY_HISTORY: HistoryState = { undo: [], redo: [] };
 const HISTORY_LIMIT = 50;
 const ERASER_HIT_TOLERANCE_SCREEN = 10;
 
+/** Reads an image file's intrinsic dimensions without retaining its object URL. */
+async function readImageSize(
+  file: File,
+): Promise<{ width: number; height: number }> {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Uploads one image and returns its authenticated download URL. */
+async function uploadImage(file: File): Promise<string> {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch("/api/files", { method: "POST", body });
+  if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+  const result = (await response.json()) as { file?: { id?: unknown } };
+  if (typeof result.file?.id !== "string")
+    throw new Error("Upload returned no file ID");
+  return `/api/files/${result.file.id}`;
+}
+
 const CREATE_TOOLS: readonly string[] = [
   "line",
   "rectangle",
@@ -240,6 +268,7 @@ export function CanvasWorkspace({
   );
 
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
+  const [imageImportError, setImageImportError] = useState<string | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const palette = drawingPalette ?? (["#000000"] as DrawingPalette);
   const [drawingStyle, setDrawingStyle] = useState<DrawingStyle>(() => ({
@@ -501,6 +530,61 @@ export function CanvasWorkspace({
     },
     [commitUpsert, recordHistory],
   );
+
+  const importImages = useCallback(
+    async (files: File[], at: Point): Promise<void> => {
+      const images = files.filter((file) => file.type.startsWith("image/"));
+      const available = MAX_OBJECTS_PER_NOTE - objectsRef.current.length;
+      if (images.length === 0 || available <= 0) return;
+      setImageImportError(null);
+      try {
+        for (const [index, file] of images.slice(0, available).entries()) {
+          const dimensions = await readImageSize(file);
+          const src = await uploadImage(file);
+          const size = fitImageSize(dimensions.width, dimensions.height);
+          appendObject(
+            makeCanvasObject({
+              id: newId(),
+              ownerId:
+                ownerId ?? objectsRef.current[0]?.ownerId ?? DEMO_OWNER_ID,
+              noteId,
+              kind: "image",
+              bounds: clampBoundsToMode(
+                { ...size, x: at.x + index * 24, y: at.y + index * 24 },
+                activeMode,
+              ),
+              zIndex: nextZIndex(objectsRef.current),
+              payload: { src, alt: file.name },
+            }),
+          );
+        }
+      } catch (error) {
+        setImageImportError(
+          error instanceof Error ? error.message : "Image import failed",
+        );
+      }
+    },
+    [activeMode, appendObject, noteId, ownerId],
+  );
+
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent): void => {
+      if (isInsideEditable(event.target)) return;
+      const files = [...(event.clipboardData?.files ?? [])];
+      if (!files.some((file) => file.type.startsWith("image/"))) return;
+      event.preventDefault();
+      void importImages(files, {
+        x:
+          viewportRef.current.x +
+          containerSize.width / viewportRef.current.zoom / 2,
+        y:
+          viewportRef.current.y +
+          containerSize.height / viewportRef.current.zoom / 2,
+      });
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [containerSize.height, containerSize.width, importImages]);
 
   const createObject = useCallback(
     (
@@ -1458,6 +1542,29 @@ export function CanvasWorkspace({
           setEraserPointer(null);
         }}
         onPointerLeave={() => setEraserPointer(null)}
+        onDragOver={(event) => {
+          if (
+            [...event.dataTransfer.items].some((item) =>
+              item.type.startsWith("image/"),
+            )
+          ) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+          }
+        }}
+        onDrop={(event) => {
+          const files = [...event.dataTransfer.files];
+          if (!files.some((file) => file.type.startsWith("image/"))) return;
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          void importImages(
+            files,
+            screenToCanvas(
+              { x: event.clientX - rect.left, y: event.clientY - rect.top },
+              viewportRef.current,
+            ),
+          );
+        }}
       >
         {activeMode === "infinite" ? (
           <div
@@ -1593,6 +1700,16 @@ export function CanvasWorkspace({
               />
             ))}
         </div>
+        {imageImportError !== null ? (
+          <button
+            type="button"
+            className="canvas-import-error"
+            role="alert"
+            onClick={() => setImageImportError(null)}
+          >
+            {imageImportError}
+          </button>
+        ) : null}
         {tool === "eraser" && eraserPointer !== null ? (
           <span
             className="canvas-eraser-preview"

@@ -215,6 +215,20 @@
 }
 
 /* Images */
+.canvas-import-error {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  left: 50%;
+  translate: -50% 0;
+  padding: 8px 12px;
+  border: 1px solid #d66;
+  border-radius: 6px;
+  background: #351d20;
+  color: #ffd9dc;
+  cursor: pointer;
+}
+
 .canvas-image {
   display: flex;
   align-items: center;

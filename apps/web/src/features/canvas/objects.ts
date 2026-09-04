@@ -210,6 +210,17 @@ export function getImageAlt(o: CanvasObject): string {
   return typeof o.payload.alt === "string" ? o.payload.alt : "image";
 }
 
+/** Fits an imported image inside the default canvas footprint without enlarging it. */
+export function fitImageSize(width: number, height: number): Bounds {
+  const scale = Math.min(1, 480 / width, 360 / height);
+  return {
+    x: 0,
+    y: 0,
+    width: Math.max(1, width * scale),
+    height: Math.max(1, height * scale),
+  };
+}
+
 export function getAttachmentName(o: CanvasObject): string {
   return typeof o.payload.name === "string" ? o.payload.name : "attachment";
 }

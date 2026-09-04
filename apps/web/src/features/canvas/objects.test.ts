@@ -5,6 +5,7 @@ import {
   MIN_BOUNDS_SIZE,
   applyResize,
   dragBoundsFree,
+  fitImageSize,
   getArrowHeadGeometry,
   getLineEndpoints,
   getShapeCornerRadius,
@@ -47,6 +48,23 @@ function makeStroke(): CanvasObject {
     ),
   });
 }
+
+describe("image imports", () => {
+  it("preserves aspect ratio and caps the default footprint", () => {
+    expect(fitImageSize(1200, 600)).toEqual({
+      x: 0,
+      y: 0,
+      width: 480,
+      height: 240,
+    });
+    expect(fitImageSize(120, 80)).toEqual({
+      x: 0,
+      y: 0,
+      width: 120,
+      height: 80,
+    });
+  });
+});
 
 describe("payload conventions", () => {
   it("parses stroke points and rejects malformed rows", () => {
