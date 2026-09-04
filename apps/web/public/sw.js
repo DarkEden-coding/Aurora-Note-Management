@@ -1,6 +1,11 @@
 // This service worker is Aurora's offline shell: it serves the cached app shell when offline, caches hashed build assets cache-first, and passes all API traffic straight to the network.
-const CACHE_NAME = "aurora-shell-v1";
-const SHELL_ASSETS = ["/", "/manifest.webmanifest"];
+const CACHE_NAME = "aurora-shell-v2";
+const SHELL_ASSETS = [
+  "/",
+  "/manifest.webmanifest",
+  "/icons/aurora-192.png",
+  "/icons/aurora-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

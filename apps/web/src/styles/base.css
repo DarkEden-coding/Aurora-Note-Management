@@ -17,6 +17,13 @@ body,
   margin: 0;
 }
 
+@supports (height: 100dvh) {
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   background: var(--app-background);
   background-color: var(--bg);
@@ -107,7 +114,10 @@ select:focus-visible {
   display: flex;
   height: 100%;
   gap: var(--gap);
-  padding: var(--shell-padding);
+  padding: calc(var(--shell-padding) + env(safe-area-inset-top, 0px))
+    calc(var(--shell-padding) + env(safe-area-inset-right, 0px))
+    calc(var(--shell-padding) + env(safe-area-inset-bottom, 0px))
+    calc(var(--shell-padding) + env(safe-area-inset-left, 0px));
   background: var(--app-background);
 }
 
@@ -418,7 +428,7 @@ button.tree-action.danger:hover {
 
 .library-dialog {
   width: min(560px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow: auto;
   display: flex;
   flex-direction: column;
