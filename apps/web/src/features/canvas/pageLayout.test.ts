@@ -88,10 +88,12 @@ describe("mode clamping", () => {
   it("builds a patterned writing surface only inside each constrained mode", () => {
     const fixedWidth = canvasSurfaceFrames([], "fixed-width")[0]!;
     expect(fixedWidth.x).toBe(0);
+    expect(fixedWidth.y).toBe(0);
     expect(fixedWidth.width).toBe(PAGE_WIDTH);
     expect(fixedWidth.height).toBeGreaterThan(PAGE_HEIGHT * 10);
 
     const fixedHeight = canvasSurfaceFrames([], "fixed-height")[0]!;
+    expect(fixedHeight.x).toBe(0);
     expect(fixedHeight.y).toBe(0);
     expect(fixedHeight.height).toBe(PAGE_HEIGHT);
     expect(fixedHeight.width).toBeGreaterThan(PAGE_WIDTH * 10);

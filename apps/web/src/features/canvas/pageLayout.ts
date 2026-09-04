@@ -145,7 +145,7 @@ export function canvasSurfaceFrames(
       return [
         {
           x: 0,
-          y: -OPEN_AXIS_EXTENT / 2,
+          y: 0,
           width: pageWidth,
           height: OPEN_AXIS_EXTENT,
         },
@@ -153,7 +153,7 @@ export function canvasSurfaceFrames(
     case "fixed-height":
       return [
         {
-          x: -OPEN_AXIS_EXTENT / 2,
+          x: 0,
           y: 0,
           width: OPEN_AXIS_EXTENT,
           height: pageHeight,
