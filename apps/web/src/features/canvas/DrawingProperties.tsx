@@ -181,7 +181,9 @@ export function DrawingPlacementPanel({
 }): ReactNode {
   return (
     <aside className="drawing-properties-panel" aria-label="Drawing properties">
-      <strong>{tool === "pen" ? "Pen" : "Shape"} properties</strong>
+      <strong className="drawing-properties-title">
+        {tool === "pen" ? "Pen" : "Shape"} properties
+      </strong>
       <DrawingStyleControls kind={tool} {...props} />
     </aside>
   );

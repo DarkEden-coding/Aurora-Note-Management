@@ -1624,7 +1624,19 @@ export function CanvasWorkspace({
                 className="shape-properties-popover"
                 role="group"
                 aria-label="Selected shape properties"
+                style={{
+                  maxHeight:
+                    shapeControlsPosition.top > containerSize.height / 2
+                      ? Math.max(180, shapeControlsPosition.top - 48)
+                      : Math.max(
+                          180,
+                          containerSize.height - shapeControlsPosition.top - 76,
+                        ),
+                }}
               >
+                <strong className="drawing-properties-title">
+                  Shape properties
+                </strong>
                 <DrawingStyleControls
                   kind={primaryObject.kind}
                   style={selectedDrawingStyle}

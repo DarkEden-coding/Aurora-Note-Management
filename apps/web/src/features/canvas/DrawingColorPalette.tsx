@@ -1,12 +1,12 @@
-// Reusable account-palette control for drawing property panels. The parent owns
-// persistence so this component can also be used with temporary palettes.
+// Reusable account-palette control for every drawing property panel. The parent owns persistence.
 import {
   useRef,
   useState,
-  type FormEvent,
+  type ChangeEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { DrawingPalette } from "@aurora/shared";
+import { Plus, Trash2, X } from "lucide-react";
 
 const MAX_COLORS = 64;
 
@@ -22,6 +22,7 @@ export interface DrawingColorPaletteProps {
   disabled?: boolean;
 }
 
+/** Moves one palette color while preserving the rest of the order. */
 function moveColor(
   palette: DrawingPalette,
   from: number,
@@ -35,11 +36,7 @@ function moveColor(
   return next;
 }
 
-/**
- * A keyboard and Pointer Events accessible drawing color chooser/editor.
- * Drag a swatch across another swatch to reorder it, or release it over the
- * add button to delete it. The last color is intentionally not deletable.
- */
+/** Shared color chooser and editor for drawing property panels. */
 export function DrawingColorPalette({
   palette,
   selectedColor,
@@ -47,17 +44,17 @@ export function DrawingColorPalette({
   onChange,
   disabled = false,
 }: DrawingColorPaletteProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const colorInputRef = useRef<HTMLInputElement>(null);
   const paletteRef = useRef(palette);
   paletteRef.current = palette;
   const dragIndexRef = useRef<number | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const commit = (next: DrawingPalette) => {
+  /** Persists a palette edit and reports save failures beside the controls. */
+  const commit = (next: DrawingPalette): void => {
     paletteRef.current = next;
     setError(null);
     void Promise.resolve(onChange(next)).catch((reason: unknown) => {
@@ -69,27 +66,16 @@ export function DrawingColorPalette({
     });
   };
 
-  const finishDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const from = dragIndexRef.current;
-    if (from === null || dragPointerIdRef.current !== event.pointerId) return;
-    const target = document.elementFromPoint(event.clientX, event.clientY);
-    const currentPalette = paletteRef.current;
-    if (
-      target instanceof Element &&
-      target.closest("[data-drawing-palette-add]") &&
-      currentPalette.length > 1
-    ) {
-      dragMovedRef.current = true;
-      commit(
-        currentPalette.filter((_, index) => index !== from) as DrawingPalette,
-      );
-    }
+  /** Finishes a pointer-driven reorder. */
+  const finishDrag = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (dragPointerIdRef.current !== event.pointerId) return;
     dragIndexRef.current = null;
     dragPointerIdRef.current = null;
     setDraggingIndex(null);
   };
 
-  const updateDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  /** Reorders a color when a dragged swatch crosses another swatch. */
+  const updateDrag = (event: ReactPointerEvent<HTMLButtonElement>): void => {
     const from = dragIndexRef.current;
     if (from === null || dragPointerIdRef.current !== event.pointerId) return;
     const target = document.elementFromPoint(event.clientX, event.clientY);
@@ -114,20 +100,32 @@ export function DrawingColorPalette({
     setDraggingIndex(to);
   };
 
-  const addColor = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const color = colorInputRef.current?.value.toLowerCase();
-    if (!color) return;
+  /** Adds the native color picker's result immediately, without a second confirmation. */
+  const addColor = (event: ChangeEvent<HTMLInputElement>): void => {
+    const color = event.currentTarget.value.toLowerCase();
     if (palette.some((existing) => existing.toLowerCase() === color)) {
       setError("That color is already in the palette.");
       return;
     }
     commit([...palette, color] as DrawingPalette);
-    dialogRef.current?.close();
   };
 
   return (
     <div className="drawing-color-palette" aria-label="Drawing color palette">
+      <div className="drawing-color-palette-header">
+        <span>Color</span>
+        <button
+          type="button"
+          className="drawing-color-palette-edit"
+          data-active={editing}
+          aria-label={editing ? "Finish editing colors" : "Remove colors"}
+          aria-pressed={editing}
+          disabled={disabled}
+          onClick={() => setEditing((current) => !current)}
+        >
+          {editing ? "Done" : <Trash2 size={14} />}
+        </button>
+      </div>
       <div className="drawing-color-palette-swatches" role="list">
         {palette.map((color, index) => (
           <div
@@ -144,7 +142,7 @@ export function DrawingColorPalette({
                 selectedColor?.toLowerCase() === color.toLowerCase()
               }
               data-drawing-palette-index={index}
-              disabled={disabled}
+              disabled={disabled || editing}
               onClick={() => {
                 if (!dragMovedRef.current) onSelect?.(color);
                 dragMovedRef.current = false;
@@ -164,28 +162,10 @@ export function DrawingColorPalette({
                 setDraggingIndex(null);
               }}
             />
-            <div
-              className="drawing-color-palette-actions"
-              aria-label={`${color} actions`}
-            >
+            {editing ? (
               <button
                 type="button"
-                onClick={() => commit(moveColor(palette, index, index - 1))}
-                disabled={disabled || index === 0}
-                aria-label={`Move ${color} left`}
-              >
-                ←
-              </button>
-              <button
-                type="button"
-                onClick={() => commit(moveColor(palette, index, index + 1))}
-                disabled={disabled || index === palette.length - 1}
-                aria-label={`Move ${color} right`}
-              >
-                →
-              </button>
-              <button
-                type="button"
+                className="drawing-color-palette-remove"
                 onClick={() =>
                   commit(
                     palette.filter(
@@ -194,50 +174,42 @@ export function DrawingColorPalette({
                   )
                 }
                 disabled={disabled || palette.length === 1}
-                aria-label={`Delete ${color}`}
+                aria-label={`Remove ${color}`}
               >
-                Delete
+                <X size={11} />
               </button>
-            </div>
+            ) : null}
           </div>
         ))}
-        <button
-          type="button"
-          className="drawing-color-palette-add"
-          data-drawing-palette-add
-          disabled={disabled || palette.length >= MAX_COLORS}
-          aria-label="Add drawing color"
-          onClick={() => {
-            setError(null);
-            dialogRef.current?.showModal();
-          }}
-        >
-          +
-        </button>
+        {!editing ? (
+          <label
+            className="drawing-color-palette-add"
+            role="listitem"
+            aria-label="Add drawing color"
+            title="Add color"
+          >
+            <Plus size={17} />
+            <input
+              type="color"
+              defaultValue="#738cff"
+              disabled={disabled || palette.length >= MAX_COLORS}
+              aria-label="Add drawing color"
+              onClick={() => setError(null)}
+              onChange={addColor}
+            />
+          </label>
+        ) : null}
       </div>
+      {editing ? (
+        <p className="drawing-color-palette-hint">
+          Select × to remove a color.
+        </p>
+      ) : null}
       {error ? (
         <p className="drawing-color-palette-error" role="alert">
           {error}
         </p>
       ) : null}
-      <dialog
-        ref={dialogRef}
-        className="drawing-color-palette-dialog"
-        aria-label="Add drawing color"
-      >
-        <form method="dialog" onSubmit={addColor}>
-          <label>
-            New drawing color
-            <input ref={colorInputRef} type="color" defaultValue="#000000" />
-          </label>
-          <div className="drawing-color-palette-dialog-actions">
-            <button type="button" onClick={() => dialogRef.current?.close()}>
-              Cancel
-            </button>
-            <button type="submit">Add color</button>
-          </div>
-        </form>
-      </dialog>
     </div>
   );
 }
