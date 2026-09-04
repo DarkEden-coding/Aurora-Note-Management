@@ -9,7 +9,14 @@ import { ErrorBoundary } from "./shell/ErrorBoundary.js";
 import { ThemeProvider } from "./theme/ThemeProvider.js";
 
 export function App() {
-  const { state, ownerId, userLabel, refresh } = useSession();
+  const {
+    state,
+    ownerId,
+    userLabel,
+    drawingPalette,
+    updateDrawingPalette,
+    refresh,
+  } = useSession();
   const [authView, setAuthView] = useState<"login" | "enroll">("login");
 
   if (state === "checking") {
@@ -42,6 +49,8 @@ export function App() {
         <AuthenticatedShell
           ownerId={ownerId}
           userLabel={userLabel}
+          drawingPalette={drawingPalette}
+          onDrawingPaletteChange={updateDrawingPalette}
           onLoggedOut={() => {
             setAuthView("login");
             void refresh();

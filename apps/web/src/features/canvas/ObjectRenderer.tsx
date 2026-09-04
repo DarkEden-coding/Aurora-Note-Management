@@ -9,9 +9,13 @@ import {
   getAttachmentName,
   getAttachmentSize,
   getImageAlt,
+  getArrowHeadGeometry,
   getImageSrc,
+  getLineEndpoints,
   getRichTextDoc,
   getShapeColor,
+  getShapeCornerRadius,
+  getShapeDashArray,
   getShapeFill,
   getShapeStrokeWidth,
   getStickyColor,
@@ -76,9 +80,13 @@ export function SceneObject({ object }: { object: CanvasObject }): ReactNode {
           y={b.y}
           width={b.width}
           height={b.height}
-          rx={2}
+          rx={Math.min(getShapeCornerRadius(object), b.width / 2, b.height / 2)}
           stroke={getShapeColor(object)}
           strokeWidth={getShapeStrokeWidth(object)}
+          strokeDasharray={getShapeDashArray(object)}
+          strokeLinecap={
+            object.payload.lineStyle === "dotted" ? "round" : undefined
+          }
           fill={getShapeFill(object) ?? "none"}
         />
       );
@@ -93,44 +101,37 @@ export function SceneObject({ object }: { object: CanvasObject }): ReactNode {
           ry={b.height / 2}
           stroke={getShapeColor(object)}
           strokeWidth={getShapeStrokeWidth(object)}
+          strokeDasharray={getShapeDashArray(object)}
+          strokeLinecap={
+            object.payload.lineStyle === "dotted" ? "round" : undefined
+          }
           fill={getShapeFill(object) ?? "none"}
         />
       );
     }
     case "line": {
-      const b = object.bounds;
+      const { start, end } = getLineEndpoints(object);
       return (
         <line
-          x1={b.x}
-          y1={b.y + b.height / 2}
-          x2={b.x + b.width}
-          y2={b.y + b.height / 2}
+          x1={start.x}
+          y1={start.y}
+          x2={end.x}
+          y2={end.y}
           stroke={getShapeColor(object)}
           strokeWidth={getShapeStrokeWidth(object)}
+          strokeDasharray={getShapeDashArray(object)}
           strokeLinecap="round"
         />
       );
     }
     case "arrow": {
-      const b = object.bounds;
-      const start = { x: b.x, y: b.y };
-      const end = { x: b.x + b.width, y: b.y + b.height };
-      const length = Math.hypot(end.x - start.x, end.y - start.y);
-      const head = Math.min(18, Math.max(8, length / 4));
-      const angle = Math.atan2(end.y - start.y, end.x - start.x);
-      const spread = Math.PI / 7;
-      const wing1 = {
-        x: end.x - head * Math.cos(angle - spread),
-        y: end.y - head * Math.sin(angle - spread),
-      };
-      const wing2 = {
-        x: end.x - head * Math.cos(angle + spread),
-        y: end.y - head * Math.sin(angle + spread),
-      };
+      const { start, end } = getLineEndpoints(object);
+      const { wing1, wing2 } = getArrowHeadGeometry(start, end);
       return (
         <g
           stroke={getShapeColor(object)}
           strokeWidth={getShapeStrokeWidth(object)}
+          strokeDasharray={getShapeDashArray(object)}
           strokeLinecap="round"
           fill="none"
         >

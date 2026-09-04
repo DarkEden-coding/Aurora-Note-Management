@@ -471,6 +471,236 @@
   border-radius: 4px;
 }
 
+.drawing-properties-panel,
+.shape-properties-popover {
+  width: 270px;
+  padding: 12px;
+  border: var(--panel-border);
+  border-radius: calc(var(--radius) - 3px);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: var(--shadow-outset);
+  backdrop-filter: blur(var(--blur));
+  color: var(--aurora-canvas-ink);
+}
+
+.drawing-properties-panel {
+  position: absolute;
+  z-index: 11;
+  top: 82px;
+  left: 12px;
+  max-height: calc(100% - 130px);
+  overflow-y: auto;
+}
+
+.drawing-properties-panel > strong {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.drawing-style-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.drawing-color-target {
+  display: flex;
+  gap: 4px;
+}
+
+.drawing-color-target button,
+.drawing-property-field select,
+.drawing-radius-number,
+.drawing-color-palette-actions button,
+.drawing-color-palette-dialog button {
+  min-height: 30px;
+  border: var(--panel-border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--aurora-canvas-ink);
+}
+
+.drawing-color-target button {
+  flex: 1;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.drawing-color-target button[data-active="true"] {
+  border-color: var(--aurora-canvas-accent);
+  color: var(--aurora-canvas-accent);
+}
+
+.drawing-property-field {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--aurora-canvas-muted);
+}
+
+.drawing-property-field > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drawing-property-field input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--aurora-canvas-accent);
+}
+
+.drawing-property-field output {
+  min-width: 34px;
+  color: var(--aurora-canvas-ink);
+}
+
+.drawing-radius-number {
+  width: 58px;
+  padding: 3px 5px;
+}
+
+.shape-properties-anchor {
+  position: absolute;
+  z-index: 14;
+  width: 28px;
+  height: 28px;
+}
+
+.shape-properties-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--aurora-canvas-accent);
+  border-radius: 50%;
+  background: var(--surface-raised);
+  color: var(--aurora-canvas-accent);
+  box-shadow: var(--shadow-outset);
+  touch-action: manipulation;
+}
+
+.shape-properties-popover {
+  position: absolute;
+  max-height: min(440px, calc(100vh - 150px));
+  overflow-y: auto;
+}
+
+.shape-properties-anchor[data-vertical="down"] .shape-properties-popover {
+  top: 34px;
+}
+
+.shape-properties-anchor[data-vertical="up"] .shape-properties-popover {
+  bottom: 34px;
+}
+
+.shape-properties-anchor[data-side="right"] .shape-properties-popover {
+  left: 0;
+}
+
+.shape-properties-anchor[data-side="left"] .shape-properties-popover {
+  right: 0;
+}
+
+.drawing-color-palette-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.drawing-color-palette-swatch-wrap {
+  position: relative;
+}
+
+.drawing-color-palette-swatch,
+.drawing-color-palette-add {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 2px solid color-mix(in srgb, var(--border) 80%, white 10%);
+  border-radius: 50%;
+  box-shadow: var(--shadow-inset);
+  touch-action: none;
+}
+
+.drawing-color-palette-swatch.is-selected {
+  outline: 2px solid var(--aurora-canvas-accent);
+  outline-offset: 2px;
+}
+
+.drawing-color-palette-swatch.is-dragging {
+  scale: 1.12;
+}
+
+.drawing-color-palette-add {
+  border-style: dashed;
+  background: var(--surface-raised);
+  color: var(--aurora-canvas-ink);
+  font-size: 19px;
+}
+
+.drawing-color-palette-actions {
+  position: absolute;
+  z-index: 2;
+  top: 34px;
+  left: 0;
+  display: none;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-outset);
+}
+
+.drawing-color-palette-swatch-wrap:focus-within .drawing-color-palette-actions {
+  display: flex;
+}
+
+.drawing-color-palette-actions button {
+  padding: 2px 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.drawing-color-palette-error {
+  margin: 7px 0 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.drawing-color-palette-dialog {
+  padding: 16px;
+  border: var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-outset);
+}
+
+.drawing-color-palette-dialog::backdrop {
+  background: rgba(2, 4, 10, 0.68);
+  backdrop-filter: blur(4px);
+}
+
+.drawing-color-palette-dialog form,
+.drawing-color-palette-dialog label {
+  display: grid;
+  gap: 12px;
+}
+
+.drawing-color-palette-dialog input[type="color"] {
+  width: 100%;
+  height: 48px;
+}
+
+.drawing-color-palette-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 @media (max-width: 760px) {
   .canvas-toolbar {
     max-width: calc(100% - 16px);
@@ -481,6 +711,10 @@
   }
   .canvas-toolbar-group {
     flex: 0 0 auto;
+  }
+  .drawing-properties-panel,
+  .shape-properties-popover {
+    width: min(270px, calc(100vw - 24px));
   }
   .canvas-statusbar span:last-child {
     display: none;

@@ -4,16 +4,24 @@ import type { CanvasObject } from "@aurora/shared";
 import {
   MIN_BOUNDS_SIZE,
   applyResize,
-  dragBoundsAxis,
   dragBoundsFree,
+  getArrowHeadGeometry,
+  getLineEndpoints,
+  getShapeCornerRadius,
+  getShapeDashArray,
+  getShapeLineStyle,
   getStrokePoints,
+  hitTestLineObject,
   hitTestTopmost,
   hitTestTopmostStroke,
+  lineGeometryFromDrag,
   makeCanvasObject,
   moveObjectToBounds,
   nextZIndex,
   pointsToBounds,
   recomputeStrokeBounds,
+  resizeObjectToBounds,
+  setLineEndpointPayload,
   setStrokePayload,
   handleAtPoint,
 } from "./objects";
@@ -56,6 +64,21 @@ describe("payload conventions", () => {
       payload: { points: [[1, 2], "nope", [1, 2, "x"]] },
     });
     expect(getStrokePoints(bad)).toEqual([]);
+  });
+
+  it("reads vector line styles and clamps rectangle radius", () => {
+    const shape = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c009",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "rectangle",
+      bounds: { x: 0, y: 0, width: 20, height: 20 },
+      zIndex: 1,
+      payload: { lineStyle: "dotted", strokeWidth: 4, cornerRadius: 100 },
+    });
+    expect(getShapeLineStyle(shape)).toBe("dotted");
+    expect(getShapeDashArray(shape)).toBe("0 10");
+    expect(getShapeCornerRadius(shape)).toBe(64);
   });
 
   it("derives tight stroke bounds with padding", () => {
@@ -115,6 +138,24 @@ describe("hit-testing", () => {
     expect(hitTestTopmost([lower], { x: 50, y: 50 })).toBeNull();
   });
 
+  it("hits lines by their path rather than their bounding box", () => {
+    const line = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c010",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "line",
+      bounds: { x: 0, y: 0, width: 100, height: 100 },
+      zIndex: 1,
+      payload: setLineEndpointPayload({ x: 0, y: 0 }, { x: 100, y: 100 }),
+    });
+    expect(hitTestLineObject(line, { x: 50, y: 51 }, 2)).toBe(true);
+    expect(hitTestLineObject(line, { x: 10, y: 90 }, 2)).toBe(false);
+
+    const arrow = { ...line, kind: "arrow" as const };
+    const { wing1 } = getArrowHeadGeometry({ x: 0, y: 0 }, { x: 100, y: 100 });
+    expect(hitTestLineObject(arrow, wing1, 1)).toBe(true);
+  });
+
   it("hits a stroke by its path rather than its bounding box", () => {
     const stroke = makeStroke();
     expect(hitTestTopmostStroke([stroke], { x: 10, y: 6.5 }, 1)).toBe(stroke);
@@ -132,18 +173,41 @@ describe("gesture bounds math", () => {
     });
   });
 
-  it("picks the dominant axis for line/arrow drags", () => {
-    expect(dragBoundsAxis({ x: 0, y: 0 }, { x: 50, y: 3 })).toEqual({
-      x: 0,
-      y: 0,
-      width: 50,
-      height: MIN_BOUNDS_SIZE,
+  it("preserves arbitrary-angle and reverse directional line geometry", () => {
+    expect(
+      lineGeometryFromDrag({ x: 10, y: 20 }, { x: 40, y: 35 }),
+    ).toMatchObject({
+      start: { x: 10, y: 20 },
+      end: { x: 40, y: 35 },
+      bounds: { x: 10, y: 20, width: 30, height: 15 },
     });
-    expect(dragBoundsAxis({ x: 0, y: 0 }, { x: 3, y: 50 })).toEqual({
-      x: 0,
-      y: 0,
-      width: MIN_BOUNDS_SIZE,
-      height: 50,
+    expect(
+      lineGeometryFromDrag({ x: 40, y: 35 }, { x: 10, y: 20 }),
+    ).toMatchObject({
+      start: { x: 40, y: 35 },
+      end: { x: 10, y: 20 },
+      bounds: { x: 10, y: 20, width: 30, height: 15 },
+    });
+  });
+
+  it("snaps line endpoints to the nearest 45 degrees", () => {
+    const geometry = lineGeometryFromDrag(
+      { x: 5, y: 5 },
+      { x: 15, y: 13 },
+      true,
+    );
+    expect(geometry.start).toEqual({ x: 5, y: 5 });
+    expect(geometry.end.x - 5).toBeCloseTo(geometry.end.y - 5);
+    expect(Math.hypot(geometry.end.x - 5, geometry.end.y - 5)).toBeCloseTo(
+      Math.hypot(10, 8),
+    );
+    expect(
+      lineGeometryFromDrag({ x: 0, y: 0 }, { x: 10, y: 10 }, false, 4).bounds,
+    ).toEqual({
+      x: -4,
+      y: -4,
+      width: 18,
+      height: 18,
     });
   });
 
@@ -181,6 +245,76 @@ describe("gesture bounds math", () => {
     const bounds = pointsToBounds([{ x: 0, y: 0, pressure: 1 }], 4);
     expect(bounds.width).toBeGreaterThanOrEqual(MIN_BOUNDS_SIZE);
     expect(bounds.x).toBe(-4);
+  });
+
+  it("falls back to legacy bounds geometry for lines and arrows", () => {
+    const base = {
+      id: "00000000-0000-4000-8000-00000000c006",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      bounds: { x: 10, y: 20, width: 30, height: 40 },
+      zIndex: 1,
+      payload: {},
+    } as const;
+    const line = makeCanvasObject({ ...base, kind: "line" });
+    const arrow = makeCanvasObject({ ...base, kind: "arrow" });
+    expect(getLineEndpoints(line)).toEqual({
+      start: { x: 10, y: 40 },
+      end: { x: 40, y: 40 },
+    });
+    expect(getLineEndpoints(arrow)).toEqual({
+      start: { x: 10, y: 20 },
+      end: { x: 40, y: 60 },
+    });
+  });
+
+  it("resizes directional endpoint payload with its bounds", () => {
+    const line = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c008",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "line",
+      bounds: { x: 10, y: 20, width: 30, height: 20 },
+      zIndex: 1,
+      payload: setLineEndpointPayload({ x: 10, y: 20 }, { x: 40, y: 40 }),
+    });
+    expect(
+      getLineEndpoints(
+        resizeObjectToBounds(line, {
+          x: 20,
+          y: 40,
+          width: 60,
+          height: 40,
+        }),
+      ),
+    ).toEqual({ start: { x: 20, y: 40 }, end: { x: 80, y: 80 } });
+  });
+
+  it("translates line endpoint payload when the object moves", () => {
+    const line = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c007",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "arrow",
+      bounds: { x: 10, y: 20, width: 30, height: 20 },
+      zIndex: 1,
+      payload: setLineEndpointPayload(
+        { x: 40, y: 40 },
+        { x: 10, y: 20 },
+        { color: "red" },
+      ),
+    });
+    const moved = moveObjectToBounds(line, {
+      x: 25,
+      y: 50,
+      width: 30,
+      height: 20,
+    });
+    expect(getLineEndpoints(moved)).toEqual({
+      start: { x: 55, y: 70 },
+      end: { x: 25, y: 50 },
+    });
+    expect(moved.payload.color).toBe("red");
   });
 
   it("keeps stroke points aligned when the object moves", () => {

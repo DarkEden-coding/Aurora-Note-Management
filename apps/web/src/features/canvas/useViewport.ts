@@ -88,6 +88,12 @@ export function useViewport(
     const el = containerRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent): void => {
+      if (
+        e.target instanceof Element &&
+        e.target.closest('[data-canvas-controls="true"]') !== null
+      ) {
+        return;
+      }
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
         const rect = el.getBoundingClientRect();

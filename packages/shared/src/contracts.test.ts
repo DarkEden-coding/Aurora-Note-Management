@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canvasModeSchema,
+  drawingPaletteSchema,
   libraryTreeSchema,
   regionalObjectQueryResponseSchema,
   serverEventSchema,
@@ -13,6 +14,32 @@ import {
 const noteId = "22222222-2222-4222-8222-222222222222";
 const objectId = "33333333-3333-4333-8333-333333333333";
 const deviceId = "11111111-1111-4111-8111-111111111111";
+
+describe("drawingPaletteSchema", () => {
+  it("defaults to the sole black drawing color", () => {
+    expect(drawingPaletteSchema.parse(undefined)).toEqual(["#000000"]);
+  });
+
+  it("accepts ordered full CSS hex colors", () => {
+    expect(
+      drawingPaletteSchema.parse(["#000000", "#Ab12ef", "#FFFFFF"]),
+    ).toEqual(["#000000", "#Ab12ef", "#FFFFFF"]);
+  });
+
+  it("rejects shorthand, invalid, duplicate, empty, and oversized palettes", () => {
+    expect(drawingPaletteSchema.safeParse(["#fff"]).success).toBe(false);
+    expect(drawingPaletteSchema.safeParse(["#gg0000"]).success).toBe(false);
+    expect(drawingPaletteSchema.safeParse(["#ABCDEF", "#abcdef"]).success).toBe(
+      false,
+    );
+    expect(drawingPaletteSchema.safeParse([]).success).toBe(false);
+    expect(
+      drawingPaletteSchema.safeParse(
+        Array.from({ length: 65 }, () => "#000000"),
+      ).success,
+    ).toBe(false);
+  });
+});
 
 describe("canvasModeSchema", () => {
   it("accepts all four canvas modes", () => {

@@ -10,7 +10,7 @@ import { syncEngine, type SyncStatus } from "../sync/engine.js";
 import { useSyncExternalStore } from "react";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { MainEditor } from "./MainEditor.js";
-import type { CanvasMode } from "@aurora/shared";
+import type { CanvasMode, DrawingPalette } from "@aurora/shared";
 
 type DrawerKind = "none" | "settings" | "sync";
 
@@ -83,10 +83,14 @@ function SyncPill({ onClick }: { onClick: () => void }) {
 export function AuthenticatedShell({
   ownerId,
   userLabel,
+  drawingPalette,
+  onDrawingPaletteChange,
   onLoggedOut,
 }: {
   ownerId: string;
   userLabel: string | null;
+  drawingPalette: DrawingPalette;
+  onDrawingPaletteChange: (drawingPalette: DrawingPalette) => Promise<void>;
   onLoggedOut: () => void;
 }) {
   const library = useLibrary();
@@ -154,6 +158,8 @@ export function AuthenticatedShell({
               noteId={selectedNote.id}
               canvasMode={selectedNote.canvasMode}
               background={selectedNote.background}
+              drawingPalette={drawingPalette}
+              onDrawingPaletteChange={onDrawingPaletteChange}
             />
           ) : (
             <div className="canvas-area">

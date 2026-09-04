@@ -5,7 +5,7 @@
 import { useCallback, useRef } from "react";
 import { CanvasWorkspace } from "../features/canvas";
 import type { SyncOperation } from "@aurora/shared";
-import type { Background, CanvasMode } from "@aurora/shared";
+import type { Background, CanvasMode, DrawingPalette } from "@aurora/shared";
 import { enqueueObjectMutation } from "../sync/outbox.js";
 
 export function MainEditor({
@@ -13,11 +13,15 @@ export function MainEditor({
   noteId,
   canvasMode,
   background,
+  drawingPalette,
+  onDrawingPaletteChange,
 }: {
   ownerId: string;
   noteId: string;
   canvasMode: CanvasMode;
   background: Background;
+  drawingPalette: DrawingPalette;
+  onDrawingPaletteChange: (drawingPalette: DrawingPalette) => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -40,6 +44,8 @@ export function MainEditor({
         noteId={noteId}
         mode={canvasMode}
         background={background}
+        drawingPalette={drawingPalette}
+        onDrawingPaletteChange={onDrawingPaletteChange}
         onOperation={handleOperation}
       />
     </div>

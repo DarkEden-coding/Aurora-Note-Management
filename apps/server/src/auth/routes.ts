@@ -1,7 +1,7 @@
 // Maps auth flows to public and owner-scoped routes; sessions ride signed HttpOnly cookies.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { themeSchema } from "@aurora/shared";
+import { drawingPaletteSchema, themeSchema } from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
 import { query } from "../db/pool.js";
 import {
@@ -29,6 +29,10 @@ import {
 
 const setupBodySchema = z.object({ setupToken: z.string().min(1).max(512) });
 const themeBodySchema = z.object({ theme: themeSchema });
+const drawingPaletteBodySchema = z.object({
+  // A PATCH must name the field; the shared default is only for absent legacy rows.
+  drawingPalette: drawingPaletteSchema.unwrap(),
+});
 const registerBodySchema = z.object({
   ceremonyId: z.string().uuid(),
   response: z.record(z.string(), z.unknown()),
@@ -112,17 +116,24 @@ export function registerAuthRoutes(app: FastifyInstance, env: AuroraEnv): void {
 
   app.get("/api/auth/session", { preHandler }, async (request) => {
     const status = await bootstrapStatus();
-    const owner = await query<{ theme: string }>(
-      "SELECT theme FROM users WHERE id = $1",
+    const owner = await query<{ theme: string; drawingPalette: unknown }>(
+      `SELECT theme, drawing_palette AS "drawingPalette"
+       FROM users WHERE id = $1`,
       [request.ownerId!],
     );
     const theme = themeSchema.safeParse(owner.rows[0]?.theme);
+    const drawingPalette = drawingPaletteSchema.safeParse(
+      owner.rows[0]?.drawingPalette,
+    );
     return {
       authenticated: true,
       ownerId: request.ownerId,
       sessionId: request.sessionId,
       enrolled: status.enrolled,
       theme: theme.success ? theme.data : "neomorphic",
+      drawingPalette: drawingPalette.success
+        ? drawingPalette.data
+        : ["#000000"],
     };
   });
 
@@ -134,6 +145,16 @@ export function registerAuthRoutes(app: FastifyInstance, env: AuroraEnv): void {
       theme,
     ]);
     return { theme };
+  });
+
+  // Ordered account palette, shared by every authenticated device via session.
+  app.patch("/api/account/drawing-palette", { preHandler }, async (request) => {
+    const { drawingPalette } = drawingPaletteBodySchema.parse(request.body);
+    await query("UPDATE users SET drawing_palette = $2::jsonb WHERE id = $1", [
+      request.ownerId!,
+      JSON.stringify(drawingPalette),
+    ]);
+    return { drawingPalette };
   });
 
   app.post("/api/auth/logout", { preHandler }, async (request, reply) => {

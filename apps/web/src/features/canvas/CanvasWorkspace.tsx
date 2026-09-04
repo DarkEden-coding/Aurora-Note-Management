@@ -17,12 +17,20 @@ import {
   type Background,
   type CanvasMode,
   type CanvasObject,
+  type DrawingPalette,
   type SyncOperation,
 } from "@aurora/shared";
 import { db } from "../../sync/db";
 import { syncEngine } from "../../sync/engine";
 import { Lock, Unlock } from "lucide-react";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
+import {
+  DrawingPlacementPanel,
+  DrawingStyleControls,
+  ShapePropertiesButton,
+  type DrawingStyle,
+  type VectorTool,
+} from "./DrawingProperties";
 import {
   HtmlObject,
   PressureStrokePath,
@@ -34,17 +42,25 @@ import { DEFAULT_OVERSCAN, queryVisibleObjects, sortByZIndex } from "./culling";
 import { buildDemoObjects } from "./DemoContent";
 import {
   applyResize,
-  dragBoundsAxis,
   dragBoundsFree,
+  getShapeColor,
+  getShapeCornerRadius,
+  getShapeFill,
+  getShapeLineStyle,
+  getShapeStrokeWidth,
   getStrokeBaseWidth,
   handleAtPoint,
   handlePositions,
+  hitTestLineObject,
   hitTestTopmost,
   hitTestTopmostStroke,
+  lineGeometryFromDrag,
   makeCanvasObject,
   moveObjectToBounds,
   nextZIndex,
   pointsToBounds,
+  resizeObjectToBounds,
+  setLineEndpointPayload,
   setStrokePayload,
   translateStrokePoints,
   type Handle,
@@ -64,6 +80,7 @@ import {
   clampBoundsToMode,
   translateBoundsInMode,
 } from "./pageLayout";
+import { shouldRejectTouch } from "./pointerInput";
 import { usePenCapture } from "./usePenCapture";
 import { useSelection } from "./useSelection";
 import { useViewport } from "./useViewport";
@@ -78,16 +95,17 @@ export interface CanvasWorkspaceProps {
   background?: Background;
   /** Canonical objects; when omitted, the workspace loads from the local sync cache and falls back to demo content. */
   objects?: CanvasObject[];
+  /** Account-synced colors available to drawing controls. */
+  drawingPalette?: DrawingPalette;
+  onDrawingPaletteChange?: (palette: DrawingPalette) => void | Promise<void>;
   /** Receives every coalesced upsert/delete operation produced by editing gestures. */
   onOperation?: (operation: SyncOperation) => void;
 }
 
-const STROKE_TOOL_COLOR = "#78a0ff";
 const STROKE_TOOL_WIDTH = 2.5;
 const DEFAULT_STICKY_WIDTH = 190;
 const DEFAULT_STICKY_HEIGHT = 190;
 const STICKY_COLOR = "#f7d774";
-const SHAPE_COLOR = "#e6e8ec";
 const HANDLE_SCREEN_SIZE = 9;
 const HANDLE_HIT_TOLERANCE_SCREEN = 12;
 
@@ -106,8 +124,15 @@ type Gesture =
       handle: Handle;
       start: Point;
       startBounds: Bounds;
+      startObject: CanvasObject;
     }
-  | { kind: "create"; tool: CreateTool; start: Point; current: Point };
+  | {
+      kind: "create";
+      tool: CreateTool;
+      start: Point;
+      current: Point;
+      snapTo45: boolean;
+    };
 
 type CreateTool =
   "line" | "rectangle" | "ellipse" | "arrow" | "sticky" | "text";
@@ -139,6 +164,32 @@ function isCreateTool(tool: CanvasTool): tool is CreateTool {
   return CREATE_TOOLS.includes(tool);
 }
 
+function isVectorTool(tool: CanvasTool): tool is VectorTool {
+  return (
+    tool === "rectangle" ||
+    tool === "ellipse" ||
+    tool === "line" ||
+    tool === "arrow"
+  );
+}
+
+function isVectorObject(
+  object: CanvasObject | null,
+): object is CanvasObject & { kind: VectorTool } {
+  return object !== null && isVectorTool(object.kind as CanvasTool);
+}
+
+/** Reads editable vector properties from a persisted object. */
+function drawingStyleFromObject(object: CanvasObject): DrawingStyle {
+  return {
+    strokeColor: getShapeColor(object),
+    fillColor: getShapeFill(object),
+    strokeWidth: getShapeStrokeWidth(object),
+    lineStyle: getShapeLineStyle(object),
+    cornerRadius: getShapeCornerRadius(object),
+  };
+}
+
 /** True when the pointer target belongs to editable chrome that must keep its events. */
 function isInsideEditable(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -155,6 +206,8 @@ export function CanvasWorkspace({
   mode,
   background,
   objects,
+  drawingPalette,
+  onDrawingPaletteChange,
   onOperation,
 }: CanvasWorkspaceProps): ReactNode {
   const activeMode: CanvasMode = mode ?? "infinite";
@@ -188,6 +241,16 @@ export function CanvasWorkspace({
 
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [tool, setTool] = useState<CanvasTool>("select");
+  const palette = drawingPalette ?? (["#000000"] as DrawingPalette);
+  const [drawingStyle, setDrawingStyle] = useState<DrawingStyle>(() => ({
+    strokeColor: palette[0] ?? "#000000",
+    fillColor: null,
+    strokeWidth: 2,
+    lineStyle: "solid",
+    cornerRadius: 2,
+  }));
+  const [shapePropertiesOpen, setShapePropertiesOpen] = useState(false);
+  const shapeEditOriginRef = useRef<CanvasObject | null>(null);
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [history, setHistory] = useState<HistoryState>(EMPTY_HISTORY);
   const historyRef = useRef(history);
@@ -200,6 +263,7 @@ export function CanvasWorkspace({
     mid: Point;
     zoom: number;
   } | null>(null);
+  const lastStylusTimeRef = useRef(Number.NEGATIVE_INFINITY);
 
   // Controlled mode: the parent's array is the source of truth.
   useEffect(() => {
@@ -439,7 +503,11 @@ export function CanvasWorkspace({
   );
 
   const createObject = useCallback(
-    (createTool: CreateTool, raw: Bounds): void => {
+    (
+      createTool: CreateTool,
+      raw: Bounds,
+      endpoints?: { start: Point; end: Point },
+    ): void => {
       if (objectsRef.current.length >= MAX_OBJECTS_PER_NOTE) return;
       const bounds = clampBoundsToMode(raw, activeMode);
       const kind =
@@ -454,14 +522,26 @@ export function CanvasWorkspace({
                 : createTool === "arrow"
                   ? ("arrow" as const)
                   : ("line" as const);
-      const shapePayload: CanvasObject["payload"] =
-        kind === "rectangle" || kind === "ellipse"
-          ? {
-              color: SHAPE_COLOR,
-              fill: "rgba(120, 160, 255, 0.12)",
-              strokeWidth: 2,
-            }
-          : { color: SHAPE_COLOR, strokeWidth: 2 };
+      let shapePayload: CanvasObject["payload"] = {
+        color: drawingStyle.strokeColor,
+        strokeWidth: drawingStyle.strokeWidth,
+        lineStyle: drawingStyle.lineStyle,
+        ...(kind === "rectangle" || kind === "ellipse"
+          ? { fill: drawingStyle.fillColor }
+          : {}),
+        ...(kind === "rectangle"
+          ? { cornerRadius: drawingStyle.cornerRadius }
+          : {}),
+      };
+      if ((kind === "line" || kind === "arrow") && endpoints !== undefined) {
+        const dx = bounds.x - raw.x;
+        const dy = bounds.y - raw.y;
+        shapePayload = setLineEndpointPayload(
+          { x: endpoints.start.x + dx, y: endpoints.start.y + dy },
+          { x: endpoints.end.x + dx, y: endpoints.end.y + dy },
+          shapePayload,
+        );
+      }
       const object = makeCanvasObject({
         id: newId(),
         ownerId: ownerId ?? objectsRef.current[0]?.ownerId ?? DEMO_OWNER_ID,
@@ -481,7 +561,7 @@ export function CanvasWorkspace({
     },
     // selection.select is stable; selection excluded to avoid gesture churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeMode, ownerId, noteId, appendObject],
+    [activeMode, ownerId, noteId, appendObject, drawingStyle],
   );
 
   const deleteSelection = useCallback((): void => {
@@ -583,7 +663,7 @@ export function CanvasWorkspace({
         zIndex: nextZIndex(objectsRef.current),
         payload: setStrokePayload(
           storedPoints,
-          STROKE_TOOL_COLOR,
+          drawingStyle.strokeColor,
           STROKE_TOOL_WIDTH,
         ),
       });
@@ -635,6 +715,18 @@ export function CanvasWorkspace({
         x: e.clientX - rect.left,
         y: e.clientY - rect.top,
       };
+
+      if (e.pointerType === "pen") {
+        lastStylusTimeRef.current = e.timeStamp;
+        pinchRef.current.clear();
+        pinchSpanRef.current = null;
+        if (gestureRef.current?.kind === "pan") setActiveGesture(null);
+      }
+      if (
+        shouldRejectTouch(e.pointerType, e.timeStamp, lastStylusTimeRef.current)
+      ) {
+        return;
+      }
 
       if (e.pointerType === "touch") {
         if (pen.isDrawing()) return;
@@ -713,6 +805,7 @@ export function CanvasWorkspace({
               handle,
               start: canvasPoint,
               startBounds: primary.bounds,
+              startObject: primary,
             });
             try {
               el.setPointerCapture(e.pointerId);
@@ -731,7 +824,13 @@ export function CanvasWorkspace({
                   [object],
                   canvasPoint,
                   HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
-                ) !== null),
+                ) !== null) &&
+              ((object.kind !== "line" && object.kind !== "arrow") ||
+                hitTestLineObject(
+                  object,
+                  canvasPoint,
+                  HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
+                )),
           ),
           canvasPoint,
         );
@@ -777,6 +876,7 @@ export function CanvasWorkspace({
           tool,
           start: canvasPoint,
           current: canvasPoint,
+          snapTo45: false,
         });
         try {
           el.setPointerCapture(e.pointerId);
@@ -798,6 +898,14 @@ export function CanvasWorkspace({
         x: e.clientX - rect.left,
         y: e.clientY - rect.top,
       };
+      if (e.pointerType === "pen") lastStylusTimeRef.current = e.timeStamp;
+      if (
+        shouldRejectTouch(e.pointerType, e.timeStamp, lastStylusTimeRef.current)
+      ) {
+        pinchRef.current.delete(e.pointerId);
+        if (pinchRef.current.size < 2) pinchSpanRef.current = null;
+        return;
+      }
       setEraserPointer(
         tool === "eraser" && e.pointerType !== "touch" ? screen : null,
       );
@@ -875,13 +983,20 @@ export function CanvasWorkspace({
           activeMode,
         );
         const resized = objectsRef.current.map((o) =>
-          o.id === current.id ? { ...o, bounds: next } : o,
+          o.id === current.id
+            ? resizeObjectToBounds(current.startObject, next)
+            : o,
         );
         objectsRef.current = resized;
         setMirror(resized);
         return;
       }
-      setActiveGesture({ ...current, current: canvasPoint });
+      setActiveGesture({
+        ...current,
+        current: canvasPoint,
+        snapTo45:
+          (current.tool === "line" || current.tool === "arrow") && e.shiftKey,
+      });
     },
     [
       activeMode,
@@ -896,6 +1011,14 @@ export function CanvasWorkspace({
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType === "pen") lastStylusTimeRef.current = e.timeStamp;
+      if (
+        shouldRejectTouch(e.pointerType, e.timeStamp, lastStylusTimeRef.current)
+      ) {
+        pinchRef.current.delete(e.pointerId);
+        if (pinchRef.current.size < 2) pinchSpanRef.current = null;
+        return;
+      }
       if (e.pointerType === "touch") {
         pinchRef.current.delete(e.pointerId);
         pinchSpanRef.current = null;
@@ -964,18 +1087,36 @@ export function CanvasWorkspace({
         ) {
           const resized = { ...o, updatedAt: new Date().toISOString() };
           commitUpsert(resized);
-          recordHistory({
-            before: [{ ...o, bounds: current.startBounds }],
-            after: [resized],
-          });
+          recordHistory({ before: [current.startObject], after: [resized] });
         }
         return;
       }
       if (current.kind === "create") {
-        const raw =
-          current.tool === "line" || current.tool === "arrow"
-            ? dragBoundsAxis(current.start, current.current)
-            : dragBoundsFree(current.start, current.current);
+        const rect = e.currentTarget.getBoundingClientRect();
+        const end = screenToCanvas(
+          { x: e.clientX - rect.left, y: e.clientY - rect.top },
+          viewportRef.current,
+        );
+        if (current.tool === "line" || current.tool === "arrow") {
+          const geometry = lineGeometryFromDrag(
+            current.start,
+            end,
+            e.shiftKey || current.snapTo45,
+            current.tool === "arrow"
+              ? Math.max(10, drawingStyle.strokeWidth)
+              : drawingStyle.strokeWidth / 2,
+          );
+          if (
+            Math.hypot(
+              geometry.end.x - geometry.start.x,
+              geometry.end.y - geometry.start.y,
+            ) >= 2
+          ) {
+            createObject(current.tool, geometry.bounds, geometry);
+          }
+          return;
+        }
+        const raw = dragBoundsFree(current.start, end);
         if (raw.width >= 2 || raw.height >= 2) createObject(current.tool, raw);
       }
     },
@@ -993,6 +1134,14 @@ export function CanvasWorkspace({
 
   const handlePointerCancel = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType === "pen") lastStylusTimeRef.current = e.timeStamp;
+      if (
+        shouldRejectTouch(e.pointerType, e.timeStamp, lastStylusTimeRef.current)
+      ) {
+        pinchRef.current.delete(e.pointerId);
+        if (pinchRef.current.size < 2) pinchSpanRef.current = null;
+        return;
+      }
       if (e.pointerType === "touch") {
         pinchRef.current.delete(e.pointerId);
         if (pinchRef.current.size < 2) pinchSpanRef.current = null;
@@ -1014,7 +1163,7 @@ export function CanvasWorkspace({
         setMirror(next);
       } else if (current?.kind === "resize") {
         const next = objectsRef.current.map((o) =>
-          o.id === current.id ? { ...o, bounds: current.startBounds } : o,
+          o.id === current.id ? current.startObject : o,
         );
         objectsRef.current = next;
         setMirror(next);
@@ -1040,6 +1189,71 @@ export function CanvasWorkspace({
     },
     [commitUpsert],
   );
+
+  const previewSelectedShapeStyle = useCallback(
+    (patch: Partial<DrawingStyle>): void => {
+      const object =
+        objectsRef.current.find((item) => item.id === primaryId) ?? null;
+      if (!isVectorObject(object)) return;
+      const payload = {
+        ...object.payload,
+        ...(patch.strokeColor !== undefined
+          ? { color: patch.strokeColor }
+          : {}),
+        ...(patch.fillColor !== undefined || "fillColor" in patch
+          ? { fill: patch.fillColor }
+          : {}),
+        ...(patch.strokeWidth !== undefined
+          ? { strokeWidth: patch.strokeWidth }
+          : {}),
+        ...(patch.lineStyle !== undefined
+          ? { lineStyle: patch.lineStyle }
+          : {}),
+        ...(patch.cornerRadius !== undefined
+          ? { cornerRadius: patch.cornerRadius }
+          : {}),
+      };
+      if (JSON.stringify(payload) === JSON.stringify(object.payload)) return;
+      if (shapeEditOriginRef.current === null) {
+        shapeEditOriginRef.current = object;
+      }
+      const updated = {
+        ...object,
+        payload,
+        updatedAt: new Date().toISOString(),
+      };
+      const next = objectsRef.current.map((item) =>
+        item.id === object.id ? updated : item,
+      );
+      objectsRef.current = next;
+      setMirror(next);
+      commitUpsert(updated);
+    },
+    [commitUpsert, primaryId],
+  );
+
+  const commitSelectedShapeStyle = useCallback((): void => {
+    const before = shapeEditOriginRef.current;
+    shapeEditOriginRef.current = null;
+    if (before === null) return;
+    const current = objectsRef.current.find((item) => item.id === before.id);
+    if (
+      current === undefined ||
+      JSON.stringify(current.payload) === JSON.stringify(before.payload)
+    ) {
+      return;
+    }
+    recordHistory({ before: [before], after: [current] });
+  }, [recordHistory]);
+
+  useEffect(() => {
+    commitSelectedShapeStyle();
+    setShapePropertiesOpen(false);
+  }, [commitSelectedShapeStyle, primaryId, tool]);
+
+  const selectedDrawingStyle = isVectorObject(primaryObject)
+    ? drawingStyleFromObject(primaryObject)
+    : null;
 
   const htmlCallbacks = useMemo<HtmlObjectCallbacks>(
     () => ({
@@ -1127,13 +1341,40 @@ export function CanvasWorkspace({
   let previewShape: CanvasObject | null = null;
   let previewStickyBounds: Bounds | null = null;
   if (gesture?.kind === "create") {
-    const raw =
+    const lineGeometry =
       gesture.tool === "line" || gesture.tool === "arrow"
-        ? dragBoundsAxis(gesture.start, gesture.current)
-        : dragBoundsFree(gesture.start, gesture.current);
+        ? lineGeometryFromDrag(
+            gesture.start,
+            gesture.current,
+            gesture.snapTo45,
+            gesture.tool === "arrow"
+              ? Math.max(10, drawingStyle.strokeWidth)
+              : drawingStyle.strokeWidth / 2,
+          )
+        : null;
+    const raw =
+      lineGeometry?.bounds ?? dragBoundsFree(gesture.start, gesture.current);
     if (gesture.tool === "sticky" || gesture.tool === "text") {
       previewStickyBounds = raw;
     } else {
+      let payload: CanvasObject["payload"] = {
+        color: drawingStyle.strokeColor,
+        strokeWidth: drawingStyle.strokeWidth,
+        lineStyle: drawingStyle.lineStyle,
+        ...(gesture.tool === "rectangle" || gesture.tool === "ellipse"
+          ? { fill: drawingStyle.fillColor }
+          : {}),
+        ...(gesture.tool === "rectangle"
+          ? { cornerRadius: drawingStyle.cornerRadius }
+          : {}),
+      };
+      if (lineGeometry !== null) {
+        payload = setLineEndpointPayload(
+          lineGeometry.start,
+          lineGeometry.end,
+          payload,
+        );
+      }
       previewShape = makeCanvasObject({
         id: "preview",
         ownerId: DEMO_OWNER_ID,
@@ -1141,14 +1382,7 @@ export function CanvasWorkspace({
         kind: gesture.tool,
         bounds: raw,
         zIndex: 0,
-        payload:
-          gesture.tool === "rectangle" || gesture.tool === "ellipse"
-            ? {
-                color: STROKE_TOOL_COLOR,
-                fill: "rgba(120, 160, 255, 0.12)",
-                strokeWidth: 2,
-              }
-            : { color: STROKE_TOOL_COLOR, strokeWidth: 2 },
+        payload,
       });
     }
   }
@@ -1168,6 +1402,30 @@ export function CanvasWorkspace({
   const zoomReset = (): void => {
     zoomAt({ x: containerSize.width / 2, y: containerSize.height / 2 }, 1);
   };
+  const placementTool = tool === "pen" || isVectorTool(tool) ? tool : null;
+  const shapeControlsPosition =
+    tool === "select" && selectedDrawingStyle !== null && primaryObject !== null
+      ? {
+          left: Math.max(
+            8,
+            Math.min(
+              containerSize.width - 32,
+              (primaryObject.bounds.x +
+                primaryObject.bounds.width -
+                viewport.x) *
+                zoom +
+                8,
+            ),
+          ),
+          top: Math.max(
+            82,
+            Math.min(
+              containerSize.height - 40,
+              (primaryObject.bounds.y - viewport.y) * zoom,
+            ),
+          ),
+        }
+      : null;
 
   return (
     <div
@@ -1258,7 +1516,7 @@ export function CanvasWorkspace({
               {pen.preview !== null ? (
                 <PressureStrokePath
                   points={pen.preview}
-                  color={STROKE_TOOL_COLOR}
+                  color={drawingStyle.strokeColor}
                   baseWidth={STROKE_TOOL_WIDTH}
                 />
               ) : null}
@@ -1337,6 +1595,48 @@ export function CanvasWorkspace({
             style={{ left: eraserPointer.x, top: eraserPointer.y }}
           />
         ) : null}
+        {shapeControlsPosition !== null && selectedDrawingStyle !== null ? (
+          <div
+            className="shape-properties-anchor"
+            data-canvas-controls="true"
+            data-side={
+              shapeControlsPosition.left > containerSize.width / 2
+                ? "left"
+                : "right"
+            }
+            data-vertical={
+              shapeControlsPosition.top > containerSize.height / 2
+                ? "up"
+                : "down"
+            }
+            style={shapeControlsPosition}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerMove={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+          >
+            <ShapePropertiesButton
+              open={shapePropertiesOpen}
+              onToggle={() => setShapePropertiesOpen((current) => !current)}
+            />
+            {shapePropertiesOpen && isVectorObject(primaryObject) ? (
+              <div
+                className="shape-properties-popover"
+                role="group"
+                aria-label="Selected shape properties"
+              >
+                <DrawingStyleControls
+                  kind={primaryObject.kind}
+                  style={selectedDrawingStyle}
+                  palette={palette}
+                  onPaletteChange={(next) => onDrawingPaletteChange?.(next)}
+                  onPreview={previewSelectedShapeStyle}
+                  onCommit={commitSelectedShapeStyle}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <CanvasToolbar
@@ -1353,6 +1653,18 @@ export function CanvasWorkspace({
         onZoomOut={zoomOut}
         onZoomReset={zoomReset}
       />
+      {placementTool !== null ? (
+        <DrawingPlacementPanel
+          tool={placementTool}
+          style={drawingStyle}
+          palette={palette}
+          onPaletteChange={(next) => onDrawingPaletteChange?.(next)}
+          onPreview={(patch) =>
+            setDrawingStyle((current) => ({ ...current, ...patch }))
+          }
+          onCommit={() => undefined}
+        />
+      ) : null}
       {scrollBounds ? (
         <CanvasScrollbars
           bounds={scrollBounds}

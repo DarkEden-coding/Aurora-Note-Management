@@ -5,6 +5,21 @@ export const idSchema = z.string().uuid();
 export const isoDateSchema = z.string().datetime();
 
 export const themeSchema = z.enum(["neomorphic", "glass", "minimal"]);
+
+// Account-synced, ordered drawing colors. Full six-digit CSS hex is required
+// so every client renders the exact same color without shorthand expansion.
+export const drawingPaletteSchema = z
+  .array(z.string().regex(/^#[0-9a-fA-F]{6}$/))
+  .min(1)
+  .max(64)
+  .refine(
+    (colors) =>
+      new Set(colors.map((color) => color.toLowerCase())).size ===
+      colors.length,
+    { message: "Drawing palette colors must be unique" },
+  )
+  .default(["#000000"]);
+
 export const canvasModeSchema = z.enum([
   "infinite",
   "fixed-width",
@@ -176,6 +191,7 @@ export const serverEventSchema = z.discriminatedUnion("type", [
 ]);
 
 export type Theme = z.infer<typeof themeSchema>;
+export type DrawingPalette = z.infer<typeof drawingPaletteSchema>;
 export type CanvasMode = z.infer<typeof canvasModeSchema>;
 export type NoteKind = z.infer<typeof noteKindSchema>;
 export type Bounds = z.infer<typeof boundsSchema>;

@@ -16,8 +16,8 @@ export interface StrokePoint {
 // ---- Payload conventions -------------------------------------------------
 // rich-text:          { doc: ProseMirrorJSON }
 // stroke:             { points: [x, y, pressure][], color: string, baseWidth: number }
-// line | arrow:       { color: string, strokeWidth: number }
-// rectangle | ellipse:{ color: string, fill: string, strokeWidth: number }
+// line | arrow:       { start, end, color, strokeWidth, lineStyle }
+// rectangle | ellipse:{ color, fill, strokeWidth, lineStyle, cornerRadius? }
 // sticky-note:        { text: string, color: string }
 // image:              { src: string, alt: string }
 // attachment:         { name: string, size: number, fileId: string }
@@ -86,6 +86,112 @@ export function getShapeColor(o: CanvasObject): string {
 export function getShapeFill(o: CanvasObject): string | null {
   const fill = o.payload.fill;
   return typeof fill === "string" ? fill : null;
+}
+
+export type ShapeLineStyle = "solid" | "dashed" | "dotted";
+
+/** Reads a supported vector outline style with a legacy solid fallback. */
+export function getShapeLineStyle(o: CanvasObject): ShapeLineStyle {
+  const style = o.payload.lineStyle;
+  return style === "dashed" || style === "dotted" ? style : "solid";
+}
+
+/** Reads rectangle corner radius, constrained to the supported control range. */
+export function getShapeCornerRadius(o: CanvasObject): number {
+  const radius = o.payload.cornerRadius;
+  return typeof radius === "number" && Number.isFinite(radius)
+    ? Math.max(0, Math.min(64, radius))
+    : 2;
+}
+
+/** Converts vector outline style to an SVG dash pattern. */
+export function getShapeDashArray(o: CanvasObject): string | undefined {
+  const width = getShapeStrokeWidth(o);
+  switch (getShapeLineStyle(o)) {
+    case "dashed":
+      return `${width * 4} ${width * 3}`;
+    case "dotted":
+      return `0 ${width * 2.5}`;
+    case "solid":
+      return undefined;
+  }
+}
+
+export interface LineEndpoints {
+  start: Point;
+  end: Point;
+}
+
+export interface ArrowHeadGeometry {
+  wing1: Point;
+  wing2: Point;
+}
+
+/** Calculates the two arrowhead wings used by rendering and hit testing. */
+export function getArrowHeadGeometry(
+  start: Point,
+  end: Point,
+): ArrowHeadGeometry {
+  const length = Math.hypot(end.x - start.x, end.y - start.y);
+  const head = Math.min(18, Math.max(8, length / 4));
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const spread = Math.PI / 7;
+  return {
+    wing1: {
+      x: end.x - head * Math.cos(angle - spread),
+      y: end.y - head * Math.sin(angle - spread),
+    },
+    wing2: {
+      x: end.x - head * Math.cos(angle + spread),
+      y: end.y - head * Math.sin(angle + spread),
+    },
+  };
+}
+
+function payloadPoint(value: unknown): Point | null {
+  if (value === null || typeof value !== "object") return null;
+  const { x, y } = value as { x?: unknown; y?: unknown };
+  return typeof x === "number" &&
+    Number.isFinite(x) &&
+    typeof y === "number" &&
+    Number.isFinite(y)
+    ? { x, y }
+    : null;
+}
+
+/**
+ * Reads directional line geometry. Legacy objects without endpoint payloads retain
+ * their previous rendering: lines cross the horizontal centre, arrows use the
+ * bounds' top-left and bottom-right corners.
+ */
+export function getLineEndpoints(object: CanvasObject): LineEndpoints {
+  const start = payloadPoint(object.payload.start);
+  const end = payloadPoint(object.payload.end);
+  if (start !== null && end !== null) return { start, end };
+
+  const b = object.bounds;
+  return object.kind === "line"
+    ? {
+        start: { x: b.x, y: b.y + b.height / 2 },
+        end: { x: b.x + b.width, y: b.y + b.height / 2 },
+      }
+    : {
+        start: { x: b.x, y: b.y },
+        end: { x: b.x + b.width, y: b.y + b.height },
+      };
+}
+
+/** Adds canonical endpoint fields while retaining style or other payload data. */
+export function setLineEndpointPayload(
+  start: Point,
+  end: Point,
+  payload: CanvasObject["payload"] = {},
+): CanvasObject["payload"] {
+  return {
+    ...payload,
+    start: { x: start.x, y: start.y },
+    end: { x: end.x, y: end.y },
+  };
 }
 
 export function getStickyText(o: CanvasObject): string {
@@ -203,6 +309,23 @@ export function hitTestTopmost(
   return best;
 }
 
+/** True when a point is close to a rendered line or arrow shaft. */
+export function hitTestLineObject(
+  object: CanvasObject,
+  point: Point,
+  tolerance: number,
+): boolean {
+  if (object.kind !== "line" && object.kind !== "arrow") return false;
+  const { start, end } = getLineEndpoints(object);
+  if (distanceToSegment(point, start, end) <= tolerance) return true;
+  if (object.kind === "line") return false;
+  const { wing1, wing2 } = getArrowHeadGeometry(start, end);
+  return (
+    distanceToSegment(point, end, wing1) <= tolerance ||
+    distanceToSegment(point, end, wing2) <= tolerance
+  );
+}
+
 /** Topmost stroke whose rendered path is within the supplied canvas-space tolerance. */
 export function hitTestTopmostStroke(
   objects: CanvasObject[],
@@ -255,17 +378,59 @@ export function translateStrokePoints(
   }));
 }
 
-/** Moves an object to translated bounds, keeping stroke payload coordinates aligned. */
+/** Resizes vector endpoint payloads with their selection bounds. */
+export function resizeObjectToBounds(
+  object: CanvasObject,
+  bounds: Bounds,
+): CanvasObject {
+  if (object.kind !== "line" && object.kind !== "arrow") {
+    return { ...object, bounds };
+  }
+  const start = payloadPoint(object.payload.start);
+  const end = payloadPoint(object.payload.end);
+  if (start === null || end === null) return { ...object, bounds };
+  const scaleX = bounds.width / object.bounds.width;
+  const scaleY = bounds.height / object.bounds.height;
+  const resizePoint = (point: Point): Point => ({
+    x: bounds.x + (point.x - object.bounds.x) * scaleX,
+    y: bounds.y + (point.y - object.bounds.y) * scaleY,
+  });
+  return {
+    ...object,
+    bounds,
+    payload: setLineEndpointPayload(
+      resizePoint(start),
+      resizePoint(end),
+      object.payload,
+    ),
+  };
+}
+
+/** Moves an object to translated bounds, keeping coordinate payloads aligned. */
 export function moveObjectToBounds(
   object: CanvasObject,
   bounds: Bounds,
 ): CanvasObject {
+  const dx = bounds.x - object.bounds.x;
+  const dy = bounds.y - object.bounds.y;
+  if (object.kind === "line" || object.kind === "arrow") {
+    // Do not materialize endpoints for legacy objects: their fallback remains
+    // bounds-relative and therefore already follows the move.
+    const start = payloadPoint(object.payload.start);
+    const end = payloadPoint(object.payload.end);
+    if (start === null || end === null) return { ...object, bounds };
+    return {
+      ...object,
+      bounds,
+      payload: setLineEndpointPayload(
+        { x: start.x + dx, y: start.y + dy },
+        { x: end.x + dx, y: end.y + dy },
+        object.payload,
+      ),
+    };
+  }
   if (object.kind !== "stroke") return { ...object, bounds };
-  const points = translateStrokePoints(
-    getStrokePoints(object),
-    bounds.x - object.bounds.x,
-    bounds.y - object.bounds.y,
-  );
+  const points = translateStrokePoints(getStrokePoints(object), dx, dy);
   return {
     ...object,
     bounds,
@@ -285,15 +450,47 @@ export function dragBoundsFree(start: Point, current: Point): Bounds {
   };
 }
 
-/** Line/arrow drag: the dominant axis of the gesture defines the bounds. */
-export function dragBoundsAxis(start: Point, current: Point): Bounds {
-  const isHorizontal =
-    Math.abs(current.x - start.x) >= Math.abs(current.y - start.y);
+export interface LineDragGeometry extends LineEndpoints {
+  bounds: Bounds;
+}
+
+/**
+ * Derives directional endpoints and selection bounds from a drag. When requested,
+ * the end is snapped to the nearest multiple of 45 degrees without changing the
+ * gesture's length. Direction is never normalized, so reverse arrows stay reverse.
+ */
+export function lineGeometryFromDrag(
+  start: Point,
+  current: Point,
+  snapTo45Degrees = false,
+  padding = 0,
+): LineDragGeometry {
+  let end = { ...current };
+  const dx = current.x - start.x;
+  const dy = current.y - start.y;
+  if (snapTo45Degrees && (dx !== 0 || dy !== 0)) {
+    const length = Math.hypot(dx, dy);
+    const increment = Math.PI / 4;
+    const angle = Math.round(Math.atan2(dy, dx) / increment) * increment;
+    end = {
+      x: start.x + Math.cos(angle) * length,
+      y: start.y + Math.sin(angle) * length,
+    };
+  }
+
+  const left = Math.min(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  const rawWidth = Math.abs(end.x - start.x);
+  const rawHeight = Math.abs(end.y - start.y);
   return {
-    x: isHorizontal ? Math.min(start.x, current.x) : start.x,
-    y: isHorizontal ? start.y : Math.min(start.y, current.y),
-    width: isHorizontal ? Math.abs(current.x - start.x) : MIN_BOUNDS_SIZE,
-    height: isHorizontal ? MIN_BOUNDS_SIZE : Math.abs(current.y - start.y),
+    start: { ...start },
+    end,
+    bounds: {
+      x: left - Math.max(0, MIN_BOUNDS_SIZE - rawWidth) / 2 - padding,
+      y: top - Math.max(0, MIN_BOUNDS_SIZE - rawHeight) / 2 - padding,
+      width: Math.max(MIN_BOUNDS_SIZE, rawWidth) + padding * 2,
+      height: Math.max(MIN_BOUNDS_SIZE, rawHeight) + padding * 2,
+    },
   };
 }
 
