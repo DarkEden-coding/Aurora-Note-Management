@@ -3,16 +3,19 @@ import { type ReactNode } from "react";
 import {
   ArrowUpRight,
   Circle,
+  Eraser,
   Hand,
   Maximize,
   MousePointer2,
   Pen,
   Plus,
+  Redo2,
   Slash,
   Square,
   StickyNote,
   Type,
   Minus,
+  Undo2,
 } from "lucide-react";
 import type { CanvasMode } from "@aurora/shared";
 
@@ -20,6 +23,7 @@ export type CanvasTool =
   | "select"
   | "pan"
   | "pen"
+  | "eraser"
   | "line"
   | "rectangle"
   | "ellipse"
@@ -33,7 +37,11 @@ export interface CanvasToolbarProps {
   zoom: number;
   objectCount: number;
   maxObjectCount: number;
+  canUndo: boolean;
+  canRedo: boolean;
   onToolChange: (tool: CanvasTool) => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
@@ -49,6 +57,7 @@ const TOOLS: ToolButton[] = [
   { tool: "select", label: "Select (V)", icon: <MousePointer2 size={16} /> },
   { tool: "pan", label: "Pan (H)", icon: <Hand size={16} /> },
   { tool: "pen", label: "Pen (P)", icon: <Pen size={16} /> },
+  { tool: "eraser", label: "Erase stroke (X)", icon: <Eraser size={16} /> },
   { tool: "text", label: "Text (T)", icon: <Type size={16} /> },
   { tool: "line", label: "Line (L)", icon: <Slash size={16} /> },
   { tool: "rectangle", label: "Rectangle (R)", icon: <Square size={16} /> },
@@ -63,7 +72,11 @@ export function CanvasToolbar({
   zoom,
   objectCount,
   maxObjectCount,
+  canUndo,
+  canRedo,
   onToolChange,
+  onUndo,
+  onRedo,
   onZoomIn,
   onZoomOut,
   onZoomReset,
@@ -115,6 +128,29 @@ export function CanvasToolbar({
             onClick={onZoomIn}
           >
             <Plus size={16} />
+          </button>
+        </div>
+        <div className="canvas-toolbar-divider" />
+        <div className="canvas-toolbar-group">
+          <button
+            type="button"
+            title="Undo (Ctrl+Z)"
+            aria-label="Undo"
+            disabled={!canUndo}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onUndo}
+          >
+            <Undo2 size={16} />
+          </button>
+          <button
+            type="button"
+            title="Redo (Ctrl+Shift+Z)"
+            aria-label="Redo"
+            disabled={!canRedo}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onRedo}
+          >
+            <Redo2 size={16} />
           </button>
         </div>
       </div>

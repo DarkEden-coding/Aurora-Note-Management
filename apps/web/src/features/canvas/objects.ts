@@ -203,6 +203,27 @@ export function hitTestTopmost(
   return best;
 }
 
+/** Topmost stroke whose rendered path is within the supplied canvas-space tolerance. */
+export function hitTestTopmostStroke(
+  objects: CanvasObject[],
+  p: Point,
+  tolerance: number,
+): CanvasObject | null {
+  let best: CanvasObject | null = null;
+  for (const object of objects) {
+    if (object.kind !== "stroke" || object.locked) continue;
+    const points = getStrokePoints(object);
+    const hit = points.some((point, index) => {
+      const previous = points[index - 1];
+      return previous === undefined
+        ? Math.hypot(point.x - p.x, point.y - p.y) <= tolerance
+        : distanceToSegment(p, previous, point) <= tolerance;
+    });
+    if (hit && (best === null || object.zIndex >= best.zIndex)) best = object;
+  }
+  return best;
+}
+
 // ---- Geometry ------------------------------------------------------------
 
 export function pointsToBounds(points: StrokePoint[], padding: number): Bounds {
@@ -218,6 +239,40 @@ export function pointsToBounds(points: StrokePoint[], padding: number): Bounds {
     y: inner.y - padding,
     width: Math.max(MIN_BOUNDS_SIZE, inner.width + padding * 2),
     height: Math.max(MIN_BOUNDS_SIZE, inner.height + padding * 2),
+  };
+}
+
+/** Translates captured stroke points without changing pressure. */
+export function translateStrokePoints(
+  points: StrokePoint[],
+  dx: number,
+  dy: number,
+): StrokePoint[] {
+  return points.map((point) => ({
+    ...point,
+    x: point.x + dx,
+    y: point.y + dy,
+  }));
+}
+
+/** Moves an object to translated bounds, keeping stroke payload coordinates aligned. */
+export function moveObjectToBounds(
+  object: CanvasObject,
+  bounds: Bounds,
+): CanvasObject {
+  if (object.kind !== "stroke") return { ...object, bounds };
+  const points = translateStrokePoints(
+    getStrokePoints(object),
+    bounds.x - object.bounds.x,
+    bounds.y - object.bounds.y,
+  );
+  return {
+    ...object,
+    bounds,
+    payload: {
+      ...object.payload,
+      points: points.map((point) => [point.x, point.y, point.pressure]),
+    },
   };
 }
 
@@ -306,4 +361,23 @@ export function handleAtPoint(
 export function recomputeStrokeBounds(o: CanvasObject): Bounds {
   const points = getStrokePoints(o);
   return pointsToBounds(points, getStrokeBaseWidth(o) * 2);
+}
+
+function distanceToSegment(point: Point, start: Point, end: Point): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (dx === 0 && dy === 0)
+    return Math.hypot(point.x - start.x, point.y - start.y);
+  const ratio = Math.max(
+    0,
+    Math.min(
+      1,
+      ((point.x - start.x) * dx + (point.y - start.y) * dy) /
+        (dx * dx + dy * dy),
+    ),
+  );
+  return Math.hypot(
+    point.x - (start.x + ratio * dx),
+    point.y - (start.y + ratio * dy),
+  );
 }

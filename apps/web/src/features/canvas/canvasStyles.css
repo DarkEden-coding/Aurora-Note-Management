@@ -46,6 +46,10 @@
   cursor: crosshair;
 }
 
+.canvas-viewport[data-cursor="eraser"] {
+  cursor: cell;
+}
+
 .canvas-viewport[data-cursor="create"] {
   cursor: crosshair;
 }
@@ -276,6 +280,7 @@
 
 .canvas-toolbar-group {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 4px;
@@ -304,6 +309,11 @@
 
 .canvas-toolbar button:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+.canvas-toolbar button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .canvas-toolbar button[data-active="true"] {

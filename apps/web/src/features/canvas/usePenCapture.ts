@@ -1,5 +1,5 @@
-// Pressure-aware pen capture with palm rejection: records coalesced Pointer Events into stroke points. Touch pointers are ignored while pen priority is held; pen input always wins over touch, and priority decays shortly after the last pen event so touch navigation can resume.
-import { useCallback, useEffect, useRef, useState } from "react";
+// Pressure-aware pen capture: records coalesced Pointer Events into canvas-space stroke points while touch remains available for navigation.
+import { useCallback, useRef, useState } from "react";
 import type React from "react";
 import type { Point } from "./viewport";
 import type { StrokePoint } from "./objects";
@@ -21,68 +21,38 @@ export interface PenCaptureHandlers {
 export interface UsePenCaptureResult {
   /** Live preview points while a stroke is in progress; `null` otherwise. */
   preview: StrokePoint[] | null;
-  /** True while pen priority is held (a pen stroke is in progress or was interrupted). */
-  penPriority: boolean;
+  /** Reports synchronously whether a pen or mouse stroke is in progress. */
+  isDrawing: () => boolean;
   handlers: PenCaptureHandlers;
 }
 
 const MOUSE_FALLBACK_PRESSURE = 0.5;
-/** Grace period after the last pen event during which touch stays rejected (resting palm). */
-const PEN_PRIORITY_DECAY_MS = 1000;
 
 export function usePenCapture(options: PenCaptureOptions): UsePenCaptureResult {
   const { isActive, toCanvas, onStrokeComplete } = options;
   const activePointerId = useRef<number | null>(null);
-  const penPriorityRef = useRef(false);
-  const penPriorityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointsRef = useRef<StrokePoint[]>([]);
   const [preview, setPreview] = useState<StrokePoint[] | null>(null);
-  const [penPriority, setPenPriority] = useState(false);
-
-  const holdPenPriority = useCallback((): void => {
-    penPriorityRef.current = true;
-    setPenPriority(true);
-    if (penPriorityTimer.current !== null)
-      clearTimeout(penPriorityTimer.current);
-    penPriorityTimer.current = setTimeout(() => {
-      penPriorityRef.current = false;
-      setPenPriority(false);
-    }, PEN_PRIORITY_DECAY_MS);
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (penPriorityTimer.current !== null)
-        clearTimeout(penPriorityTimer.current);
-    },
+  const isDrawing = useCallback(
+    (): boolean => activePointerId.current !== null,
     [],
   );
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
       if (!isActive) return;
-      // Palm rejection: a pen always starts a stroke; touch never does while pen priority is held.
-      if (
-        e.pointerType === "touch" &&
-        (penPriorityRef.current ||
-          activePointerId.current !== null ||
-          !e.isPrimary)
-      )
-        return;
       if (activePointerId.current !== null) return;
       if (e.pointerType !== "pen" && e.pointerType !== "mouse") return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
 
       activePointerId.current = e.pointerId;
-      if (e.pointerType === "pen") holdPenPriority();
       const rect = e.currentTarget.getBoundingClientRect();
-      const pressure = pressureFromEvent(e.nativeEvent);
+      const point = toCanvas({
+        x: e.nativeEvent.clientX - rect.left,
+        y: e.nativeEvent.clientY - rect.top,
+      });
       pointsRef.current = [
-        {
-          x: toCanvasX(e.nativeEvent.clientX, rect),
-          y: toCanvasY(e.nativeEvent.clientY, rect),
-          pressure,
-        },
+        { ...point, pressure: pressureFromEvent(e.nativeEvent) },
       ];
       setPreview([...pointsRef.current]);
       try {
@@ -104,17 +74,7 @@ export function usePenCapture(options: PenCaptureOptions): UsePenCaptureResult {
           ? native.getCoalescedEvents()
           : [];
       const list = events.length > 0 ? events : [native];
-      for (const event of list) {
-        pointsRef.current = [
-          ...pointsRef.current,
-          {
-            x: toCanvasX(event.clientX, rect),
-            y: toCanvasY(event.clientY, rect),
-            pressure: pressureFromEvent(event),
-          },
-        ];
-      }
-      if (native.pointerType === "pen") holdPenPriority();
+      appendPointerSamples(list, rect, toCanvas, pointsRef.current);
       setPreview([...pointsRef.current]);
     },
     [toCanvas],
@@ -123,13 +83,25 @@ export function usePenCapture(options: PenCaptureOptions): UsePenCaptureResult {
   const onPointerUp = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
       if (activePointerId.current !== e.pointerId) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const native = e.nativeEvent;
+      const events =
+        typeof native.getCoalescedEvents === "function"
+          ? native.getCoalescedEvents()
+          : [];
+      appendPointerSamples(
+        events.length > 0 ? events : [native],
+        rect,
+        toCanvas,
+        pointsRef.current,
+      );
       activePointerId.current = null;
       const points = pointsRef.current;
       pointsRef.current = [];
       setPreview(null);
       if (points.length > 1) onStrokeComplete(points);
     },
-    [onStrokeComplete],
+    [onStrokeComplete, toCanvas],
   );
 
   const onPointerCancel = useCallback((e: React.PointerEvent<HTMLElement>) => {
@@ -141,19 +113,28 @@ export function usePenCapture(options: PenCaptureOptions): UsePenCaptureResult {
 
   return {
     preview,
-    penPriority,
+    isDrawing,
     handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
   };
 }
 
-function toCanvasX(clientX: number, rect: DOMRect): number {
-  return clientX - rect.left;
+/** Appends browser pointer samples after converting viewport coordinates into canvas coordinates. */
+function appendPointerSamples(
+  events: PointerEvent[],
+  rect: DOMRect,
+  toCanvas: (point: Point) => Point,
+  points: StrokePoint[],
+): void {
+  for (const event of events) {
+    const point = toCanvas({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+    points.push({ ...point, pressure: pressureFromEvent(event) });
+  }
 }
 
-function toCanvasY(clientY: number, rect: DOMRect): number {
-  return clientY - rect.top;
-}
-
+/** Uses real pen pressure and a stable midpoint for mouse drawing. */
 function pressureFromEvent(e: {
   pointerType: string;
   pressure: number;

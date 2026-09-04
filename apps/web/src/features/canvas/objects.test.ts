@@ -8,7 +8,9 @@ import {
   dragBoundsFree,
   getStrokePoints,
   hitTestTopmost,
+  hitTestTopmostStroke,
   makeCanvasObject,
+  moveObjectToBounds,
   nextZIndex,
   pointsToBounds,
   recomputeStrokeBounds,
@@ -112,6 +114,12 @@ describe("hit-testing", () => {
     expect(hitTestTopmost([lower, upper], { x: 5, y: 5 })).toBe(upper);
     expect(hitTestTopmost([lower], { x: 50, y: 50 })).toBeNull();
   });
+
+  it("hits a stroke by its path rather than its bounding box", () => {
+    const stroke = makeStroke();
+    expect(hitTestTopmostStroke([stroke], { x: 10, y: 6.5 }, 1)).toBe(stroke);
+    expect(hitTestTopmostStroke([stroke], { x: 10, y: 15 }, 1)).toBeNull();
+  });
 });
 
 describe("gesture bounds math", () => {
@@ -173,5 +181,18 @@ describe("gesture bounds math", () => {
     const bounds = pointsToBounds([{ x: 0, y: 0, pressure: 1 }], 4);
     expect(bounds.width).toBeGreaterThanOrEqual(MIN_BOUNDS_SIZE);
     expect(bounds.x).toBe(-4);
+  });
+
+  it("keeps stroke points aligned when the object moves", () => {
+    const moved = moveObjectToBounds(makeStroke(), {
+      x: 20,
+      y: 30,
+      width: 10,
+      height: 10,
+    });
+    expect(getStrokePoints(moved)).toEqual([
+      { x: 25, y: 35, pressure: 0.5 },
+      { x: 35, y: 38, pressure: 0.25 },
+    ]);
   });
 });

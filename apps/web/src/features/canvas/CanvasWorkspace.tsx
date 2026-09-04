@@ -34,13 +34,17 @@ import {
   applyResize,
   dragBoundsAxis,
   dragBoundsFree,
+  getStrokeBaseWidth,
   handleAtPoint,
   handlePositions,
   hitTestTopmost,
+  hitTestTopmostStroke,
   makeCanvasObject,
+  moveObjectToBounds,
   nextZIndex,
   pointsToBounds,
   setStrokePayload,
+  translateStrokePoints,
   type Handle,
 } from "./objects";
 import {
@@ -88,6 +92,11 @@ const HANDLE_HIT_TOLERANCE_SCREEN = 12;
 /** One active pointer gesture at a time. */
 type Gesture =
   | { kind: "pan"; lastScreen: Point }
+  | {
+      kind: "erase";
+      last: Point;
+      removed: Map<string, CanvasObject>;
+    }
   | { kind: "move"; ids: string[]; start: Point; origins: Map<string, Bounds> }
   | {
       kind: "resize";
@@ -100,6 +109,20 @@ type Gesture =
 
 type CreateTool =
   "line" | "rectangle" | "ellipse" | "arrow" | "sticky" | "text";
+
+type HistoryEntry = {
+  before: CanvasObject[];
+  after: CanvasObject[];
+};
+
+type HistoryState = {
+  undo: HistoryEntry[];
+  redo: HistoryEntry[];
+};
+
+const EMPTY_HISTORY: HistoryState = { undo: [], redo: [] };
+const HISTORY_LIMIT = 50;
+const ERASER_HIT_TOLERANCE_SCREEN = 10;
 
 const CREATE_TOOLS: readonly string[] = [
   "line",
@@ -154,10 +177,17 @@ export function CanvasWorkspace({
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [gesture, setGesture] = useState<Gesture | null>(null);
+  const [history, setHistory] = useState<HistoryState>(EMPTY_HISTORY);
+  const historyRef = useRef(history);
+  historyRef.current = history;
   const selection = useSelection();
   const deviceIdRef = useRef(getDeviceId());
   const pinchRef = useRef<Map<number, Point>>(new Map());
-  const pinchSpanRef = useRef<{ distance: number; mid: Point } | null>(null);
+  const pinchSpanRef = useRef<{
+    distance: number;
+    mid: Point;
+    zoom: number;
+  } | null>(null);
 
   // Controlled mode: the parent's array is the source of truth.
   useEffect(() => {
@@ -174,6 +204,8 @@ export function CanvasWorkspace({
     setMirror(isControlled ? (objects ?? []) : []);
     selection.clear();
     setGesture(null);
+    historyRef.current = EMPTY_HISTORY;
+    setHistory(EMPTY_HISTORY);
     // Runs on note changes only; objects/selection intentionally excluded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
@@ -213,7 +245,10 @@ export function CanvasWorkspace({
           activeGesture !== null &&
           ((activeGesture.kind === "move" &&
             activeGesture.ids.includes(objectId)) ||
-            (activeGesture.kind === "resize" && activeGesture.id === objectId));
+            (activeGesture.kind === "resize" &&
+              activeGesture.id === objectId) ||
+            (activeGesture.kind === "erase" &&
+              activeGesture.removed.has(objectId)));
 
         for (const objectId of event.deletedObjectIds) {
           if (byId.has(objectId) && !gestureTouches(objectId)) {
@@ -269,6 +304,10 @@ export function CanvasWorkspace({
   objectsRef.current = displayObjects;
   const gestureRef = useRef<Gesture | null>(gesture);
   gestureRef.current = gesture;
+  const setActiveGesture = useCallback((next: Gesture | null): void => {
+    gestureRef.current = next;
+    setGesture(next);
+  }, []);
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
   const onOperationRef = useRef(onOperation);
@@ -293,12 +332,94 @@ export function CanvasWorkspace({
     [noteId],
   );
 
+  const recordHistory = useCallback((entry: HistoryEntry): void => {
+    const next = {
+      undo: [...historyRef.current.undo, entry].slice(-HISTORY_LIMIT),
+      redo: [],
+    };
+    historyRef.current = next;
+    setHistory(next);
+  }, []);
+
+  const applyHistory = useCallback(
+    (entry: HistoryEntry, side: "before" | "after"): void => {
+      const desired = new Map(entry[side].map((object) => [object.id, object]));
+      const changedIds = new Set([
+        ...entry.before.map((object) => object.id),
+        ...entry.after.map((object) => object.id),
+      ]);
+      const current = new Map(
+        objectsRef.current.map((object) => [object.id, object]),
+      );
+      const next = objectsRef.current.filter(
+        (object) => !changedIds.has(object.id),
+      );
+      const now = new Date().toISOString();
+
+      for (const id of changedIds) {
+        const existing = current.get(id);
+        const target = desired.get(id);
+        if (target === undefined) {
+          if (existing !== undefined) {
+            onOperationRef.current?.(
+              makeDeleteOperation(
+                id,
+                existing.revision,
+                noteId,
+                deviceIdRef.current,
+              ),
+            );
+          }
+          continue;
+        }
+        const restored = {
+          ...target,
+          revision: existing?.revision ?? 0,
+          updatedAt: now,
+        };
+        next.push(restored);
+        commitUpsert(restored);
+      }
+      objectsRef.current = next;
+      setMirror(next);
+      selection.clear();
+    },
+    [commitUpsert, noteId, selection],
+  );
+
+  const undo = useCallback((): void => {
+    const entry = historyRef.current.undo.at(-1);
+    if (entry === undefined) return;
+    applyHistory(entry, "before");
+    const next = {
+      undo: historyRef.current.undo.slice(0, -1),
+      redo: [...historyRef.current.redo, entry],
+    };
+    historyRef.current = next;
+    setHistory(next);
+  }, [applyHistory]);
+
+  const redo = useCallback((): void => {
+    const entry = historyRef.current.redo.at(-1);
+    if (entry === undefined) return;
+    applyHistory(entry, "after");
+    const next = {
+      undo: [...historyRef.current.undo, entry],
+      redo: historyRef.current.redo.slice(0, -1),
+    };
+    historyRef.current = next;
+    setHistory(next);
+  }, [applyHistory]);
+
   const appendObject = useCallback(
     (object: CanvasObject): void => {
-      setMirror((prev) => [...prev, object]);
+      const next = [...objectsRef.current, object];
+      objectsRef.current = next;
+      setMirror(next);
       commitUpsert(object);
+      recordHistory({ before: [], after: [object] });
     },
-    [commitUpsert],
+    [commitUpsert, recordHistory],
   );
 
   const createObject = useCallback(
@@ -348,23 +469,24 @@ export function CanvasWorkspace({
   );
 
   const deleteSelection = useCallback((): void => {
-    const ids = [...selection.selectedIds];
-    if (ids.length === 0) return;
-    const removed: CanvasObject[] = [];
-    setMirror((prev) =>
-      prev.filter((o) => {
-        if (!ids.includes(o.id) || o.locked) return true;
-        removed.push(o);
-        return false;
-      }),
+    const ids = selection.selectedIds;
+    if (ids.size === 0) return;
+    const removed = objectsRef.current.filter(
+      (object) => ids.has(object.id) && !object.locked,
     );
+    const next = objectsRef.current.filter(
+      (object) => !ids.has(object.id) || object.locked,
+    );
+    objectsRef.current = next;
+    setMirror(next);
     for (const o of removed) {
       onOperationRef.current?.(
         makeDeleteOperation(o.id, o.revision, noteId, deviceIdRef.current),
       );
     }
+    if (removed.length > 0) recordHistory({ before: removed, after: [] });
     selection.clear();
-  }, [noteId, selection]);
+  }, [noteId, recordHistory, selection]);
 
   // Keyboard: tool shortcuts, selection delete, and escape.
   useEffect(() => {
@@ -372,6 +494,7 @@ export function CanvasWorkspace({
       v: "select",
       h: "pan",
       p: "pen",
+      x: "eraser",
       t: "text",
       l: "line",
       r: "rectangle",
@@ -392,6 +515,17 @@ export function CanvasWorkspace({
         if (e.key === "Escape") target.blur();
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+        return;
+      }
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         deleteSelection();
@@ -406,7 +540,7 @@ export function CanvasWorkspace({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleteSelection, selection]);
+  }, [deleteSelection, redo, selection, undo]);
 
   const pen = usePenCapture({
     isActive: tool === "pen",
@@ -417,9 +551,12 @@ export function CanvasWorkspace({
         objectsRef.current.length >= MAX_OBJECTS_PER_NOTE
       )
         return;
-      const bounds = clampBoundsToMode(
-        pointsToBounds(points, STROKE_TOOL_WIDTH * 2),
-        activeMode,
+      const rawBounds = pointsToBounds(points, STROKE_TOOL_WIDTH * 2);
+      const bounds = clampBoundsToMode(rawBounds, activeMode);
+      const storedPoints = translateStrokePoints(
+        points,
+        bounds.x - rawBounds.x,
+        bounds.y - rawBounds.y,
       );
       const object = makeCanvasObject({
         id: newId(),
@@ -428,18 +565,49 @@ export function CanvasWorkspace({
         kind: "stroke",
         bounds,
         zIndex: nextZIndex(objectsRef.current),
-        payload: setStrokePayload(points, STROKE_TOOL_COLOR, STROKE_TOOL_WIDTH),
+        payload: setStrokePayload(
+          storedPoints,
+          STROKE_TOOL_COLOR,
+          STROKE_TOOL_WIDTH,
+        ),
       });
       appendObject(object);
-      selection.select(object.id);
     },
   });
 
-  // Touch pans/pinches unless the pen is active (palm rejection).
-  const touchNavigationAllowed =
-    tool === "pan" || tool === "select" || (tool === "pen" && !pen.penPriority);
-  const touchNavigationRef = useRef(touchNavigationAllowed);
-  touchNavigationRef.current = touchNavigationAllowed;
+  const eraseStrokeAt = useCallback(
+    (point: Point, removed: Map<string, CanvasObject>): void => {
+      const hit = hitTestTopmostStroke(
+        objectsRef.current,
+        point,
+        ERASER_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
+      );
+      if (hit === null || removed.has(hit.id)) return;
+      removed.set(hit.id, hit);
+      const next = objectsRef.current.filter((object) => object.id !== hit.id);
+      objectsRef.current = next;
+      setMirror(next);
+    },
+    [],
+  );
+
+  const eraseStrokeBetween = useCallback(
+    (start: Point, end: Point, removed: Map<string, CanvasObject>): void => {
+      const tolerance = ERASER_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom;
+      const distance = Math.hypot(end.x - start.x, end.y - start.y);
+      const steps = Math.max(1, Math.ceil(distance / tolerance));
+      for (let index = 1; index <= steps; index += 1) {
+        eraseStrokeAt(
+          {
+            x: start.x + ((end.x - start.x) * index) / steps,
+            y: start.y + ((end.y - start.y) * index) / steps,
+          },
+          removed,
+        );
+      }
+    },
+    [eraseStrokeAt],
+  );
 
   // ---- Pointer gestures ----------------------------------------------------
 
@@ -453,6 +621,7 @@ export function CanvasWorkspace({
       };
 
       if (e.pointerType === "touch") {
+        if (pen.isDrawing()) return;
         pinchRef.current.set(e.pointerId, screen);
         if (pinchRef.current.size === 2) {
           const [a, b] = [...pinchRef.current.values()];
@@ -460,10 +629,11 @@ export function CanvasWorkspace({
           pinchSpanRef.current = {
             distance: Math.hypot(b.x - a.x, b.y - a.y),
             mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+            zoom: viewportRef.current.zoom,
           };
-          setGesture(null);
-        } else if (pinchRef.current.size === 1 && touchNavigationRef.current) {
-          setGesture({ kind: "pan", lastScreen: screen });
+          setActiveGesture(null);
+        } else if (pinchRef.current.size === 1) {
+          setActiveGesture({ kind: "pan", lastScreen: screen });
         }
         try {
           el.setPointerCapture(e.pointerId);
@@ -473,8 +643,19 @@ export function CanvasWorkspace({
         return;
       }
 
+      if (
+        tool === "pen" &&
+        (e.pointerType === "pen" ||
+          (e.pointerType === "mouse" && e.button === 0))
+      ) {
+        pinchRef.current.clear();
+        pinchSpanRef.current = null;
+        setActiveGesture(null);
+        return;
+      }
+
       if (tool === "pan" || (e.pointerType === "mouse" && e.button === 1)) {
-        setGesture({ kind: "pan", lastScreen: screen });
+        setActiveGesture({ kind: "pan", lastScreen: screen });
         try {
           el.setPointerCapture(e.pointerId);
         } catch {
@@ -482,22 +663,35 @@ export function CanvasWorkspace({
         }
         return;
       }
+      if (e.pointerType === "mouse" && e.button !== 0) return;
 
       if (isInsideEditable(e.target)) return;
 
       const canvasPoint = screenToCanvas(screen, viewportRef.current);
 
+      if (tool === "eraser") {
+        const removed = new Map<string, CanvasObject>();
+        setActiveGesture({ kind: "erase", last: canvasPoint, removed });
+        eraseStrokeAt(canvasPoint, removed);
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch {
+          // Pointer capture is best-effort.
+        }
+        return;
+      }
+
       if (tool === "select") {
         const primary =
           objectsRef.current.find((o) => o.id === primaryId) ?? null;
-        if (primary !== null && !primary.locked) {
+        if (primary !== null && !primary.locked && primary.kind !== "stroke") {
           const handle = handleAtPoint(
             primary.bounds,
             canvasPoint,
             HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
           );
           if (handle !== null) {
-            setGesture({
+            setActiveGesture({
               kind: "resize",
               id: primary.id,
               handle,
@@ -513,7 +707,16 @@ export function CanvasWorkspace({
           }
         }
         const hit = hitTestTopmost(
-          objectsRef.current.filter((o) => !o.locked),
+          objectsRef.current.filter(
+            (object) =>
+              !object.locked &&
+              (object.kind !== "stroke" ||
+                hitTestTopmostStroke(
+                  [object],
+                  canvasPoint,
+                  HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
+                ) !== null),
+          ),
           canvasPoint,
         );
         if (hit === null) {
@@ -532,7 +735,7 @@ export function CanvasWorkspace({
           if (o !== undefined && !o.locked) origins.set(id, o.bounds);
         }
         if (origins.size > 0) {
-          setGesture({
+          setActiveGesture({
             kind: "move",
             ids: [...origins.keys()],
             start: canvasPoint,
@@ -553,7 +756,7 @@ export function CanvasWorkspace({
       }
 
       if (isCreateTool(tool)) {
-        setGesture({
+        setActiveGesture({
           kind: "create",
           tool,
           start: canvasPoint,
@@ -568,7 +771,7 @@ export function CanvasWorkspace({
     },
     // selection methods are stable; selection excluded to avoid gesture churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tool, primaryId, createObject],
+    [tool, primaryId, createObject, eraseStrokeAt, pen, setActiveGesture],
   );
 
   const handlePointerMove = useCallback(
@@ -588,40 +791,58 @@ export function CanvasWorkspace({
           const distance = Math.hypot(b.x - a.x, b.y - a.y);
           const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
           const prev = pinchSpanRef.current;
+          let nextZoom = prev.zoom;
           if (distance > 0 && prev.distance > 0) {
-            zoomAt(mid, viewportRef.current.zoom * (distance / prev.distance));
+            nextZoom = prev.zoom * (distance / prev.distance);
+            zoomAt(mid, nextZoom);
           }
           panBy(mid.x - prev.mid.x, mid.y - prev.mid.y);
-          pinchSpanRef.current = { distance, mid };
-        } else {
+          pinchSpanRef.current = { distance, mid, zoom: nextZoom };
+        } else if (pinchRef.current.size === 1) {
           pinchSpanRef.current = null;
+          if (!pen.isDrawing()) {
+            const current = gestureRef.current;
+            if (current?.kind === "pan") {
+              panBy(
+                screen.x - current.lastScreen.x,
+                screen.y - current.lastScreen.y,
+              );
+            }
+            setActiveGesture({ kind: "pan", lastScreen: screen });
+          }
         }
         return;
       }
 
+      if (tool === "pen") return;
       const current = gestureRef.current;
       if (current === null) return;
 
       if (current.kind === "pan") {
         panBy(screen.x - current.lastScreen.x, screen.y - current.lastScreen.y);
-        setGesture({ kind: "pan", lastScreen: screen });
+        setActiveGesture({ kind: "pan", lastScreen: screen });
         return;
       }
 
       const canvasPoint = screenToCanvas(screen, viewportRef.current);
+      if (current.kind === "erase") {
+        eraseStrokeBetween(current.last, canvasPoint, current.removed);
+        current.last = canvasPoint;
+        return;
+      }
       if (current.kind === "move") {
         const dx = canvasPoint.x - current.start.x;
         const dy = canvasPoint.y - current.start.y;
-        setMirror((prev) =>
-          prev.map((o) => {
-            const origin = current.origins.get(o.id);
-            if (origin === undefined) return o;
-            return {
-              ...o,
-              bounds: translateBoundsInMode(origin, dx, dy, activeMode),
-            };
-          }),
-        );
+        const next = objectsRef.current.map((o) => {
+          const origin = current.origins.get(o.id);
+          if (origin === undefined) return o;
+          return moveObjectToBounds(
+            o,
+            translateBoundsInMode(origin, dx, dy, activeMode),
+          );
+        });
+        objectsRef.current = next;
+        setMirror(next);
         return;
       }
       if (current.kind === "resize") {
@@ -634,40 +855,101 @@ export function CanvasWorkspace({
           ),
           activeMode,
         );
-        setMirror((prev) =>
-          prev.map((o) => (o.id === current.id ? { ...o, bounds: next } : o)),
+        const resized = objectsRef.current.map((o) =>
+          o.id === current.id ? { ...o, bounds: next } : o,
         );
+        objectsRef.current = resized;
+        setMirror(resized);
         return;
       }
-      setGesture({ ...current, current: canvasPoint });
+      setActiveGesture({ ...current, current: canvasPoint });
     },
-    [activeMode, panBy, zoomAt],
+    [
+      activeMode,
+      eraseStrokeBetween,
+      panBy,
+      pen,
+      setActiveGesture,
+      tool,
+      zoomAt,
+    ],
   );
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.pointerType === "touch") {
         pinchRef.current.delete(e.pointerId);
-        if (pinchRef.current.size < 2) pinchSpanRef.current = null;
+        pinchSpanRef.current = null;
+        const remaining = [...pinchRef.current.values()][0];
+        setActiveGesture(
+          remaining !== undefined && !pen.isDrawing()
+            ? { kind: "pan", lastScreen: remaining }
+            : null,
+        );
+        return;
       }
       const current = gestureRef.current;
-      setGesture(null);
+      setActiveGesture(null);
       if (current === null) return;
 
+      if (current.kind === "erase") {
+        const rect = e.currentTarget.getBoundingClientRect();
+        eraseStrokeBetween(
+          current.last,
+          screenToCanvas(
+            { x: e.clientX - rect.left, y: e.clientY - rect.top },
+            viewportRef.current,
+          ),
+          current.removed,
+        );
+        const removed = [...current.removed.values()];
+        for (const object of removed) {
+          onOperationRef.current?.(
+            makeDeleteOperation(
+              object.id,
+              object.revision,
+              noteId,
+              deviceIdRef.current,
+            ),
+          );
+        }
+        if (removed.length > 0) {
+          recordHistory({ before: removed, after: [] });
+          selection.clear();
+        }
+        return;
+      }
       if (current.kind === "move") {
-        // One coalesced upsert per moved object.
+        const before: CanvasObject[] = [];
+        const after: CanvasObject[] = [];
         for (const o of objectsRef.current) {
           const origin = current.origins.get(o.id);
           if (origin === undefined) continue;
           if (o.bounds.x === origin.x && o.bounds.y === origin.y) continue;
-          commitUpsert({ ...o, updatedAt: new Date().toISOString() });
+          const moved = { ...o, updatedAt: new Date().toISOString() };
+          before.push(moveObjectToBounds(o, origin));
+          after.push(moved);
+          commitUpsert(moved);
         }
+        if (after.length > 0) recordHistory({ before, after });
         return;
       }
       if (current.kind === "resize") {
         const o = objectsRef.current.find((c) => c.id === current.id);
-        if (o !== undefined)
-          commitUpsert({ ...o, updatedAt: new Date().toISOString() });
+        if (
+          o !== undefined &&
+          (o.bounds.x !== current.startBounds.x ||
+            o.bounds.y !== current.startBounds.y ||
+            o.bounds.width !== current.startBounds.width ||
+            o.bounds.height !== current.startBounds.height)
+        ) {
+          const resized = { ...o, updatedAt: new Date().toISOString() };
+          commitUpsert(resized);
+          recordHistory({
+            before: [{ ...o, bounds: current.startBounds }],
+            after: [resized],
+          });
+        }
         return;
       }
       if (current.kind === "create") {
@@ -678,7 +960,16 @@ export function CanvasWorkspace({
         if (raw.width >= 2 || raw.height >= 2) createObject(current.tool, raw);
       }
     },
-    [commitUpsert, createObject],
+    [
+      commitUpsert,
+      createObject,
+      eraseStrokeBetween,
+      noteId,
+      pen,
+      recordHistory,
+      selection,
+      setActiveGesture,
+    ],
   );
 
   const handlePointerCancel = useCallback(
@@ -686,26 +977,32 @@ export function CanvasWorkspace({
       if (e.pointerType === "touch") {
         pinchRef.current.delete(e.pointerId);
         if (pinchRef.current.size < 2) pinchSpanRef.current = null;
+        setActiveGesture(null);
+        return;
       }
       const current = gestureRef.current;
-      if (current?.kind === "move") {
+      if (current?.kind === "erase") {
+        const next = [...objectsRef.current, ...current.removed.values()];
+        objectsRef.current = next;
+        setMirror(next);
+      } else if (current?.kind === "move") {
         // Roll back to gesture-start positions; nothing was committed.
-        setMirror((prev) =>
-          prev.map((o) => {
-            const origin = current.origins.get(o.id);
-            return origin === undefined ? o : { ...o, bounds: origin };
-          }),
-        );
+        const next = objectsRef.current.map((o) => {
+          const origin = current.origins.get(o.id);
+          return origin === undefined ? o : moveObjectToBounds(o, origin);
+        });
+        objectsRef.current = next;
+        setMirror(next);
       } else if (current?.kind === "resize") {
-        setMirror((prev) =>
-          prev.map((o) =>
-            o.id === current.id ? { ...o, bounds: current.startBounds } : o,
-          ),
+        const next = objectsRef.current.map((o) =>
+          o.id === current.id ? { ...o, bounds: current.startBounds } : o,
         );
+        objectsRef.current = next;
+        setMirror(next);
       }
-      setGesture(null);
+      setActiveGesture(null);
     },
-    [],
+    [setActiveGesture],
   );
 
   const updateObjectWithPayload = useCallback(
@@ -715,7 +1012,11 @@ export function CanvasWorkspace({
         payload: { ...o.payload, ...payloadPatch },
         updatedAt: new Date().toISOString(),
       };
-      setMirror((prev) => prev.map((c) => (c.id === next.id ? next : c)));
+      const objects = objectsRef.current.map((current) =>
+        current.id === next.id ? next : current,
+      );
+      objectsRef.current = objects;
+      setMirror(objects);
       commitUpsert(next);
     },
     [commitUpsert],
@@ -789,9 +1090,11 @@ export function CanvasWorkspace({
         ? "pan"
         : tool === "pen"
           ? "pen"
-          : tool === "select"
-            ? "default"
-            : "create";
+          : tool === "eraser"
+            ? "eraser"
+            : tool === "select"
+              ? "default"
+              : "create";
 
   // In-progress creation preview.
   let previewShape: CanvasObject | null = null;
@@ -949,6 +1252,7 @@ export function CanvasWorkspace({
               })}
               {primaryObject !== null &&
               !primaryObject.locked &&
+              primaryObject.kind !== "stroke" &&
               tool === "select"
                 ? handlePositions(primaryObject.bounds).map(
                     ({ handle, point }) => (
@@ -1006,7 +1310,11 @@ export function CanvasWorkspace({
         zoom={zoom}
         objectCount={displayObjects.length}
         maxObjectCount={MAX_OBJECTS_PER_NOTE}
+        canUndo={history.undo.length > 0}
+        canRedo={history.redo.length > 0}
         onToolChange={setTool}
+        onUndo={undo}
+        onRedo={redo}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onZoomReset={zoomReset}
