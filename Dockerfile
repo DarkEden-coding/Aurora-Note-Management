@@ -18,7 +18,7 @@ FROM node:22-slim
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app ./
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --offline --no-audit --no-fund
 ENV AURORA_HOST=0.0.0.0 \
     AURORA_PORT=8787 \
     AURORA_UPLOAD_DIR=/data/uploads \
