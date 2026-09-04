@@ -557,9 +557,11 @@ export function CanvasWorkspace({
               : shapePayload,
       });
       appendObject(object);
-      selection.select(object.id);
+      setTool("select");
+      if (createTool === "text") selection.select(object.id);
+      else selection.clear();
     },
-    // selection.select is stable; selection excluded to avoid gesture churn.
+    // Selection methods are stable; selection is excluded to avoid gesture churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeMode, ownerId, noteId, appendObject, drawingStyle],
   );
@@ -1534,6 +1536,8 @@ export function CanvasWorkspace({
                     y={o.bounds.y}
                     width={o.bounds.width}
                     height={o.bounds.height}
+                    rx={6 / zoom}
+                    vectorEffect="non-scaling-stroke"
                   />
                 );
               })}
@@ -1543,14 +1547,14 @@ export function CanvasWorkspace({
               tool === "select"
                 ? handlePositions(primaryObject.bounds).map(
                     ({ handle, point }) => (
-                      <rect
+                      <circle
                         key={handle}
                         data-handle={handle}
                         className="canvas-selection-handle"
-                        x={point.x - HANDLE_SCREEN_SIZE / 2 / zoom}
-                        y={point.y - HANDLE_SCREEN_SIZE / 2 / zoom}
-                        width={HANDLE_SCREEN_SIZE / zoom}
-                        height={HANDLE_SCREEN_SIZE / zoom}
+                        cx={point.x}
+                        cy={point.y}
+                        r={HANDLE_SCREEN_SIZE / 2 / zoom}
+                        vectorEffect="non-scaling-stroke"
                       />
                     ),
                   )

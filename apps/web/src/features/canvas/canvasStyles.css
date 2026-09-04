@@ -139,15 +139,19 @@
 }
 
 .canvas-scene .canvas-selection-outline {
-  fill: none;
-  stroke: var(--aurora-canvas-accent);
+  fill: color-mix(in srgb, var(--aurora-canvas-accent) 7%, transparent);
+  stroke: color-mix(in srgb, var(--aurora-canvas-accent) 86%, white 14%);
   stroke-width: 1.5;
+  filter: drop-shadow(
+    0 0 3px color-mix(in srgb, var(--aurora-canvas-accent) 34%, transparent)
+  );
 }
 
 .canvas-scene .canvas-selection-handle {
-  fill: #ffffff;
-  stroke: var(--aurora-canvas-accent);
-  stroke-width: 1;
+  fill: var(--surface-raised);
+  stroke: color-mix(in srgb, var(--aurora-canvas-accent) 86%, white 14%);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
 }
 
 .canvas-create-preview {

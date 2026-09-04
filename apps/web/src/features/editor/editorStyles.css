@@ -11,34 +11,66 @@
 
 .rich-text-toolbar {
   display: flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(20, 22, 26, 0.92);
-  margin-bottom: 6px;
+  flex-direction: column;
+  align-items: stretch;
   width: max-content;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 84%, white 8%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: var(--shadow-outset);
+  backdrop-filter: blur(var(--blur));
+}
+
+.rich-text-toolbar-controls {
+  display: flex;
+  gap: 4px;
 }
 
 .rich-text-toolbar button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
   background: transparent;
   color: var(--aurora-editor-ink);
   cursor: pointer;
 }
 
+.rich-text-toolbar .rich-text-toolbar-toggle {
+  justify-content: flex-start;
+  width: 112px;
+  gap: 8px;
+  padding: 0 9px;
+  color: var(--aurora-editor-muted);
+  font: 600 12px/1 var(--font);
+}
+
+.rich-text-toolbar-toggle svg:last-child {
+  margin-left: auto;
+  transition: rotate 140ms ease;
+}
+
+.rich-text-toolbar-toggle svg[data-open="true"] {
+  rotate: 180deg;
+}
+
 .rich-text-toolbar button:hover {
-  background: rgba(255, 255, 255, 0.12);
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  background: var(--surface-raised);
+  color: var(--aurora-editor-ink);
 }
 
 .rich-text-toolbar button[data-active="true"] {
-  background: rgba(255, 255, 255, 0.22);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-raised));
+  color: var(--accent);
 }
 
 .rich-text-content {

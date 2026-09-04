@@ -158,9 +158,9 @@ export interface HtmlObjectCallbacks {
 
 export interface HtmlObjectProps {
   object: CanvasObject;
-  /** Whether gesture/edit chrome is enabled (tool is select and object is unlocked). */
+  /** Whether selection and editing are enabled by the active tool. */
   interactive: boolean;
-  /** Whether the object is selected; drives the move grip on rich-text objects. */
+  /** Whether the object is selected; drives its editing and move chrome. */
   selected: boolean;
   callbacks: HtmlObjectCallbacks;
 }
@@ -215,14 +215,16 @@ function HtmlContent({
   switch (object.kind) {
     case "rich-text": {
       const doc = getRichTextDoc(object) ?? EMPTY_DOC;
+      const editable = interactive && selected;
       return (
         <div
           className="rich-text-block"
-          data-rich-text-editable={interactive ? "true" : "false"}
+          data-rich-text-editable={editable ? "true" : "false"}
         >
           <RichTextBlock
             content={doc}
-            editable={interactive}
+            editable={editable}
+            autoFocus={editable}
             onChange={(json) => callbacks.onRichTextChange(object.id, json)}
           />
         </div>
