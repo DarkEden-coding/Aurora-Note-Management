@@ -176,7 +176,19 @@ export interface CanvasScrollBounds {
   contentHeight: number;
 }
 
-/** Scroll limits keep at least one quarter of each constrained axis on screen. */
+/** Bounds that keep at least three quarters of content-bearing screen space visible. */
+function scrollAxisBounds(
+  contentSize: number,
+  visibleSize: number,
+): { min: number; max: number } {
+  const min = -visibleSize * 0.25;
+  const max = contentSize - visibleSize * 0.75;
+  if (min <= max) return { min, max };
+  const centered = (contentSize - visibleSize) / 2;
+  return { min: centered, max: centered };
+}
+
+/** Scroll limits leave no more than one quarter of the viewport empty. */
 export function canvasScrollBounds(
   objects: CanvasObject[],
   mode: CanvasMode,
@@ -204,11 +216,13 @@ export function canvasScrollBounds(
         ? Math.max(PAGE_HEIGHT, objectBottom)
         : PAGE_HEIGHT;
 
+  const horizontal = scrollAxisBounds(contentWidth, visibleWidth);
+  const vertical = scrollAxisBounds(contentHeight, visibleHeight);
   return {
-    minX: -visibleWidth * 0.75,
-    maxX: contentWidth - visibleWidth * 0.25,
-    minY: -visibleHeight * 0.75,
-    maxY: contentHeight - visibleHeight * 0.25,
+    minX: horizontal.min,
+    maxX: horizontal.max,
+    minY: vertical.min,
+    maxY: vertical.max,
     contentWidth,
     contentHeight,
   };
