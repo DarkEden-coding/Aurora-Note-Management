@@ -1,6 +1,7 @@
 // Canvas mode geometry: page frames per mode, paged vertical stacking, page mapping by y, and mode-specific bounds clamping. Pure math only.
 import type { Bounds, CanvasMode, CanvasObject } from "@aurora/shared";
-import { boundsContainPoint, translateBounds } from "./viewport";
+import { applyResize, type Handle } from "./objects";
+import { boundsContainPoint, translateBounds, type Point } from "./viewport";
 
 export const PAGE_WIDTH = 816; // 8.5in at 96dpi
 export const PAGE_HEIGHT = 1056; // 11in at 96dpi
@@ -188,7 +189,7 @@ function scrollAxisBounds(
   return { min: centered, max: centered };
 }
 
-/** Scroll limits leave no more than one quarter of the viewport empty. */
+/** Leave a full writing viewport beyond content on the open axis. */
 export function canvasScrollBounds(
   objects: CanvasObject[],
   mode: CanvasMode,
@@ -218,6 +219,15 @@ export function canvasScrollBounds(
 
   const horizontal = scrollAxisBounds(contentWidth, visibleWidth);
   const vertical = scrollAxisBounds(contentHeight, visibleHeight);
+  if (mode === "fixed-width" || mode === "paged") {
+    vertical.max = Math.max(vertical.min, contentHeight + visibleHeight * 0.25);
+  }
+  if (mode === "fixed-height") {
+    horizontal.max = Math.max(
+      horizontal.min,
+      contentWidth + visibleWidth * 0.25,
+    );
+  }
   return {
     minX: horizontal.min,
     maxX: horizontal.max,
@@ -254,4 +264,32 @@ export function translateBoundsInMode(
   mode: CanvasMode,
 ): Bounds {
   return clampBoundsToMode(translateBounds(b, dx, dy), mode);
+}
+
+/** Stop the moving edge at a page boundary without sliding the opposite edge. */
+export function resizeBoundsInMode(
+  bounds: Bounds,
+  handle: Handle,
+  start: Point,
+  current: Point,
+  mode: CanvasMode,
+): Bounds {
+  const resized = applyResize(bounds, handle, start, current);
+  if (mode === "fixed-width" || mode === "paged") {
+    if (handle.includes("w") && resized.x < 0) {
+      resized.width += resized.x;
+      resized.x = 0;
+    }
+    if (handle.includes("e"))
+      resized.width = Math.min(resized.width, PAGE_WIDTH - bounds.x);
+  }
+  if (mode === "fixed-height") {
+    if (handle.includes("n") && resized.y < 0) {
+      resized.height += resized.y;
+      resized.y = 0;
+    }
+    if (handle.includes("s"))
+      resized.height = Math.min(resized.height, PAGE_HEIGHT - bounds.y);
+  }
+  return resized;
 }

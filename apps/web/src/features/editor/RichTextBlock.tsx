@@ -1,6 +1,7 @@
 // Rich-text block surface: Tiptap editor bound to a serialized ProseMirror JSON document. Never exposes editor instances; consumers see serialized JSON only.
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { fitText } from "./fitText";
 import { EDITOR_EXTENSIONS } from "./extensions";
 import {
   Bold,
@@ -37,15 +38,15 @@ export function RichTextBlock({
   onChangeRef.current = onChange;
   onFocusChangeRef.current = onFocusChange;
 
-  const lastEmittedRef = useRef<Record<string, unknown> | null>(content);
+  const blockRef = useRef<HTMLDivElement>(null);
 
   const editor = useEditor({
+    immediatelyRender: false,
     extensions: EDITOR_EXTENSIONS,
     content: content as never,
     editable,
     onUpdate: ({ editor }) => {
       const json = editor.getJSON() as Record<string, unknown>;
-      lastEmittedRef.current = json;
       onChangeRef.current?.(json);
     },
     onFocus: () => {
@@ -56,11 +57,13 @@ export function RichTextBlock({
     },
   });
 
-  // Apply external content only when it differs from what this block last emitted.
+  // Compare document values: persistence returns fresh JSON objects for save echoes.
   useEffect(() => {
-    if (!editor || content === lastEmittedRef.current) return;
-    lastEmittedRef.current = content;
-    editor.commands.setContent(content as never, { emitUpdate: false });
+    if (!editor || editor.isDestroyed) return;
+    const doc = editor.schema.nodeFromJSON(content);
+    if (!editor.state.doc.eq(doc)) {
+      editor.commands.setContent(content as never, { emitUpdate: false });
+    }
   }, [editor, content]);
 
   useEffect(() => {
@@ -74,13 +77,43 @@ export function RichTextBlock({
   }, [editor, editable, autoFocus]);
 
   useEffect(() => {
+    const block = blockRef.current;
+    if (!editor || !block) return;
+    let frame = 0;
+    let disposed = false;
+    const update = () => {
+      if (disposed) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const surface = block.querySelector<HTMLElement>(".ProseMirror");
+        if (surface && !editor.isDestroyed && !editor.view.composing) {
+          fitText(block, surface, editor.isEmpty);
+        }
+      });
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(block);
+    editor.on("update", update);
+    editor.on("transaction", update);
+    update();
+    void document.fonts?.ready.then(update);
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      editor.off("update", update);
+      editor.off("transaction", update);
+      cancelAnimationFrame(frame);
+    };
+  }, [editor]);
+
+  useEffect(() => {
     if (!editable) setToolbarOpen(false);
   }, [editable]);
 
   if (!editor) return null;
 
   return (
-    <div className="rich-text-block" data-rich-text-block="">
+    <div ref={blockRef} className="rich-text-block" data-rich-text-block="">
       {editable ? (
         <div
           className="rich-text-toolbar"

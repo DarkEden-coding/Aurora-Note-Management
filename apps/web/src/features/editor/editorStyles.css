@@ -6,7 +6,10 @@
   flex-direction: column;
   color: var(--aurora-editor-ink);
   font-size: 16px;
-  line-height: 1.55;
+  line-height: 1.2;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .rich-text-toolbar {
@@ -72,10 +75,21 @@
 
 .rich-text-content {
   min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  user-select: text;
+  cursor: text;
 }
 
 .rich-text-content .ProseMirror {
   outline: none;
+  overflow-wrap: anywhere;
+  display: flow-root;
+}
+
+.rich-text-content p {
+  margin: 0;
 }
 
 .rich-text-content p:first-child {
@@ -108,6 +122,7 @@
 .rich-text-content ul,
 .rich-text-content ol {
   padding-inline-start: 1.4em;
+  margin: 0.15em 0;
 }
 
 .rich-text-content blockquote {
@@ -120,7 +135,8 @@
 .rich-text-content pre {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 0.4em 0.5em;
+  white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9em;
 }
@@ -136,7 +152,7 @@
 .rich-text-content th,
 .rich-text-content td {
   border: 1px solid var(--aurora-editor-muted);
-  padding: 4px 8px;
+  padding: 0.2em 0.4em;
   vertical-align: top;
   position: relative;
 }

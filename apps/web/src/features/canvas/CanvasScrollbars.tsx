@@ -39,25 +39,25 @@ export function CanvasScrollbars({
   onToggleLock,
   onViewportChange,
 }: CanvasScrollbarsProps): ReactNode {
-  const overflowsX = bounds.contentWidth > visibleWidth;
-  const overflowsY = bounds.contentHeight > visibleHeight;
+  const overflowsX = bounds.maxX > bounds.minX;
+  const overflowsY = bounds.maxY > bounds.minY;
   const ratioX = Math.max(
     0.08,
-    Math.min(0.9, visibleWidth / bounds.contentWidth),
+    Math.min(0.9, visibleWidth / (bounds.maxX - bounds.minX + visibleWidth)),
   );
   const ratioY = Math.max(
     0.08,
-    Math.min(0.9, visibleHeight / bounds.contentHeight),
+    Math.min(0.9, visibleHeight / (bounds.maxY - bounds.minY + visibleHeight)),
   );
   const rangeX = bounds.maxX - bounds.minX;
   const rangeY = bounds.maxY - bounds.minY;
   const progressX = Math.max(
     0,
-    Math.min(1, (viewport.x - bounds.minX) / rangeX),
+    Math.min(1, rangeX > 0 ? (viewport.x - bounds.minX) / rangeX : 0),
   );
   const progressY = Math.max(
     0,
-    Math.min(1, (viewport.y - bounds.minY) / rangeY),
+    Math.min(1, rangeY > 0 ? (viewport.y - bounds.minY) / rangeY : 0),
   );
   const [active, setActive] = useState({ x: true, y: true });
   const hideTimers = useRef<{ x?: number; y?: number }>({});

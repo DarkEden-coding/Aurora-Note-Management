@@ -555,6 +555,8 @@ export function applyResize(
   }
   width = Math.max(MIN_BOUNDS_SIZE, width);
   height = Math.max(MIN_BOUNDS_SIZE, height);
+  if (handle.includes("w")) x = startBounds.x + startBounds.width - width;
+  if (handle.includes("n")) y = startBounds.y + startBounds.height - height;
   return { x, y, width, height };
 }
 

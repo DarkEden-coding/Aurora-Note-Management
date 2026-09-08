@@ -1,7 +1,8 @@
 // Renders individual canvas objects: SVG shapes and pressure strokes for the scene layer, HTML for rich text, media, attachments, and embedded PDF references. Renderer stays presentation-only; mutations flow through callbacks.
-import { lazy, Suspense, type ReactNode, useRef, useState } from "react";
+import { lazy, memo, Suspense, type ReactNode, useRef, useState } from "react";
 import type { CanvasObject } from "@aurora/shared";
 import { FileText, GripHorizontal } from "lucide-react";
+import { pressureStrokePaths } from "./strokeGeometry";
 import { EMPTY_DOC } from "../editor/document";
 import { describePageReference } from "../pdf/annotations";
 import "../editor/editorStyles.css";
@@ -39,7 +40,7 @@ import {
 
 // ---- Scene layer (SVG) ---------------------------------------------------
 
-/** Pressure stroke path: one segment per point pair, stroke width driven by pressure. */
+/** Pressure strokes use a bounded set of batched paths rather than one DOM node per sample. */
 export function PressureStrokePath({
   points,
   color,
@@ -49,23 +50,31 @@ export function PressureStrokePath({
   color: string;
   baseWidth: number;
 }): ReactNode {
-  const segments: ReactNode[] = [];
-  for (let i = 1; i < points.length; i += 1) {
-    const a = points[i - 1];
-    const b = points[i];
-    if (!a || !b) continue;
-    segments.push(
-      <path
-        key={i}
-        d={`M ${a.x} ${a.y} L ${b.x} ${b.y}`}
-        stroke={color}
-        strokeWidth={Math.max(0.5, baseWidth * (0.3 + a.pressure))}
-        strokeLinecap="round"
-        fill="none"
-      />,
+  if (points.length === 1) {
+    const point = points[0]!;
+    return (
+      <circle
+        cx={point.x}
+        cy={point.y}
+        r={Math.max(0.5, baseWidth * (0.3 + point.pressure)) / 2}
+        fill={color}
+      />
     );
   }
-  return <g>{segments}</g>;
+  return (
+    <g>
+      {pressureStrokePaths(points, baseWidth).map(({ d, width }, index) => (
+        <path
+          key={index}
+          d={d}
+          stroke={color}
+          strokeWidth={width}
+          strokeLinecap="round"
+          fill="none"
+        />
+      ))}
+    </g>
+  );
 }
 
 /** Renders one scene-layer object (strokes and vector shapes) as an SVG fragment. */
@@ -161,6 +170,9 @@ export function SceneObject({ object }: { object: CanvasObject }): ReactNode {
   }
 }
 
+// Unchanged strokes do not rebuild their geometry when another object changes.
+export const MemoizedSceneObject = memo(SceneObject);
+
 // ---- HTML layer ----------------------------------------------------------
 
 export interface HtmlObjectCallbacks {
@@ -230,7 +242,7 @@ function HtmlContent({
       const editable = interactive && selected;
       return (
         <div
-          className="rich-text-block"
+          className="canvas-rich-text"
           data-rich-text-editable={editable ? "true" : "false"}
         >
           <Suspense fallback={null}>

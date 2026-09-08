@@ -16,6 +16,7 @@ import {
   pagedPageFrame,
   pagedPageIndexAtY,
   translateBoundsInMode,
+  resizeBoundsInMode,
 } from "./pageLayout";
 import { makeCanvasObject } from "./objects";
 
@@ -103,13 +104,13 @@ describe("mode clamping", () => {
     expect(canvasSurfaceFrames([], "infinite")).toEqual([]);
   });
 
-  it("keeps three quarters of the screen filled and grows with content", () => {
+  it("leaves writing room past content and grows with content", () => {
     const view = { width: 400, height: 600 };
     const base = canvasScrollBounds([], "paged", view.width, view.height)!;
     expect(base.minX).toBe(-100);
     expect(base.maxX).toBe(PAGE_WIDTH - 300);
     expect(base.minY).toBe(-150);
-    expect(base.maxY).toBe(PAGE_HEIGHT - 450);
+    expect(base.maxY).toBe(PAGE_HEIGHT + 150);
 
     const tall = canvasScrollBounds(
       [objectAt({ x: 10, y: 1800, width: 20, height: 100 })],
@@ -118,7 +119,7 @@ describe("mode clamping", () => {
       view.height,
     )!;
     expect(tall.contentHeight).toBe(1900);
-    expect(tall.maxY).toBe(1450);
+    expect(tall.maxY).toBe(2050);
 
     const wide = canvasScrollBounds(
       [objectAt({ x: 1400, y: 10, width: 100, height: 20 })],
@@ -127,11 +128,11 @@ describe("mode clamping", () => {
       view.height,
     )!;
     expect(wide.contentWidth).toBe(1500);
-    expect(wide.maxX).toBe(1200);
+    expect(wide.maxX).toBe(1600);
 
     const tiny = canvasScrollBounds([], "paged", 2000, 3000)!;
     expect(tiny.minX).toBe(tiny.maxX);
-    expect(tiny.minY).toBe(tiny.maxY);
+    expect(tiny.maxY).toBeGreaterThan(tiny.minY);
     expect(canvasScrollBounds([], "infinite", 400, 600)).toBeNull();
   });
 
@@ -188,4 +189,35 @@ describe("mode clamping", () => {
       height: 10,
     });
   });
+});
+
+it("resizes against page edges without sliding the anchored corner", () => {
+  const bounds = { x: 200, y: 100, width: 300, height: 200 };
+  const east = resizeBoundsInMode(
+    bounds,
+    "e",
+    { x: 500, y: 200 },
+    { x: 1200, y: 200 },
+    "fixed-width",
+  );
+  expect(east.x).toBe(200);
+  expect(east.x + east.width).toBe(PAGE_WIDTH);
+  const west = resizeBoundsInMode(
+    bounds,
+    "w",
+    { x: 200, y: 200 },
+    { x: -300, y: 200 },
+    "paged",
+  );
+  expect(west.x).toBe(0);
+  expect(west.width).toBe(500);
+  const south = resizeBoundsInMode(
+    bounds,
+    "s",
+    { x: 300, y: 300 },
+    { x: 300, y: 2000 },
+    "fixed-height",
+  );
+  expect(south.y).toBe(100);
+  expect(south.y + south.height).toBe(PAGE_HEIGHT);
 });

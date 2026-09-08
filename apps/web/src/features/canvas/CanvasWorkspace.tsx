@@ -18,6 +18,7 @@ import {
   type DrawingPalette,
   type SyncOperation,
 } from "@aurora/shared";
+import { reconcileObject } from "./reconcileObject";
 import { db } from "../../sync/db";
 import { syncEngine } from "../../sync/engine";
 import { Trash2 } from "lucide-react";
@@ -32,15 +33,13 @@ import {
 } from "./DrawingProperties";
 import {
   HtmlObject,
-  PressureStrokePath,
-  SceneObject,
+  MemoizedSceneObject as SceneObject,
   type HtmlObjectCallbacks,
 } from "./ObjectRenderer";
 import { DEFAULT_BACKGROUND, getBackgroundStyle } from "./backgrounds";
 import { DEFAULT_OVERSCAN, queryVisibleObjects, sortByZIndex } from "./culling";
 import { buildDemoObjects } from "./DemoContent";
 import {
-  applyResize,
   dragBoundsFree,
   fitImageSize,
   getShapeColor,
@@ -79,6 +78,7 @@ import {
   canvasSurfaceFrames,
   clampBoundsToMode,
   translateBoundsInMode,
+  resizeBoundsInMode,
 } from "./pageLayout";
 import { shouldRejectTouch } from "./pointerInput";
 import { usePenCapture } from "./usePenCapture";
@@ -309,8 +309,11 @@ export function CanvasWorkspace({
     [noteId],
   );
 
+  const pendingObjectsRef = useRef(new Map<string, CanvasObject>());
+
   // Reset the working set when the note changes.
   useEffect(() => {
+    pendingObjectsRef.current.clear();
     setMirror(isControlled ? (objects ?? []) : []);
     selection.clear();
     setGesture(null);
@@ -361,7 +364,11 @@ export function CanvasWorkspace({
               activeGesture.removed.has(objectId)));
 
         for (const objectId of event.deletedObjectIds) {
-          if (byId.has(objectId) && !gestureTouches(objectId)) {
+          if (
+            byId.has(objectId) &&
+            !gestureTouches(objectId) &&
+            !pendingObjectsRef.current.has(objectId)
+          ) {
             byId.delete(objectId);
             changed = true;
           }
@@ -375,7 +382,14 @@ export function CanvasWorkspace({
             remote.revision > local.revision &&
             !gestureTouches(remote.id)
           ) {
-            byId.set(remote.id, remote);
+            const result = reconcileObject(
+              local,
+              remote,
+              pendingObjectsRef.current.get(remote.id),
+            );
+            byId.set(remote.id, result.object);
+            if (result.acknowledged)
+              pendingObjectsRef.current.delete(remote.id);
             changed = true;
           }
         }
@@ -435,6 +449,7 @@ export function CanvasWorkspace({
 
   const commitUpsert = useCallback(
     (object: CanvasObject): void => {
+      pendingObjectsRef.current.set(object.id, object);
       onOperationRef.current?.(
         makeUpsertOperation(object, noteId, deviceIdRef.current),
       );
@@ -689,6 +704,7 @@ export function CanvasWorkspace({
       s: "sticky",
     };
     const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.isComposing) return;
       const target = e.target;
       const inEditable =
         target instanceof HTMLElement &&
@@ -721,6 +737,7 @@ export function CanvasWorkspace({
         selection.clear();
         return;
       }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const next = shortcuts[e.key.toLowerCase()];
       if (next) setTool(next);
     };
@@ -730,10 +747,15 @@ export function CanvasWorkspace({
 
   const pen = usePenCapture({
     isActive: tool === "pen",
+    noteId,
+    zoom: viewport.zoom,
+    color: drawingStyle.strokeColor,
+    baseWidth: STROKE_TOOL_WIDTH,
+    containerRef,
     toCanvas,
     onStrokeComplete: (points) => {
       if (
-        points.length < 2 ||
+        points.length < 1 ||
         objectsRef.current.length >= MAX_OBJECTS_PER_NOTE
       )
         return;
@@ -818,7 +840,30 @@ export function CanvasWorkspace({
         return;
       }
 
-      if (e.pointerType === "touch") {
+      const touchTarget = e.target instanceof Element ? e.target : null;
+      const touchPrimary = objectsRef.current.find((o) => o.id === primaryId);
+      const touchHandle =
+        tool === "select" &&
+        touchPrimary &&
+        !touchPrimary.locked &&
+        touchPrimary.kind !== "stroke"
+          ? handleAtPoint(
+              touchPrimary.bounds,
+              screenToCanvas(screen, viewportRef.current),
+              HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
+            )
+          : null;
+      const touchChrome =
+        tool === "select" &&
+        (touchHandle !== null ||
+          touchTarget?.closest('[data-move-grip="true"]'));
+      if (
+        e.pointerType === "touch" &&
+        isInsideEditable(e.target) &&
+        !touchChrome
+      )
+        return;
+      if (e.pointerType === "touch" && !touchChrome) {
         if (pen.isDrawing()) return;
         pinchRef.current.set(e.pointerId, screen);
         if (pinchRef.current.size === 2) {
@@ -863,9 +908,14 @@ export function CanvasWorkspace({
       }
       if (e.pointerType === "mouse" && e.button !== 0) return;
 
-      if (isInsideEditable(e.target)) return;
-
+      const targetElement = e.target instanceof Element ? e.target : null;
+      const moveGrip = targetElement?.closest('[data-move-grip="true"]');
+      const gripId = moveGrip
+        ?.closest("[data-html-object]")
+        ?.getAttribute("data-html-object");
       const canvasPoint = screenToCanvas(screen, viewportRef.current);
+
+      if (tool !== "select" && isInsideEditable(e.target)) return;
 
       if (tool === "eraser") {
         const removed = new Map<string, CanvasObject>();
@@ -888,7 +938,8 @@ export function CanvasWorkspace({
             canvasPoint,
             HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
           );
-          if (handle !== null) {
+          if (handle !== null && !moveGrip) {
+            e.preventDefault();
             setActiveGesture({
               kind: "resize",
               id: primary.id,
@@ -905,41 +956,57 @@ export function CanvasWorkspace({
             return;
           }
         }
-        const hit = hitTestTopmost(
-          objectsRef.current.filter(
-            (object) =>
-              !object.locked &&
-              (object.kind !== "stroke" ||
-                hitTestTopmostStroke(
-                  [object],
-                  canvasPoint,
-                  HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
-                ) !== null) &&
-              ((object.kind !== "line" && object.kind !== "arrow") ||
-                hitTestLineObject(
-                  object,
-                  canvasPoint,
-                  HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
-                )),
-          ),
-          canvasPoint,
-        );
+        if (isInsideEditable(e.target) && !moveGrip) return;
+        const hit =
+          (gripId
+            ? objectsRef.current.find((o) => o.id === gripId && !o.locked)
+            : null) ??
+          hitTestTopmost(
+            objectsRef.current.filter(
+              (object) =>
+                !object.locked &&
+                (object.kind !== "stroke" ||
+                  hitTestTopmostStroke(
+                    [object],
+                    canvasPoint,
+                    HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
+                  ) !== null) &&
+                ((object.kind !== "line" && object.kind !== "arrow") ||
+                  hitTestLineObject(
+                    object,
+                    canvasPoint,
+                    HANDLE_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
+                  )),
+            ),
+            canvasPoint,
+          );
         if (hit === null) {
           selection.select(null, e.shiftKey);
           return;
         }
-        selection.select(hit.id, e.shiftKey);
-        // Compute the move set from the pre-toggle selection plus the hit.
-        const previous = e.shiftKey ? [...selection.selectedIds] : [];
-        const moveIds = previous.includes(hit.id)
-          ? previous.filter((id) => id !== hit.id)
-          : [...previous, hit.id];
+        const alreadySelected = selection.selectedIds.has(hit.id);
+        if (e.shiftKey || !alreadySelected)
+          selection.select(hit.id, e.shiftKey);
+        const previous = [...selection.selectedIds];
+        const moveIds = e.shiftKey
+          ? alreadySelected
+            ? previous.filter((id) => id !== hit.id)
+            : [...previous, hit.id]
+          : alreadySelected
+            ? previous
+            : [hit.id];
         const origins = new Map<string, Bounds>();
         for (const id of moveIds) {
           const o = objectsRef.current.find((c) => c.id === id);
           if (o !== undefined && !o.locked) origins.set(id, o.bounds);
         }
         if (origins.size > 0) {
+          e.preventDefault();
+          try {
+            el.setPointerCapture(e.pointerId);
+          } catch {
+            // Pointer capture is best-effort.
+          }
           setActiveGesture({
             kind: "move",
             ids: [...origins.keys()],
@@ -975,9 +1042,15 @@ export function CanvasWorkspace({
         }
       }
     },
-    // selection methods are stable; selection excluded to avoid gesture churn.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tool, primaryId, createObject, eraseStrokeAt, pen, setActiveGesture],
+    [
+      tool,
+      primaryId,
+      createObject,
+      eraseStrokeAt,
+      pen,
+      setActiveGesture,
+      selection,
+    ],
   );
 
   const handlePointerMove = useCallback(
@@ -1063,18 +1136,19 @@ export function CanvasWorkspace({
         return;
       }
       if (current.kind === "resize") {
-        const next = clampBoundsToMode(
-          applyResize(
-            current.startBounds,
-            current.handle,
-            current.start,
-            canvasPoint,
-          ),
+        const next = resizeBoundsInMode(
+          current.startBounds,
+          current.handle,
+          current.start,
+          canvasPoint,
           activeMode,
         );
         const resized = objectsRef.current.map((o) =>
           o.id === current.id
-            ? resizeObjectToBounds(current.startObject, next)
+            ? resizeObjectToBounds(
+                { ...current.startObject, payload: o.payload },
+                next,
+              )
             : o,
         );
         objectsRef.current = resized;
@@ -1109,7 +1183,7 @@ export function CanvasWorkspace({
         if (pinchRef.current.size < 2) pinchSpanRef.current = null;
         return;
       }
-      if (e.pointerType === "touch") {
+      if (e.pointerType === "touch" && pinchRef.current.has(e.pointerId)) {
         pinchRef.current.delete(e.pointerId);
         pinchSpanRef.current = null;
         const remaining = [...pinchRef.current.values()][0];
@@ -1232,7 +1306,7 @@ export function CanvasWorkspace({
         if (pinchRef.current.size < 2) pinchSpanRef.current = null;
         return;
       }
-      if (e.pointerType === "touch") {
+      if (e.pointerType === "touch" && pinchRef.current.has(e.pointerId)) {
         pinchRef.current.delete(e.pointerId);
         if (pinchRef.current.size < 2) pinchSpanRef.current = null;
         setActiveGesture(null);
@@ -1408,9 +1482,18 @@ export function CanvasWorkspace({
     viewport.x,
     viewport.y,
   ]);
-  const visible = sortByZIndex(
-    queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN),
-  );
+  const inView = queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN);
+  const visibleIds = new Set(inView.map((object) => object.id));
+  // Keep selected editors mounted when scrolling so their selection and undo survive.
+  const visible = sortByZIndex([
+    ...inView,
+    ...displayObjects.filter(
+      (object) =>
+        object.kind === "rich-text" &&
+        selection.isSelected(object.id) &&
+        !visibleIds.has(object.id),
+    ),
+  ]);
   const surfaceFrames = canvasSurfaceFrames(displayObjects, activeMode);
   const pageBackgroundStyle = getBackgroundStyle(
     background ?? DEFAULT_BACKGROUND,
@@ -1540,7 +1623,7 @@ export function CanvasWorkspace({
         }}
         onPointerMove={(e) => {
           pen.handlers.onPointerMove(e);
-          handlePointerMove(e);
+          if (!pen.isDrawing()) handlePointerMove(e);
         }}
         onPointerUp={(e) => {
           pen.handlers.onPointerUp(e);
@@ -1644,16 +1727,54 @@ export function CanvasWorkspace({
                   <SceneObject key={o.id} object={o} />
                 ) : null,
               )}
-              {pen.preview !== null ? (
-                <PressureStrokePath
-                  points={pen.preview}
-                  color={drawingStyle.strokeColor}
-                  baseWidth={STROKE_TOOL_WIDTH}
-                />
-              ) : null}
               {previewShape !== null ? (
                 <SceneObject object={previewShape} />
               ) : null}
+            </svg>
+          ) : null}
+
+          {previewStickyBounds !== null ? (
+            <div
+              className="canvas-create-preview"
+              style={{
+                left: previewStickyBounds.x,
+                top: previewStickyBounds.y,
+                width: previewStickyBounds.width,
+                height: previewStickyBounds.height,
+              }}
+            />
+          ) : null}
+
+          {visible
+            .filter(
+              (o) =>
+                o.kind !== "stroke" &&
+                o.kind !== "image" &&
+                o.kind !== "rectangle" &&
+                o.kind !== "ellipse" &&
+                o.kind !== "line" &&
+                o.kind !== "arrow",
+            )
+            .map((o) => (
+              <HtmlObject
+                key={o.id}
+                object={o}
+                interactive={tool === "select" && !o.locked}
+                selected={selection.isSelected(o.id)}
+                callbacks={htmlCallbacks}
+              />
+            ))}
+          {view.width > 0 && view.height > 0 ? (
+            <svg
+              className="canvas-scene canvas-selection-layer"
+              style={{
+                left: view.x,
+                top: view.y,
+                width: view.width,
+                height: view.height,
+              }}
+              viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
+            >
               {[...selection.selectedIds].map((id) => {
                 const o = displayObjects.find((c) => c.id === id);
                 if (o === undefined) return null;
@@ -1690,39 +1811,12 @@ export function CanvasWorkspace({
                 : null}
             </svg>
           ) : null}
-
-          {previewStickyBounds !== null ? (
-            <div
-              className="canvas-create-preview"
-              style={{
-                left: previewStickyBounds.x,
-                top: previewStickyBounds.y,
-                width: previewStickyBounds.width,
-                height: previewStickyBounds.height,
-              }}
-            />
-          ) : null}
-
-          {visible
-            .filter(
-              (o) =>
-                o.kind !== "stroke" &&
-                o.kind !== "image" &&
-                o.kind !== "rectangle" &&
-                o.kind !== "ellipse" &&
-                o.kind !== "line" &&
-                o.kind !== "arrow",
-            )
-            .map((o) => (
-              <HtmlObject
-                key={o.id}
-                object={o}
-                interactive={tool === "select" && !o.locked}
-                selected={selection.isSelected(o.id)}
-                callbacks={htmlCallbacks}
-              />
-            ))}
         </div>
+        <canvas
+          ref={pen.previewRef}
+          className="canvas-ink-preview"
+          aria-hidden="true"
+        />
         {imageImportError !== null ? (
           <button
             type="button"

@@ -400,3 +400,13 @@ describe("gesture bounds math", () => {
     ]);
   });
 });
+
+// Crossing the opposite edge must stop resizing, not move the anchored edge.
+it("anchors the opposite corner when north/west resize reaches minimum size", () => {
+  const start = { x: 30, y: 40, width: 100, height: 80 };
+  const result = applyResize(start, "nw", { x: 30, y: 40 }, { x: 900, y: 900 });
+  expect(result.x + result.width).toBe(130);
+  expect(result.y + result.height).toBe(120);
+  expect(result.width).toBeGreaterThan(0);
+  expect(result.height).toBeGreaterThan(0);
+});

@@ -94,6 +94,20 @@ export function useViewport(
       ) {
         return;
       }
+      const textScroller =
+        e.target instanceof Element
+          ? e.target.closest<HTMLElement>(".rich-text-content")
+          : null;
+      if (
+        !e.ctrlKey &&
+        !e.metaKey &&
+        textScroller &&
+        ((e.deltaY < 0 && textScroller.scrollTop > 0) ||
+          (e.deltaY > 0 &&
+            textScroller.scrollTop + textScroller.clientHeight <
+              textScroller.scrollHeight))
+      )
+        return;
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
         const rect = el.getBoundingClientRect();
