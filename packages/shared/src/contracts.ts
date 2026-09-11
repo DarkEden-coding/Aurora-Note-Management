@@ -36,6 +36,7 @@ export const objectKindSchema = z.enum([
   "ellipse",
   "line",
   "arrow",
+  "matrix",
   "sticky-note",
   "pdf-page-reference",
 ]);

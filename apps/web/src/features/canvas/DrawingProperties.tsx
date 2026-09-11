@@ -4,7 +4,7 @@ import { Settings2 } from "lucide-react";
 import { DrawingColorPalette } from "./DrawingColorPalette";
 import type { ShapeLineStyle } from "./objects";
 
-export type VectorTool = "rectangle" | "ellipse" | "line" | "arrow";
+export type VectorTool = "rectangle" | "ellipse" | "line" | "arrow" | "matrix";
 
 export interface DrawingStyle {
   strokeColor: string;
@@ -204,7 +204,11 @@ export function DrawingPlacementPanel({
   tool: "pen" | VectorTool;
 }): ReactNode {
   return (
-    <aside className="drawing-properties-panel" aria-label="Drawing properties">
+    <aside
+      className="drawing-properties-panel"
+      data-tool={tool}
+      aria-label="Drawing properties"
+    >
       <strong className="drawing-properties-title">
         {tool === "pen" ? "Pen" : "Shape"} properties
       </strong>

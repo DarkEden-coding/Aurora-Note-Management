@@ -165,6 +165,21 @@ export function SceneObject({ object }: { object: CanvasObject }): ReactNode {
         </g>
       );
     }
+    case "matrix": {
+      const b = object.bounds;
+      const arm = Math.min(b.width / 2, 24, Math.max(4, b.height / 10));
+      return (
+        <path
+          d={`M ${b.x + arm} ${b.y} H ${b.x} V ${b.y + b.height} H ${b.x + arm} M ${b.x + b.width - arm} ${b.y} H ${b.x + b.width} V ${b.y + b.height} H ${b.x + b.width - arm}`}
+          stroke={getShapeColor(object)}
+          strokeWidth={getShapeStrokeWidth(object)}
+          strokeDasharray={getShapeDashArray(object)}
+          strokeLinecap="square"
+          strokeLinejoin="miter"
+          fill="none"
+        />
+      );
+    }
     default:
       return null;
   }

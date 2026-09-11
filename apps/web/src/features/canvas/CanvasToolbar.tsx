@@ -2,6 +2,7 @@
 import { type ReactNode } from "react";
 import {
   ArrowUpRight,
+  Brackets,
   Circle,
   Eraser,
   Hand,
@@ -26,6 +27,7 @@ export type CanvasTool =
   | "rectangle"
   | "ellipse"
   | "arrow"
+  | "matrix"
   | "sticky"
   | "text";
 
@@ -60,6 +62,11 @@ const TOOLS: ToolButton[] = [
   { tool: "rectangle", label: "Rectangle (R)", icon: <Square size={16} /> },
   { tool: "ellipse", label: "Ellipse (E)", icon: <Circle size={16} /> },
   { tool: "arrow", label: "Arrow (A)", icon: <ArrowUpRight size={16} /> },
+  {
+    tool: "matrix",
+    label: "Matrix brackets (M)",
+    icon: <Brackets size={16} />,
+  },
   { tool: "sticky", label: "Sticky note (S)", icon: <StickyNote size={16} /> },
 ];
 

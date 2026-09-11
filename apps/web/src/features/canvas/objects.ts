@@ -18,6 +18,7 @@ export interface StrokePoint {
 // stroke:             { points: [x, y, pressure][], color: string, baseWidth: number }
 // line | arrow:       { start, end, color, strokeWidth, lineStyle }
 // rectangle | ellipse:{ color, fill, fillOpacity, strokeWidth, lineStyle, cornerRadius? }
+// matrix:             { color, strokeWidth, lineStyle }
 // sticky-note:        { text: string, color: string }
 // image:              { fileId: string, alt: string } (legacy: { src, alt })
 // attachment:         { name: string, size: number, fileId: string }

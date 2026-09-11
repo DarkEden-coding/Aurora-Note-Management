@@ -135,7 +135,7 @@ type Gesture =
     };
 
 type CreateTool =
-  "line" | "rectangle" | "ellipse" | "arrow" | "sticky" | "text";
+  "line" | "rectangle" | "ellipse" | "arrow" | "matrix" | "sticky" | "text";
 
 type HistoryEntry = {
   before: CanvasObject[];
@@ -183,6 +183,7 @@ const CREATE_TOOLS: readonly string[] = [
   "rectangle",
   "ellipse",
   "arrow",
+  "matrix",
   "sticky",
   "text",
 ];
@@ -196,7 +197,8 @@ function isVectorTool(tool: CanvasTool): tool is VectorTool {
     tool === "rectangle" ||
     tool === "ellipse" ||
     tool === "line" ||
-    tool === "arrow"
+    tool === "arrow" ||
+    tool === "matrix"
   );
 }
 
@@ -270,6 +272,11 @@ export function CanvasWorkspace({
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [imageImportError, setImageImportError] = useState<string | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
+  const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
+  const changeTool = useCallback((nextTool: CanvasTool): void => {
+    setTool(nextTool);
+    setPlacementPropertiesOpen(nextTool === "pen" || isVectorTool(nextTool));
+  }, []);
   const palette = drawingPalette ?? (["#000000"] as DrawingPalette);
   const [drawingStyle, setDrawingStyle] = useState<DrawingStyle>(() => ({
     strokeColor: palette[0] ?? "#000000",
@@ -621,7 +628,9 @@ export function CanvasWorkspace({
                 ? ("ellipse" as const)
                 : createTool === "arrow"
                   ? ("arrow" as const)
-                  : ("line" as const);
+                  : createTool === "matrix"
+                    ? ("matrix" as const)
+                    : ("line" as const);
       let shapePayload: CanvasObject["payload"] = {
         color: drawingStyle.strokeColor,
         strokeWidth: drawingStyle.strokeWidth,
@@ -701,6 +710,7 @@ export function CanvasWorkspace({
       r: "rectangle",
       e: "ellipse",
       a: "arrow",
+      m: "matrix",
       s: "sticky",
     };
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -739,11 +749,11 @@ export function CanvasWorkspace({
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const next = shortcuts[e.key.toLowerCase()];
-      if (next) setTool(next);
+      if (next) changeTool(next);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleteSelection, redo, selection, undo]);
+  }, [changeTool, deleteSelection, redo, selection, undo]);
 
   const pen = usePenCapture({
     isActive: tool === "pen",
@@ -893,6 +903,7 @@ export function CanvasWorkspace({
       ) {
         pinchRef.current.clear();
         pinchSpanRef.current = null;
+        setPlacementPropertiesOpen(false);
         setActiveGesture(null);
         return;
       }
@@ -1028,6 +1039,7 @@ export function CanvasWorkspace({
       }
 
       if (isCreateTool(tool)) {
+        setPlacementPropertiesOpen(false);
         setActiveGesture({
           kind: "create",
           tool,
@@ -1723,7 +1735,8 @@ export function CanvasWorkspace({
                 o.kind === "rectangle" ||
                 o.kind === "ellipse" ||
                 o.kind === "line" ||
-                o.kind === "arrow" ? (
+                o.kind === "arrow" ||
+                o.kind === "matrix" ? (
                   <SceneObject key={o.id} object={o} />
                 ) : null,
               )}
@@ -1753,7 +1766,8 @@ export function CanvasWorkspace({
                 o.kind !== "rectangle" &&
                 o.kind !== "ellipse" &&
                 o.kind !== "line" &&
-                o.kind !== "arrow",
+                o.kind !== "arrow" &&
+                o.kind !== "matrix",
             )
             .map((o) => (
               <HtmlObject
@@ -1911,14 +1925,14 @@ export function CanvasWorkspace({
         maxObjectCount={MAX_OBJECTS_PER_NOTE}
         canUndo={history.undo.length > 0}
         canRedo={history.redo.length > 0}
-        onToolChange={setTool}
+        onToolChange={changeTool}
         onUndo={undo}
         onRedo={redo}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onZoomReset={zoomReset}
       />
-      {placementTool !== null ? (
+      {placementTool !== null && placementPropertiesOpen ? (
         <DrawingPlacementPanel
           tool={placementTool}
           style={drawingStyle}

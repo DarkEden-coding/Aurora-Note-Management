@@ -518,6 +518,30 @@
   overflow-y: auto;
 }
 
+.drawing-properties-panel[data-tool="pen"] {
+  width: 50px;
+  padding: 8px;
+}
+
+.drawing-properties-panel[data-tool="pen"] .drawing-properties-title,
+.drawing-properties-panel[data-tool="pen"] .drawing-color-palette-header span {
+  display: none;
+}
+
+.drawing-properties-panel[data-tool="pen"] .drawing-style-controls {
+  gap: 8px;
+}
+
+.drawing-properties-panel[data-tool="pen"] .drawing-color-palette-header {
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.drawing-properties-panel[data-tool="pen"] .drawing-color-palette-swatches {
+  flex-direction: column;
+  flex-wrap: nowrap;
+}
+
 .drawing-properties-title {
   display: block;
   margin: 0 0 16px;
