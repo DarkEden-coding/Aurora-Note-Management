@@ -95,6 +95,21 @@ it("paints 1000 samples incrementally without rerendering React and saves full w
   expect(points.at(-1)).toEqual({ x: 510.5, y: 520.5, pressure: 0.7 });
 });
 
+it("stops adding pen samples when the stylus is no longer touching the screen", async () => {
+  const target = host.firstElementChild!;
+  await act(async () => {
+    target.dispatchEvent(event("pointerdown", 10, 10));
+    target.dispatchEvent(event("pointermove", 20, 20));
+    target.dispatchEvent(event("pointermove", 40, 40, { pressure: 0 }));
+    target.dispatchEvent(event("pointerup", 50, 50, { pressure: 0 }));
+  });
+
+  expect(saved.mock.calls[0]![0]).toEqual([
+    { x: 15, y: 25, pressure: 0.7 },
+    { x: 20, y: 30, pressure: 0.7 },
+  ]);
+});
+
 it("deduplicates raw/coalesced samples, ignores a second pointer, and discards cancelled ink", async () => {
   const target = host.firstElementChild!;
   await act(async () => {

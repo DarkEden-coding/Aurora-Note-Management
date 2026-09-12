@@ -183,6 +183,12 @@ describe("serverEventSchema", () => {
     ).toBe(true);
     expect(
       serverEventSchema.safeParse({
+        type: "library-changed",
+        serverTimestamp: new Date().toISOString(),
+      }).success,
+    ).toBe(true);
+    expect(
+      serverEventSchema.safeParse({
         type: "ack",
         noteId,
         serverTimestamp: new Date().toISOString(),

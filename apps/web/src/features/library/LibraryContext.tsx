@@ -13,6 +13,7 @@ import type { CachedNote } from "../../sync/db.js";
 import * as libraryApi from "./api.js";
 import type { NotePatch } from "./api.js";
 import { partitionCachedNotes, toCachedNote } from "./libraryCache.js";
+import { syncEngine } from "../../sync/engine.js";
 import type { LibraryTree } from "./types.js";
 
 export interface LibraryState {
@@ -148,6 +149,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     setLoaded(true);
   }, [showCachedNotes]);
 
+  useEffect(
+    () =>
+      syncEngine.onLibraryChange(() => void refresh().catch(() => undefined)),
+    [refresh],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void db
@@ -229,7 +236,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const addProject = useCallback(async (name: string) => {
     const project = await libraryApi.createProject(name);
     await db.projects.put(project);
-    setProjects((current) => [...current, project]);
+    setProjects((current) => [
+      ...current.filter((item) => item.id !== project.id),
+      project,
+    ]);
   }, []);
 
   const renameProject = useCallback(async (projectId: string, name: string) => {
@@ -287,7 +297,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     async (projectId: string, parentId: string | null, name: string) => {
       const folder = await libraryApi.createFolder(projectId, parentId, name);
       await db.folders.put(folder);
-      setFolders((current) => [...current, folder]);
+      setFolders((current) => [
+        ...current.filter((item) => item.id !== folder.id),
+        folder,
+      ]);
     },
     [],
   );

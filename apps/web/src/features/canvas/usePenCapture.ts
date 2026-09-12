@@ -55,10 +55,8 @@ export function usePenCapture(options: PenCaptureOptions): UsePenCaptureResult {
     // Include the dispatched event too: some browsers omit its final position.
     const samples = coalesced.length ? [...coalesced, native] : [native];
     for (const event of samples) {
-      const pressure =
-        event.pointerType === "pen" && event.pressure > 0
-          ? event.pressure
-          : 0.5;
+      if (event.pointerType === "pen" && event.pressure <= 0) continue;
+      const pressure = event.pointerType === "pen" ? event.pressure : 0.5;
       // rawupdate and pointermove can deliver the same samples. Preserve all new positions.
       if (
         event.timeStamp < stroke.lastTime ||

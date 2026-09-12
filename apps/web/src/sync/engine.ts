@@ -48,6 +48,7 @@ class SyncEngine {
   };
   private listeners = new Set<() => void>();
   private remoteListeners = new Set<(event: RemoteChangeEvent) => void>();
+  private libraryListeners = new Set<() => void>();
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -60,6 +61,12 @@ class SyncEngine {
   ): (() => void) => {
     this.remoteListeners.add(listener);
     return () => this.remoteListeners.delete(listener);
+  };
+
+  /** Subscribe to project, folder, and note metadata changes. */
+  onLibraryChange = (listener: () => void): (() => void) => {
+    this.libraryListeners.add(listener);
+    return () => this.libraryListeners.delete(listener);
   };
 
   getStatus = (): SyncStatus => this.status;
@@ -92,11 +99,14 @@ class SyncEngine {
           this.setStatus({ state });
           if (state !== "open") return;
           this.requestFlush(0);
-          if (this.hasConnected && this.lastHydration) {
-            void this.hydrate(
-              this.lastHydration.noteId,
-              this.lastHydration.viewport,
-            );
+          if (this.hasConnected) {
+            if (this.lastHydration) {
+              void this.hydrate(
+                this.lastHydration.noteId,
+                this.lastHydration.viewport,
+              );
+            }
+            this.notifyLibraryChange();
           }
           this.hasConnected = true;
         },
@@ -172,7 +182,9 @@ class SyncEngine {
         this.notifyRemoteChange({ noteId: event.noteId, ...changes });
       }
     }
-    // note-changed carries metadata-only updates; counts refresh below.
+    if (event.type === "library-changed" || event.type === "note-changed") {
+      this.notifyLibraryChange();
+    }
     this.setStatus({ lastSyncAt: Date.now() });
     await this.refreshCounts();
   }
@@ -180,6 +192,11 @@ class SyncEngine {
   /** Deliver reconciled object changes to every active feature listener. */
   private notifyRemoteChange(event: RemoteChangeEvent): void {
     for (const listener of this.remoteListeners) listener(event);
+  }
+
+  /** Tell the library cache to fetch the authoritative metadata tree. */
+  private notifyLibraryChange(): void {
+    for (const listener of this.libraryListeners) listener();
   }
 
   /** Refresh unresolved server conflicts so lost responses and other devices remain visible. */

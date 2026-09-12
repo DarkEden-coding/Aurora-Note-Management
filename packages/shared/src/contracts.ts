@@ -189,6 +189,10 @@ export const serverEventSchema = z.discriminatedUnion("type", [
     originOperationId: z.string(),
     serverTimestamp: isoDateSchema,
   }),
+  z.object({
+    type: z.literal("library-changed"),
+    serverTimestamp: isoDateSchema,
+  }),
 ]);
 
 // ---- Agentic chat (GET/POST /api/ai/*) -----------------------------------

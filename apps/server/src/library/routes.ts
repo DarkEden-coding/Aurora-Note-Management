@@ -13,6 +13,7 @@ import * as projects from "./projects.js";
 import * as folders from "./folders.js";
 import * as notes from "./notes.js";
 import { getLibraryTree } from "./tree.js";
+import { broadcastToOwner } from "../sync/ws.js";
 
 const createProjectSchema = z.object({
   name: z.string().min(1).max(120),
@@ -82,6 +83,14 @@ const listProjectsQuerySchema = z.object({
   includeArchived: z.stringbool().optional(),
 });
 
+/** Notifies every open client to refresh its owner-scoped library tree. */
+function broadcastLibraryChange(ownerId: string): void {
+  broadcastToOwner(ownerId, {
+    type: "library-changed",
+    serverTimestamp: new Date().toISOString(),
+  });
+}
+
 export function registerLibraryRoutes(
   app: FastifyInstance,
   env: AuroraEnv,
@@ -100,18 +109,21 @@ export function registerLibraryRoutes(
   app.post("/api/projects", { preHandler }, async (request, reply) => {
     const input = createProjectSchema.parse(request.body);
     const project = await projects.createProject(request.ownerId!, input);
+    broadcastLibraryChange(request.ownerId!);
     return reply.status(201).send({ project });
   });
   app.patch("/api/projects/:id", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
     const patch = patchProjectSchema.parse(request.body);
-    return {
-      project: await projects.updateProject(request.ownerId!, id, patch),
-    };
+    const project = await projects.updateProject(request.ownerId!, id, patch);
+    broadcastLibraryChange(request.ownerId!);
+    return { project };
   });
   app.delete("/api/projects/:id", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return projects.deleteProject(request.ownerId!, id);
+    const result = await projects.deleteProject(request.ownerId!, id);
+    broadcastLibraryChange(request.ownerId!);
+    return result;
   });
 
   app.get("/api/projects/:id/folders", { preHandler }, async (request) => {
@@ -127,17 +139,22 @@ export function registerLibraryRoutes(
       await projects.getProject(request.ownerId!, id);
       const input = createFolderSchema.parse(request.body);
       const folder = await folders.createFolder(request.ownerId!, id, input);
+      broadcastLibraryChange(request.ownerId!);
       return reply.status(201).send({ folder });
     },
   );
   app.patch("/api/folders/:id", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
     const patch = patchFolderSchema.parse(request.body);
-    return { folder: await folders.updateFolder(request.ownerId!, id, patch) };
+    const folder = await folders.updateFolder(request.ownerId!, id, patch);
+    broadcastLibraryChange(request.ownerId!);
+    return { folder };
   });
   app.delete("/api/folders/:id", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return folders.deleteFolder(request.ownerId!, id);
+    const result = await folders.deleteFolder(request.ownerId!, id);
+    broadcastLibraryChange(request.ownerId!);
+    return result;
   });
 
   app.get("/api/notes", { preHandler }, async (request) => {
@@ -148,6 +165,7 @@ export function registerLibraryRoutes(
     const input = createNoteSchema.parse(request.body);
     await projects.getProject(request.ownerId!, input.projectId);
     const note = await notes.createNote(request.ownerId!, input);
+    broadcastLibraryChange(request.ownerId!);
     return reply.status(201).send({ note });
   });
   app.get("/api/notes/:id", { preHandler }, async (request) => {
@@ -157,36 +175,52 @@ export function registerLibraryRoutes(
   app.patch("/api/notes/:id", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
     const patch = patchNoteSchema.parse(request.body);
-    return { note: await notes.updateNote(request.ownerId!, id, patch) };
+    const note = await notes.updateNote(request.ownerId!, id, patch);
+    broadcastLibraryChange(request.ownerId!);
+    return { note };
   });
 
   app.post("/api/notes/:id/archive", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return { note: await notes.setNoteArchived(request.ownerId!, id, true) };
+    const note = await notes.setNoteArchived(request.ownerId!, id, true);
+    broadcastLibraryChange(request.ownerId!);
+    return { note };
   });
   app.post("/api/notes/:id/unarchive", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return { note: await notes.setNoteArchived(request.ownerId!, id, false) };
+    const note = await notes.setNoteArchived(request.ownerId!, id, false);
+    broadcastLibraryChange(request.ownerId!);
+    return { note };
   });
   app.post("/api/notes/:id/favorite", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return { note: await notes.setNoteFavorite(request.ownerId!, id, true) };
+    const note = await notes.setNoteFavorite(request.ownerId!, id, true);
+    broadcastLibraryChange(request.ownerId!);
+    return { note };
   });
   app.post("/api/notes/:id/unfavorite", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return { note: await notes.setNoteFavorite(request.ownerId!, id, false) };
+    const note = await notes.setNoteFavorite(request.ownerId!, id, false);
+    broadcastLibraryChange(request.ownerId!);
+    return { note };
   });
   app.post("/api/notes/:id/trash", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return { note: await notes.setNoteTrashed(request.ownerId!, id, true) };
+    const note = await notes.setNoteTrashed(request.ownerId!, id, true);
+    broadcastLibraryChange(request.ownerId!);
+    return { note };
   });
   app.post("/api/notes/:id/restore", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return { note: await notes.setNoteTrashed(request.ownerId!, id, false) };
+    const note = await notes.setNoteTrashed(request.ownerId!, id, false);
+    broadcastLibraryChange(request.ownerId!);
+    return { note };
   });
   app.delete("/api/notes/:id", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    return notes.deleteNote(request.ownerId!, id);
+    const result = await notes.deleteNote(request.ownerId!, id);
+    broadcastLibraryChange(request.ownerId!);
+    return result;
   });
 
   app.get("/api/notes/:id/links", { preHandler }, async (request) => {

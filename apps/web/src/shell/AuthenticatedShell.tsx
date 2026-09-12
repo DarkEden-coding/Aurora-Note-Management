@@ -1,6 +1,6 @@
 // This module composes Aurora's authenticated shell: sidebar, topbar with sync indicator, the main editor, and the settings/sync/conflict drawers. It holds composition only and owns no feature logic.
 import { useEffect, useState } from "react";
-import { Settings, Wifi, WifiOff } from "lucide-react";
+import { RefreshCw, Settings, Wifi, WifiOff } from "lucide-react";
 import { Sidebar } from "../features/library/LibrarySidebar.js";
 import { useLibrary } from "../features/library/LibraryContext.js";
 import { AccountSettings } from "../features/settings/AccountSettings.js";
@@ -279,6 +279,14 @@ export function AuthenticatedShell({
             aria-label="Open account settings"
           >
             <Settings size={16} />
+          </button>
+          <button
+            className="ghost icon-button"
+            onClick={() => window.location.reload()}
+            title="Refresh app"
+            aria-label="Refresh app"
+          >
+            <RefreshCw size={16} />
           </button>
         </div>
 

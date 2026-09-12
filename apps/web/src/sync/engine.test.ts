@@ -11,6 +11,10 @@ import {
 
 const mocks = vi.hoisted(() => ({
   flushOutbox: vi.fn(async () => ({ sent: 0, remaining: 0, changes: [] })),
+  socketHandlers: null as {
+    onState: (state: string) => void;
+    onMessage: (data: unknown) => void;
+  } | null,
 }));
 
 vi.mock("../lib/http.js", () => ({
@@ -22,8 +26,13 @@ vi.mock("../lib/websocket.js", () => ({
   ReconnectingWebSocket: class {
     constructor(
       _url: string,
-      private readonly handlers: { onState: (state: string) => void },
-    ) {}
+      private readonly handlers: {
+        onState: (state: string) => void;
+        onMessage: (data: unknown) => void;
+      },
+    ) {
+      mocks.socketHandlers = handlers;
+    }
 
     connect(): void {
       this.handlers.onState("connecting");
@@ -77,6 +86,22 @@ beforeEach(async () => {
 afterEach(() => {
   syncEngine.stop();
   vi.useRealTimers();
+});
+
+describe("library broadcasts", () => {
+  it("notifies library listeners when metadata changes", async () => {
+    const listener = vi.fn();
+    const unsubscribe = syncEngine.onLibraryChange(listener);
+
+    mocks.socketHandlers?.onMessage({
+      type: "library-changed",
+      serverTimestamp: new Date().toISOString(),
+    });
+    await Promise.resolve();
+
+    expect(listener).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
 });
 
 describe("requestFlush", () => {
