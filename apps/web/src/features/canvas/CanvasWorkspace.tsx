@@ -281,7 +281,9 @@ export function CanvasWorkspace({
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
   const changeTool = useCallback((nextTool: CanvasTool): void => {
     setTool(nextTool);
-    setPlacementPropertiesOpen(nextTool === "pen" || isVectorTool(nextTool));
+    setPlacementPropertiesOpen(
+      nextTool === "pen" || nextTool === "text" || isVectorTool(nextTool),
+    );
   }, []);
   const palette = drawingPalette ?? (["#000000"] as DrawingPalette);
   const [drawingStyle, setDrawingStyle] = useState<DrawingStyle>(() => ({
@@ -742,7 +744,10 @@ export function CanvasWorkspace({
           createTool === "sticky"
             ? { text: "", color: STICKY_COLOR }
             : createTool === "text"
-              ? { doc: { type: "doc", content: [{ type: "paragraph" }] } }
+              ? {
+                  doc: { type: "doc", content: [{ type: "paragraph" }] },
+                  color: drawingStyle.strokeColor,
+                }
               : shapePayload,
       });
       appendObject(object);
@@ -1670,7 +1675,8 @@ export function CanvasWorkspace({
   const zoomReset = (): void => {
     zoomAt({ x: containerSize.width / 2, y: containerSize.height / 2 }, 1);
   };
-  const placementTool = tool === "pen" || isVectorTool(tool) ? tool : null;
+  const placementTool =
+    tool === "pen" || tool === "text" || isVectorTool(tool) ? tool : null;
   const objectControlsPosition =
     tool === "select" && primaryObject !== null && !primaryObject.locked
       ? {

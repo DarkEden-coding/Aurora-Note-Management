@@ -264,6 +264,7 @@ function HtmlContent({
             <RichTextBlock
               content={doc}
               editable={editable}
+              color={getShapeColor(object)}
               autoFocus={editable}
               onChange={(json) => callbacks.onRichTextChange(object.id, json)}
             />

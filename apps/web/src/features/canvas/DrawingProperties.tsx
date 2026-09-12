@@ -17,7 +17,7 @@ export interface DrawingStyle {
 }
 
 interface DrawingStyleControlsProps {
-  kind: "pen" | VectorTool;
+  kind: "pen" | "text" | VectorTool;
   style: DrawingStyle;
   palette: DrawingPalette;
   onPaletteChange: (palette: DrawingPalette) => void | Promise<void>;
@@ -119,7 +119,7 @@ export function DrawingStyleControls({
         </label>
       ) : null}
 
-      {kind !== "pen" ? (
+      {kind !== "pen" && kind !== "text" ? (
         <>
           <label className="drawing-property-field">
             Line type
@@ -201,7 +201,7 @@ export function DrawingPlacementPanel({
   tool,
   ...props
 }: Omit<DrawingStyleControlsProps, "kind"> & {
-  tool: "pen" | VectorTool;
+  tool: "pen" | "text" | VectorTool;
 }): ReactNode {
   return (
     <aside
@@ -210,7 +210,7 @@ export function DrawingPlacementPanel({
       aria-label="Drawing properties"
     >
       <strong className="drawing-properties-title">
-        {tool === "pen" ? "Pen" : "Shape"} properties
+        {tool === "pen" ? "Pen" : tool === "text" ? "Text" : "Shape"} properties
       </strong>
       <DrawingStyleControls kind={tool} {...props} />
     </aside>

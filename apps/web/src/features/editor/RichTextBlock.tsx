@@ -18,6 +18,7 @@ export interface RichTextBlockProps {
   editable?: boolean;
   /** Focuses the editor when it becomes editable. */
   autoFocus?: boolean;
+  color?: string;
   /** Emits the serialized ProseMirror JSON after every content update. */
   onChange?: (json: Record<string, unknown>) => void;
   onFocusChange?: (focused: boolean) => void;
@@ -28,6 +29,7 @@ export function RichTextBlock({
   content,
   editable = true,
   autoFocus = false,
+  color,
   onChange,
   onFocusChange,
 }: RichTextBlockProps): ReactNode {
@@ -113,7 +115,12 @@ export function RichTextBlock({
   if (!editor) return null;
 
   return (
-    <div ref={blockRef} className="rich-text-block" data-rich-text-block="">
+    <div
+      ref={blockRef}
+      className="rich-text-block"
+      data-rich-text-block=""
+      {...(color ? { style: { color } } : {})}
+    >
       {editable ? (
         <div
           className="rich-text-toolbar"
