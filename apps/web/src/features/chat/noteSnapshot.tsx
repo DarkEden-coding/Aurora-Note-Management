@@ -1,18 +1,264 @@
-// Offscreen read-only note render for screenshot_note: SVG + HTML objects, tiled PNG capture.
+// Offscreen read-only note rendering for AI screenshots and browser PDF export.
 import { createRoot } from "react-dom/client";
-import { toPng } from "html-to-image";
-import type { CanvasObject, RegionalObjectQueryResponse } from "@aurora/shared";
+import type {
+  Background,
+  CanvasMode,
+  CanvasObject,
+  RegionalObjectQueryResponse,
+} from "@aurora/shared";
 import { apiPost } from "../../lib/http.js";
 import { HtmlObject, SceneObject } from "../canvas/ObjectRenderer.js";
+import {
+  PAGE_GAP,
+  PAGE_HEIGHT,
+  PAGE_WIDTH,
+  pagedPageIndexAtY,
+} from "../canvas/pageLayout.js";
+import { boundsIntersect } from "../canvas/viewport.js";
+import { fetchNote, type PageJson } from "../library/api.js";
 import "../canvas/canvasStyles.css";
 
 const MAX_WIDTH = 1600;
 const TILE_HEIGHT = 1600;
+const PDF_RENDER_TIMEOUT = 30_000;
 
 const NOOP = {
   onRichTextChange: () => undefined,
   onStickyTextChange: () => undefined,
 };
+
+export interface ExportPage {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  background: Background;
+}
+
+/** Returns fixed print regions for every supported canvas mode. */
+export function planPdfPages(
+  mode: CanvasMode,
+  background: Background,
+  objects: CanvasObject[],
+  pages: PageJson[],
+): ExportPage[] {
+  const importedPages = objects
+    .filter(
+      (object) =>
+        object.kind === "pdf-page-reference" &&
+        object.payload.importedDocument === true,
+    )
+    .sort((a, b) => a.bounds.y - b.bounds.y);
+  if (importedPages.length > 0) {
+    return importedPages.map((object) => ({ ...object.bounds, background }));
+  }
+
+  if (mode === "paged") {
+    const inferredCount = Math.max(
+      1,
+      ...objects.map(
+        (object) =>
+          pagedPageIndexAtY(object.bounds.y + object.bounds.height - 1) + 1,
+      ),
+    );
+    const count = Math.max(pages.length, inferredCount);
+    return Array.from({ length: count }, (_, index) => ({
+      x: 0,
+      y: index * (PAGE_HEIGHT + PAGE_GAP),
+      width: PAGE_WIDTH,
+      height: PAGE_HEIGHT,
+      background: pages[index]?.background ?? background,
+    }));
+  }
+
+  const minX = Math.min(0, ...objects.map((object) => object.bounds.x));
+  const minY = Math.min(0, ...objects.map((object) => object.bounds.y));
+  const maxX = Math.max(
+    PAGE_WIDTH,
+    ...objects.map((object) => object.bounds.x + object.bounds.width),
+  );
+  const maxY = Math.max(
+    PAGE_HEIGHT,
+    ...objects.map((object) => object.bounds.y + object.bounds.height),
+  );
+  if (mode === "fixed-width") {
+    const startY = Math.floor(minY / PAGE_HEIGHT) * PAGE_HEIGHT;
+    return Array.from(
+      { length: Math.ceil((maxY - startY) / PAGE_HEIGHT) },
+      (_, index) => ({
+        x: 0,
+        y: startY + index * PAGE_HEIGHT,
+        width: PAGE_WIDTH,
+        height: PAGE_HEIGHT,
+        background,
+      }),
+    );
+  }
+  if (mode === "fixed-height") {
+    const startX = Math.floor(minX / PAGE_WIDTH) * PAGE_WIDTH;
+    return Array.from(
+      { length: Math.ceil((maxX - startX) / PAGE_WIDTH) },
+      (_, index) => ({
+        x: startX + index * PAGE_WIDTH,
+        y: 0,
+        width: PAGE_WIDTH,
+        height: PAGE_HEIGHT,
+        background,
+      }),
+    );
+  }
+
+  const startX = Math.floor(minX / PAGE_WIDTH) * PAGE_WIDTH;
+  const startY = Math.floor(minY / PAGE_HEIGHT) * PAGE_HEIGHT;
+  const columns = Math.ceil((maxX - startX) / PAGE_WIDTH);
+  const rows = Math.ceil((maxY - startY) / PAGE_HEIGHT);
+  return Array.from({ length: columns * rows }, (_, index) => ({
+    x: startX + (index % columns) * PAGE_WIDTH,
+    y: startY + Math.floor(index / columns) * PAGE_HEIGHT,
+    width: PAGE_WIDTH,
+    height: PAGE_HEIGHT,
+    background,
+  }));
+}
+
+/** Rejects bounded export work instead of leaving the print window stuck. */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  message: string,
+): Promise<T> {
+  let timer = 0;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(
+          () => reject(new Error(message)),
+          PDF_RENDER_TIMEOUT,
+        );
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/** Loads all note objects in the server's bounded regional query. */
+async function loadNoteObjects(
+  noteId: string,
+  signal?: AbortSignal,
+): Promise<RegionalObjectQueryResponse> {
+  return apiPost(
+    `/api/notes/${noteId}/objects/query`,
+    {
+      viewport: {
+        x: -1_000_000,
+        y: -1_000_000,
+        width: 2_000_000,
+        height: 2_000_000,
+      },
+    },
+    signal ? { signal } : {},
+  );
+}
+
+/** Waits for imported PDF canvases inside an offscreen export scene. */
+async function waitForPdfCanvases(
+  host: HTMLElement,
+  expected: number,
+): Promise<void> {
+  if (expected === 0) return;
+  const started = performance.now();
+  await new Promise<void>((resolve, reject) => {
+    const check = (): void => {
+      if (
+        host.querySelectorAll('canvas[data-pdf-rendered="true"]').length >=
+        expected
+      ) {
+        resolve();
+        return;
+      }
+      if (performance.now() - started >= PDF_RENDER_TIMEOUT) {
+        reject(new Error("Rendering an imported PDF page timed out"));
+        return;
+      }
+      window.setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
+/** Renders one bounded canvas region to a PNG. */
+async function renderRegion(
+  objects: CanvasObject[],
+  region: ExportPage,
+): Promise<string> {
+  const host = document.createElement("div");
+  host.style.cssText =
+    "position:fixed;left:-10000px;top:0;pointer-events:none;z-index:-1;";
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const visibleObjects = objects.filter((object) =>
+    boundsIntersect(object.bounds, region),
+  );
+  try {
+    root.render(
+      <NoteSnapshotScene
+        objects={visibleObjects}
+        minX={region.x}
+        minY={region.y}
+        width={region.width}
+        height={region.height}
+        scale={Math.min(1, MAX_WIDTH / region.width)}
+        background={region.background}
+      />,
+    );
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    await document.fonts?.ready;
+    await waitForPdfCanvases(
+      host,
+      visibleObjects.filter(
+        (object) =>
+          object.kind === "pdf-page-reference" &&
+          object.payload.importedDocument === true,
+      ).length,
+    );
+    const scene = host.querySelector(
+      ".chat-note-snapshot",
+    ) as HTMLElement | null;
+    if (!scene) throw new Error("Note export failed to mount");
+    const { default: html2canvas } = await import("html2canvas");
+    const canvas = await withTimeout(
+      html2canvas(scene, {
+        backgroundColor: null,
+        logging: false,
+        scale: 1,
+        useCORS: true,
+      }),
+      "PDF page rendering timed out",
+    );
+    return canvas.toDataURL("image/png");
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+}
+
+/** Rasterizes planned note regions in print order. */
+export async function renderPdfPages(
+  objects: CanvasObject[],
+  regions: ExportPage[],
+): Promise<string[]> {
+  const sources: string[] = [];
+  for (const region of regions) {
+    sources.push(await renderRegion(objects, region));
+  }
+  return sources;
+}
 
 /** Opens a print-ready copy of a note so the browser can save it as PDF. */
 export async function exportNoteToPdf(
@@ -25,26 +271,38 @@ export async function exportNoteToPdf(
   printWindow.document.title = title;
   const style = printWindow.document.createElement("style");
   style.textContent =
-    "html,body{margin:0;background:#fff}img{display:block;width:100%;break-after:page}img:last-child{break-after:auto}@page{margin:0}";
+    "html,body{margin:0;background:#fff}img{display:block;width:100%;break-after:page}img:last-child{break-after:auto}@page{size:8.5in 11in;margin:0}";
   printWindow.document.head.appendChild(style);
   printWindow.document.body.textContent = "Preparing PDF…";
 
   try {
-    const first = await screenshotNote(noteId);
-    const images = [...first.images];
-    for (let tile = 1; tile < first.tileCount; tile += 1) {
-      images.push(...(await screenshotNote(noteId, tile)).images);
+    const [{ note, pages }, response] = await withTimeout(
+      Promise.all([fetchNote(noteId), loadNoteObjects(noteId)]),
+      "Loading the note for PDF export timed out",
+    );
+    if (response.truncated) {
+      throw new Error("This note is too large to export in one PDF");
     }
+    const regions = planPdfPages(
+      note.canvasMode,
+      note.background,
+      response.objects,
+      pages,
+    );
+    const sources = await renderPdfPages(response.objects, regions);
     printWindow.document.body.replaceChildren(
-      ...images.map((source) => {
+      ...sources.map((source) => {
         const image = printWindow.document.createElement("img");
         image.src = source;
         image.alt = "";
         return image;
       }),
     );
-    await Promise.all(
-      [...printWindow.document.images].map((image) => image.decode()),
+    await withTimeout(
+      Promise.all(
+        [...printWindow.document.images].map((image) => image.decode()),
+      ).then(() => undefined),
+      "Preparing the PDF images timed out",
     );
     printWindow.focus();
     printWindow.print();
@@ -54,94 +312,122 @@ export async function exportNoteToPdf(
   }
 }
 
+/** Renders one tile used by the AI screenshot tool. */
 export async function screenshotNote(
   noteId: string,
   tile = 0,
   signal?: AbortSignal,
 ): Promise<{ images: string[]; tileCount: number; truncated: boolean }> {
-  const response = await apiPost<RegionalObjectQueryResponse>(
-    `/api/notes/${noteId}/objects/query`,
-    {
-      viewport: {
-        x: -1_000_000,
-        y: -1_000_000,
-        width: 2_000_000,
-        height: 2_000_000,
-      },
-    },
-    signal ? { signal } : {},
-  );
+  const response = await loadNoteObjects(noteId, signal);
   const objects = response.objects;
-  let minX = 0;
-  let minY = 0;
-  let maxX = 800;
-  let maxY = 600;
-  if (objects.length > 0) {
-    minX = Math.min(...objects.map((object) => object.bounds.x));
-    minY = Math.min(...objects.map((object) => object.bounds.y));
-    maxX = Math.max(
-      ...objects.map((object) => object.bounds.x + object.bounds.width),
-    );
-    maxY = Math.max(
-      ...objects.map((object) => object.bounds.y + object.bounds.height),
-    );
-  }
+  const minX = Math.min(0, ...objects.map((object) => object.bounds.x));
+  const minY = Math.min(0, ...objects.map((object) => object.bounds.y));
+  const maxX = Math.max(
+    800,
+    ...objects.map((object) => object.bounds.x + object.bounds.width),
+  );
+  const maxY = Math.max(
+    600,
+    ...objects.map((object) => object.bounds.y + object.bounds.height),
+  );
   const width = Math.max(1, maxX - minX);
   const height = Math.max(1, maxY - minY);
   const scale = Math.min(1, MAX_WIDTH / width);
-  const renderWidth = Math.ceil(width * scale);
   const renderHeight = Math.ceil(height * scale);
   const tileCount = Math.max(1, Math.ceil(renderHeight / TILE_HEIGHT));
   if (!Number.isInteger(tile) || tile < 0 || tile >= tileCount) {
     throw new Error(`Screenshot tile ${tile} is outside 0-${tileCount - 1}`);
   }
-  const host = document.createElement("div");
-  host.style.cssText =
-    "position:fixed;left:-10000px;top:0;pointer-events:none;z-index:-1;";
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  try {
-    await new Promise<void>((resolve) => {
-      root.render(
-        <NoteSnapshotScene
-          objects={objects}
-          minX={minX}
-          minY={minY}
+  const y = (tile * TILE_HEIGHT) / scale;
+  const clipHeight = Math.min(TILE_HEIGHT / scale, height - y);
+  const background: Background = {
+    pattern: "solid",
+    color: "#1b1d21",
+    patternColor: "#1b1d21",
+    spacing: 24,
+  };
+  const png = await renderRegion(objects, {
+    x: minX,
+    y: minY + y,
+    width,
+    height: clipHeight,
+    background,
+  });
+  return {
+    images: [png],
+    tileCount,
+    truncated: response.truncated || tile + 1 < tileCount,
+  };
+}
+
+/** Paints the note background as SVG so browser rasterizers retain its pattern. */
+function SnapshotBackground({
+  background,
+  minX,
+  minY,
+  width,
+  height,
+}: {
+  background: Background;
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+}) {
+  const patternId = "snapshot-background-pattern";
+  const patterned =
+    background.pattern === "ruled" ||
+    background.pattern === "square-grid" ||
+    background.pattern === "dot-grid";
+  return (
+    <>
+      {patterned ? (
+        <defs>
+          <pattern
+            id={patternId}
+            width={background.spacing}
+            height={background.spacing}
+            patternUnits="userSpaceOnUse"
+          >
+            {background.pattern === "dot-grid" ? (
+              <circle cx="1" cy="1" r="1" fill={background.patternColor} />
+            ) : (
+              <>
+                <path
+                  d={`M 0 0 H ${background.spacing}`}
+                  stroke={background.patternColor}
+                  strokeWidth="1"
+                />
+                {background.pattern === "square-grid" ? (
+                  <path
+                    d={`M 0 0 V ${background.spacing}`}
+                    stroke={background.patternColor}
+                    strokeWidth="1"
+                  />
+                ) : null}
+              </>
+            )}
+          </pattern>
+        </defs>
+      ) : null}
+      <rect
+        x={minX}
+        y={minY}
+        width={width}
+        height={height}
+        fill={background.color}
+      />
+      {patterned ? (
+        <rect
+          x={minX}
+          y={minY}
           width={width}
           height={height}
-          scale={scale}
-          renderWidth={renderWidth}
-          renderHeight={renderHeight}
-        />,
-      );
-      window.setTimeout(resolve, 120);
-    });
-    const scene = host.querySelector(
-      ".chat-note-snapshot",
-    ) as HTMLElement | null;
-    if (!scene) throw new Error("Note snapshot failed to mount");
-    const images: string[] = [];
-    const y = tile * TILE_HEIGHT;
-    const clipHeight = Math.min(TILE_HEIGHT, renderHeight - y);
-    const png = await toPng(scene, {
-      width: renderWidth,
-      height: clipHeight,
-      style: {
-        transform: `translateY(${-y}px)`,
-        transformOrigin: "top left",
-      },
-      pixelRatio: 1,
-    });
-    images.push(png);
-    return {
-      images,
-      tileCount,
-      truncated: response.truncated || tile + 1 < tileCount,
-    };
-  } finally {
-    root.unmount();
-    host.remove();
-  }
+          fill={`url(#${patternId})`}
+        />
+      ) : null}
+    </>
+  );
 }
 
 function NoteSnapshotScene({
@@ -151,8 +437,7 @@ function NoteSnapshotScene({
   width,
   height,
   scale,
-  renderWidth,
-  renderHeight,
+  background,
 }: {
   objects: CanvasObject[];
   minX: number;
@@ -160,8 +445,7 @@ function NoteSnapshotScene({
   width: number;
   height: number;
   scale: number;
-  renderWidth: number;
-  renderHeight: number;
+  background: Background;
 }) {
   const html = objects.filter((object) =>
     [
@@ -177,10 +461,9 @@ function NoteSnapshotScene({
     <div
       className="chat-note-snapshot"
       style={{
-        width: renderWidth,
-        height: renderHeight,
+        width: Math.ceil(width * scale),
+        height: Math.ceil(height * scale),
         overflow: "hidden",
-        background: "#1b1d21",
       }}
     >
       <div
@@ -190,6 +473,7 @@ function NoteSnapshotScene({
           transform: `scale(${scale})`,
           transformOrigin: "top left",
           position: "relative",
+          backgroundColor: background.color,
         }}
       >
         <svg
@@ -198,6 +482,13 @@ function NoteSnapshotScene({
           viewBox={`${minX} ${minY} ${width} ${height}`}
           style={{ position: "absolute", inset: 0 }}
         >
+          <SnapshotBackground
+            background={background}
+            minX={minX}
+            minY={minY}
+            width={width}
+            height={height}
+          />
           {scene.map((object) => (
             <SceneObject key={object.id} object={object} />
           ))}

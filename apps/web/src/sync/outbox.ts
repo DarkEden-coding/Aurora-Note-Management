@@ -51,6 +51,15 @@ export function enqueueObjectMutation(params: {
 
 const enqueueChains = new Map<string, Promise<void>>();
 
+/** Waits until in-process object edits for one note have reached the durable outbox. */
+export async function waitForPendingEnqueues(noteId: string): Promise<void> {
+  await Promise.all(
+    [...enqueueChains.entries()]
+      .filter(([key]) => key.startsWith(`${noteId}:`))
+      .map(([, pending]) => pending),
+  );
+}
+
 async function enqueueObjectMutationNow(params: {
   op: SyncOperation;
   upsertedObject?: CanvasObject;

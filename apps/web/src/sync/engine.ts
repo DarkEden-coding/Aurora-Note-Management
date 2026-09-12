@@ -7,7 +7,7 @@ import { api } from "../lib/http.js";
 import { ReconnectingWebSocket, type SocketState } from "../lib/websocket.js";
 import { db } from "./db.js";
 import { hydrateRegion } from "./hydrate.js";
-import { flushOutbox } from "./outbox.js";
+import { flushOutbox, waitForPendingEnqueues } from "./outbox.js";
 import { filterChangesForPendingOperations } from "./outboxCore.js";
 
 export interface SyncStatus {
@@ -169,13 +169,15 @@ class SyncEngine {
         await db.objects.bulkPut(changes.objects);
         await db.objects.bulkDelete(changes.deletedObjectIds);
       });
-      const maxRevision = event.objects.reduce(
-        (max, object) => Math.max(max, object.revision),
-        0,
-      );
-      if (maxRevision > 0) {
+      const revision =
+        event.noteRevision ??
+        event.objects.reduce(
+          (max, object) => Math.max(max, object.revision),
+          0,
+        );
+      if (revision > 0) {
         await db.notes
-          .update(event.noteId, { revision: maxRevision })
+          .update(event.noteId, { revision })
           .catch(() => undefined);
       }
       if (changes.objects.length > 0 || changes.deletedObjectIds.length > 0) {
@@ -242,6 +244,25 @@ class SyncEngine {
       });
     }
     await this.refreshCounts();
+  }
+
+  /** Flushes current edits before a structural note mutation such as page insertion. */
+  async flushNow(noteId: string): Promise<void> {
+    if (!navigator.onLine)
+      throw new Error("Connect to the server to add a page");
+    await waitForPendingEnqueues(noteId);
+    if (this.scheduledFlush !== null) {
+      clearTimeout(this.scheduledFlush);
+      this.scheduledFlush = null;
+    }
+    while (this.flushing) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await this.flush();
+    const pending = (await db.outbox.toArray()).some(
+      (row) => row.op.noteId === noteId,
+    );
+    if (pending) throw new Error("Wait for this note to finish syncing first");
   }
 
   /** Flush soon after durable enqueue, coalescing bursts into one HTTP batch. */

@@ -56,6 +56,12 @@ export function panViewport(
   return { ...v, x: v.x - dxScreen / v.zoom, y: v.y - dyScreen / v.zoom };
 }
 
+/** Applies frame-rate-independent friction to a touch-pan velocity. */
+export function decayMomentum(velocity: Point, elapsedMs: number): Point {
+  const decay = 0.92 ** (elapsedMs / 16.67);
+  return { x: velocity.x * decay, y: velocity.y * decay };
+}
+
 /** Zooms while keeping the canvas point under the container-relative screen anchor visually fixed. */
 export function zoomViewportAround(
   v: Viewport,

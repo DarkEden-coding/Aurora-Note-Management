@@ -49,10 +49,11 @@ export function PdfPageView({
         const context = canvas.getContext("2d");
         if (!context) return;
         // pdfjs 6 takes the canvas element itself; the 2D context is implied.
+        delete canvas.dataset.pdfRendered;
         const task = page.render({ canvas, viewport });
-        void task.promise.catch(() => {
-          // Cancelled or failed renders surface as placeholder.
-        });
+        await task.promise;
+        if (cancelled) return;
+        canvas.dataset.pdfRendered = "true";
         onRenderedRef.current?.({
           pageNumber,
           width: viewport.width / dpr,

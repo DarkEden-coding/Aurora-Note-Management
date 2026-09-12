@@ -6,6 +6,7 @@ import {
   boundsIntersect,
   canvasToScreen,
   clampZoom,
+  decayMomentum,
   expandBounds,
   panViewport,
   screenToCanvas,
@@ -41,10 +42,14 @@ describe("screen<->canvas conversion", () => {
     expect(clampZoom(3)).toBe(3);
   });
 
-  it("pans by screen deltas", () => {
+  it("pans by screen deltas and decays touch momentum", () => {
     const next = panViewport(V, 100, 50);
     expect(next.x).toBeCloseTo(50, 6);
     expect(next.y).toBeCloseTo(25, 6);
+    expect(decayMomentum({ x: 1, y: -0.5 }, 16.67)).toEqual({
+      x: 0.92,
+      y: -0.46,
+    });
   });
 
   it("derives visible canvas bounds from container size", () => {

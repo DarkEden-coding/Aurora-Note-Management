@@ -58,18 +58,23 @@ describe("paged layout", () => {
     expect(pagedPageIndexAtY(-100)).toBe(0);
   });
 
-  it("always shows at least one page and grows with content", () => {
-    expect(pagedPageCount([])).toBe(1);
+  it("uses the persisted page count instead of growing from content", () => {
+    expect(pagedPageCount(0)).toBe(1);
+    expect(pagedPageCount(3)).toBe(3);
     expect(
-      pagedPageCount([
-        objectAt({
-          x: 0,
-          y: PAGE_HEIGHT + PAGE_GAP + 10,
-          width: 10,
-          height: 10,
-        }),
-      ]),
-    ).toBe(2);
+      pageFrames(
+        [
+          objectAt({
+            x: 0,
+            y: PAGE_HEIGHT + PAGE_GAP + 10,
+            width: 10,
+            height: 10,
+          }),
+        ],
+        "paged",
+      ),
+    ).toHaveLength(1);
+    expect(pageFrames([], "paged", PAGE_WIDTH, PAGE_HEIGHT, 3)).toHaveLength(3);
   });
 
   it("finds the frame containing a point", () => {
@@ -120,7 +125,7 @@ describe("mode clamping", () => {
 
   it("leaves writing room past content and grows with content", () => {
     const view = { width: 400, height: 600 };
-    const base = canvasScrollBounds([], "paged", view.width, view.height)!;
+    const base = canvasScrollBounds([], "paged", view.width, view.height, 1)!;
     expect(base.minX).toBe(-100);
     expect(base.maxX).toBe(PAGE_WIDTH - 300);
     expect(base.minY).toBe(-150);

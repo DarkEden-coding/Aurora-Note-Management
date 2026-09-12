@@ -29,7 +29,7 @@ interface FolderJson {
   name: string;
 }
 
-interface NoteJson {
+export interface NoteJson {
   id: string;
   projectId: string;
   folderId: string | null;
@@ -57,6 +57,15 @@ function toFolder(json: FolderJson): ClientFolder {
   };
 }
 
+export interface PageJson {
+  id: string;
+  noteId: string;
+  pageIndex: number;
+  width: number;
+  height: number;
+  background: Background;
+}
+
 function toNote(json: NoteJson): ClientNote {
   return {
     id: json.id,
@@ -76,6 +85,21 @@ function toNote(json: NoteJson): ClientNote {
 
 export function fetchLibrary(): Promise<LibraryTree> {
   return api<LibraryTree>("/api/library");
+}
+
+/** Loads note metadata and its persisted page list. */
+export function fetchNote(
+  noteId: string,
+): Promise<{ note: NoteJson; pages: PageJson[] }> {
+  return api(`/api/notes/${noteId}`);
+}
+
+/** Creates a page directly below the supplied zero-based page index. */
+export function createPageBelow(
+  noteId: string,
+  afterPageIndex: number,
+): Promise<{ page: PageJson; pageCount: number }> {
+  return apiPost(`/api/notes/${noteId}/pages`, { afterPageIndex });
 }
 
 export async function createProject(name: string): Promise<ClientProject> {

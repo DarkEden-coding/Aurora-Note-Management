@@ -34,6 +34,9 @@ const patchProjectSchema = z.object({
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
+const createPageSchema = z.object({
+  afterPageIndex: z.number().int().min(0),
+});
 
 const createFolderSchema = z.object({
   name: z.string().min(1).max(120),
@@ -178,6 +181,31 @@ export function registerLibraryRoutes(
     const note = await notes.updateNote(request.ownerId!, id, patch);
     broadcastLibraryChange(request.ownerId!);
     return { note };
+  });
+  app.post("/api/notes/:id/pages", { preHandler }, async (request, reply) => {
+    const { id } = idParamSchema.parse(request.params);
+    const { afterPageIndex } = createPageSchema.parse(request.body);
+    const result = await notes.createPageBelow(
+      request.ownerId!,
+      id,
+      afterPageIndex,
+    );
+    if (result.shiftedObjects.length > 0) {
+      broadcastToOwner(request.ownerId!, {
+        type: "objects-changed",
+        noteId: id,
+        objects: result.shiftedObjects,
+        deletedObjectIds: [],
+        noteRevision: result.noteRevision,
+        originOperationId: `page-insert:${result.page.id}`,
+        serverTimestamp: new Date().toISOString(),
+      });
+    }
+    broadcastLibraryChange(request.ownerId!);
+    return reply.status(201).send({
+      page: result.page,
+      pageCount: result.pageCount,
+    });
   });
 
   app.post("/api/notes/:id/archive", { preHandler }, async (request) => {

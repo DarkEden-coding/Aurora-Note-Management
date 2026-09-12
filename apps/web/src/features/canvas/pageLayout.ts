@@ -37,13 +37,9 @@ export function pagedPageIndexAtY(
   return y >= 0 ? Math.floor((y + gap) / stride) : 0;
 }
 
-/** Minimum page count so paged mode always shows at least one full frame. */
-export function pagedPageCount(objects: CanvasObject[]): number {
-  let maxBottom = 0;
-  for (const o of objects) {
-    maxBottom = Math.max(maxBottom, o.bounds.y + o.bounds.height);
-  }
-  return Math.max(1, pagedPageIndexAtY(maxBottom - 1) + 1);
+/** Normalizes the persisted page count so paged mode always has one frame. */
+export function pagedPageCount(count: number): number {
+  return Number.isInteger(count) && count > 0 ? count : 1;
 }
 
 /** Vertical axis fixed (fixed-width mode) or horizontal axis fixed (fixed-height mode); "none" for the other modes. */
@@ -108,14 +104,15 @@ export function clampBoundsToRegion(b: Bounds, region: Bounds): Bounds {
 
 /** Page frame(s) for the current mode; `null` frames (infinite) yield an empty list. */
 export function pageFrames(
-  objects: CanvasObject[],
+  _objects: CanvasObject[],
   mode: CanvasMode,
   pageWidth: number = PAGE_WIDTH,
   pageHeight: number = PAGE_HEIGHT,
+  pageCount: number = 1,
 ): Bounds[] {
   switch (mode) {
     case "paged": {
-      const count = pagedPageCount(objects);
+      const count = pagedPageCount(pageCount);
       return Array.from({ length: count }, (_, i) =>
         pagedPageFrame(i, pageWidth, pageHeight),
       );
@@ -140,6 +137,7 @@ export function canvasSurfaceFrames(
   mode: CanvasMode,
   pageWidth: number = PAGE_WIDTH,
   pageHeight: number = PAGE_HEIGHT,
+  pageCount: number = 1,
 ): Bounds[] {
   if (
     objects.some(
@@ -170,7 +168,7 @@ export function canvasSurfaceFrames(
         },
       ];
     case "paged":
-      return pageFrames(objects, mode, pageWidth, pageHeight);
+      return pageFrames(objects, mode, pageWidth, pageHeight, pageCount);
     case "infinite":
     default:
       return [];
@@ -204,6 +202,7 @@ export function canvasScrollBounds(
   mode: CanvasMode,
   visibleWidth: number,
   visibleHeight: number,
+  pageCount: number = 1,
 ): CanvasScrollBounds | null {
   if (mode === "infinite" || visibleWidth <= 0 || visibleHeight <= 0) {
     return null;
@@ -221,7 +220,8 @@ export function canvasScrollBounds(
     mode === "fixed-height" ? Math.max(PAGE_WIDTH, objectRight) : PAGE_WIDTH;
   const contentHeight =
     mode === "paged"
-      ? pageFrames(objects, mode).at(-1)!.y + PAGE_HEIGHT
+      ? pageFrames(objects, mode, PAGE_WIDTH, PAGE_HEIGHT, pageCount).at(-1)!
+          .y + PAGE_HEIGHT
       : mode === "fixed-width"
         ? Math.max(PAGE_HEIGHT, objectBottom)
         : PAGE_HEIGHT;
@@ -252,8 +252,9 @@ export function pageFrameAtPoint(
   objects: CanvasObject[],
   mode: CanvasMode,
   p: { x: number; y: number },
+  pageCount: number = 1,
 ): Bounds | null {
-  const frames = pageFrames(objects, mode);
+  const frames = pageFrames(objects, mode, PAGE_WIDTH, PAGE_HEIGHT, pageCount);
   for (const frame of frames) {
     if (boundsContainPoint(frame, p)) return frame;
   }

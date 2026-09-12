@@ -12,6 +12,7 @@ import type { Viewport } from "@aurora/shared";
 import type { Point } from "./viewport";
 import {
   clampZoom,
+  decayMomentum,
   panViewport,
   visibleCanvasBounds,
   zoomViewportAround,
@@ -29,6 +30,10 @@ export interface UseViewportResult {
   containerSize: ContainerSize;
   containerSizeRef: RefObject<ContainerSize | null>;
   panBy: (dxScreen: number, dyScreen: number) => void;
+  /** Continues a released one-finger pan with frame-rate-independent decay. */
+  startMomentum: (velocityScreen: Point) => void;
+  /** Cancels active touch momentum before a new gesture. */
+  stopMomentum: () => void;
   zoomAt: (anchorScreen: Point, nextZoom: number) => void;
   /** Converts a container-relative screen point into canvas coordinates. */
   toCanvas: (p: Point) => Point;
@@ -44,6 +49,7 @@ export function useViewport(
   const [containerSize, setContainerSize] = useState<ContainerSize>(EMPTY_SIZE);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const containerSizeRef = useRef<ContainerSize | null>(EMPTY_SIZE);
+  const momentumFrameRef = useRef<number | null>(null);
 
   containerSizeRef.current = containerSize;
 
@@ -74,6 +80,38 @@ export function useViewport(
     },
     [panLocks.x, panLocks.y],
   );
+
+  const stopMomentum = useCallback((): void => {
+    if (momentumFrameRef.current !== null) {
+      cancelAnimationFrame(momentumFrameRef.current);
+      momentumFrameRef.current = null;
+    }
+  }, []);
+
+  const startMomentum = useCallback(
+    (velocityScreen: Point): void => {
+      stopMomentum();
+      let velocity = velocityScreen;
+      let previous = performance.now();
+      const step = (now: number): void => {
+        const elapsed = Math.min(32, now - previous);
+        previous = now;
+        panBy(velocity.x * elapsed, velocity.y * elapsed);
+        velocity = decayMomentum(velocity, elapsed);
+        if (Math.hypot(velocity.x, velocity.y) < 0.02) {
+          momentumFrameRef.current = null;
+          return;
+        }
+        momentumFrameRef.current = requestAnimationFrame(step);
+      };
+      if (Math.hypot(velocity.x, velocity.y) >= 0.02) {
+        momentumFrameRef.current = requestAnimationFrame(step);
+      }
+    },
+    [panBy, stopMomentum],
+  );
+
+  useEffect(() => stopMomentum, [stopMomentum]);
 
   const toCanvas = useCallback(
     (p: Point): Point => {
@@ -151,6 +189,8 @@ export function useViewport(
     containerSize,
     containerSizeRef,
     panBy,
+    startMomentum,
+    stopMomentum,
     zoomAt,
     toCanvas,
   };

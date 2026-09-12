@@ -20,8 +20,12 @@ import {
 } from "@aurora/shared";
 import { reconcileObject } from "./reconcileObject";
 import { db } from "../../sync/db";
+import {
+  createPageBelow as createPersistedPageBelow,
+  fetchNote,
+} from "../library/api";
 import { syncEngine } from "../../sync/engine";
-import { Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { CanvasScrollbars } from "./CanvasScrollbars";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
@@ -74,6 +78,8 @@ import {
 import {
   DEMO_OWNER_ID,
   MAX_OBJECTS_PER_NOTE,
+  PAGE_GAP,
+  PAGE_HEIGHT,
   canvasScrollBounds,
   canvasSurfaceFrames,
   clampBoundsToMode,
@@ -258,6 +264,8 @@ export function CanvasWorkspace({
     containerRef,
     containerSize,
     panBy,
+    startMomentum,
+    stopMomentum,
     zoomAt,
     toCanvas,
   } = useViewport(
@@ -275,6 +283,7 @@ export function CanvasWorkspace({
   );
 
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
+  const [pageCount, setPageCount] = useState(1);
   const [importError, setImportError] = useState<string | null>(null);
   const importedPdfRef = useRef<File | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
@@ -308,6 +317,11 @@ export function CanvasWorkspace({
     mid: Point;
     zoom: number;
   } | null>(null);
+  const touchPanRef = useRef<{
+    point: Point;
+    time: number;
+    velocity: Point;
+  } | null>(null);
   const lastStylusTimeRef = useRef(Number.NEGATIVE_INFINITY);
 
   // Controlled mode: the parent's array is the source of truth.
@@ -317,6 +331,32 @@ export function CanvasWorkspace({
 
   useEffect(() => {
     setAxisLocks({ x: false, y: false });
+  }, [activeMode, noteId]);
+
+  useEffect(() => {
+    if (activeMode !== "paged" || !idSchema.safeParse(noteId).success) {
+      setPageCount(1);
+      return;
+    }
+    let cancelled = false;
+    const loadPages = (): void => {
+      void fetchNote(noteId)
+        .then(({ pages }) => {
+          if (!cancelled) setPageCount(Math.max(1, pages.length));
+        })
+        .catch((error: unknown) => {
+          if (!cancelled)
+            setImportError(
+              error instanceof Error ? error.message : "Could not load pages",
+            );
+        });
+    };
+    loadPages();
+    const unsubscribe = syncEngine.onLibraryChange(loadPages);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [activeMode, noteId]);
 
   const demoObjects = useMemo(
@@ -957,6 +997,7 @@ export function CanvasWorkspace({
         return;
       if (e.pointerType === "touch" && !touchChrome) {
         if (pen.isDrawing()) return;
+        stopMomentum();
         pinchRef.current.set(e.pointerId, screen);
         if (pinchRef.current.size === 2) {
           const [a, b] = [...pinchRef.current.values()];
@@ -966,8 +1007,14 @@ export function CanvasWorkspace({
             mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
             zoom: viewportRef.current.zoom,
           };
+          touchPanRef.current = null;
           setActiveGesture(null);
         } else if (pinchRef.current.size === 1) {
+          touchPanRef.current = {
+            point: screen,
+            time: e.timeStamp,
+            velocity: { x: 0, y: 0 },
+          };
           setActiveGesture({ kind: "pan", lastScreen: screen });
         }
         try {
@@ -1144,6 +1191,7 @@ export function CanvasWorkspace({
       pen,
       setActiveGesture,
       selection,
+      stopMomentum,
     ],
   );
 
@@ -1191,6 +1239,25 @@ export function CanvasWorkspace({
                 screen.x - current.lastScreen.x,
                 screen.y - current.lastScreen.y,
               );
+              const sample = touchPanRef.current;
+              if (sample !== null) {
+                const elapsed = e.timeStamp - sample.time;
+                if (elapsed > 0) {
+                  const weight = Math.min(1, elapsed / 32);
+                  touchPanRef.current = {
+                    point: screen,
+                    time: e.timeStamp,
+                    velocity: {
+                      x:
+                        sample.velocity.x * (1 - weight) +
+                        ((screen.x - sample.point.x) / elapsed) * weight,
+                      y:
+                        sample.velocity.y * (1 - weight) +
+                        ((screen.y - sample.point.y) / elapsed) * weight,
+                    },
+                  };
+                }
+              }
             }
             setActiveGesture({ kind: "pan", lastScreen: screen });
           }
@@ -1278,6 +1345,7 @@ export function CanvasWorkspace({
         return;
       }
       if (e.pointerType === "touch" && pinchRef.current.has(e.pointerId)) {
+        const wasPinching = pinchSpanRef.current !== null;
         pinchRef.current.delete(e.pointerId);
         pinchSpanRef.current = null;
         const remaining = [...pinchRef.current.values()][0];
@@ -1286,6 +1354,22 @@ export function CanvasWorkspace({
             ? { kind: "pan", lastScreen: remaining }
             : null,
         );
+        if (remaining !== undefined) {
+          touchPanRef.current = {
+            point: remaining,
+            time: e.timeStamp,
+            velocity: { x: 0, y: 0 },
+          };
+        } else {
+          if (
+            !wasPinching &&
+            touchPanRef.current !== null &&
+            e.timeStamp - touchPanRef.current.time < 80
+          ) {
+            startMomentum(touchPanRef.current.velocity);
+          }
+          touchPanRef.current = null;
+        }
         return;
       }
       const current = gestureRef.current;
@@ -1387,6 +1471,7 @@ export function CanvasWorkspace({
       recordHistory,
       selection,
       setActiveGesture,
+      startMomentum,
     ],
   );
 
@@ -1403,6 +1488,7 @@ export function CanvasWorkspace({
       if (e.pointerType === "touch" && pinchRef.current.has(e.pointerId)) {
         pinchRef.current.delete(e.pointerId);
         if (pinchRef.current.size < 2) pinchSpanRef.current = null;
+        touchPanRef.current = null;
         setActiveGesture(null);
         return;
       }
@@ -1545,8 +1631,14 @@ export function CanvasWorkspace({
   };
   const scrollBounds = useMemo(
     () =>
-      canvasScrollBounds(displayObjects, activeMode, view.width, view.height),
-    [displayObjects, activeMode, view.width, view.height],
+      canvasScrollBounds(
+        displayObjects,
+        activeMode,
+        view.width,
+        view.height,
+        pageCount,
+      ),
+    [displayObjects, activeMode, view.width, view.height, pageCount],
   );
   const centeredModeRef = useRef("");
 
@@ -1588,7 +1680,13 @@ export function CanvasWorkspace({
         !visibleIds.has(object.id),
     ),
   ]);
-  const surfaceFrames = canvasSurfaceFrames(displayObjects, activeMode);
+  const surfaceFrames = canvasSurfaceFrames(
+    displayObjects,
+    activeMode,
+    undefined,
+    undefined,
+    pageCount,
+  );
   const pageBackgroundStyle = getBackgroundStyle(
     background ?? DEFAULT_BACKGROUND,
     { x: 0, y: 0, width: 0, height: 0, zoom: 1 },
@@ -1677,6 +1775,31 @@ export function CanvasWorkspace({
   };
   const placementTool =
     tool === "pen" || tool === "text" || isVectorTool(tool) ? tool : null;
+  const currentPageIndex = Math.max(
+    0,
+    Math.min(
+      pageCount - 1,
+      Math.floor(
+        (viewport.y + view.height / 2 + PAGE_GAP) / (PAGE_HEIGHT + PAGE_GAP),
+      ),
+    ),
+  );
+  const addPageBelow = async (): Promise<void> => {
+    setImportError(null);
+    try {
+      await syncEngine.flushNow(noteId);
+      const result = await createPersistedPageBelow(noteId, currentPageIndex);
+      setPageCount(result.pageCount);
+      setViewport((current) => ({
+        ...current,
+        y: result.page.pageIndex * (PAGE_HEIGHT + PAGE_GAP) - 40 / current.zoom,
+      }));
+    } catch (error) {
+      setImportError(
+        error instanceof Error ? error.message : "Could not create page",
+      );
+    }
+  };
   const objectControlsPosition =
     tool === "select" && primaryObject !== null && !primaryObject.locked
       ? {
@@ -1934,6 +2057,21 @@ export function CanvasWorkspace({
             className="canvas-eraser-preview"
             style={{ left: eraserPointer.x, top: eraserPointer.y }}
           />
+        ) : null}
+        {activeMode === "paged" &&
+        !displayObjects.some(
+          (object) =>
+            object.kind === "pdf-page-reference" &&
+            object.payload.importedDocument === true,
+        ) ? (
+          <button
+            type="button"
+            className="canvas-add-page"
+            data-canvas-controls="true"
+            onClick={() => void addPageBelow()}
+          >
+            <Plus size={16} /> Add page below page {currentPageIndex + 1}
+          </button>
         ) : null}
         {objectControlsPosition !== null ? (
           <div

@@ -1,6 +1,7 @@
 // Provides owner-scoped note CRUD, archive/favorite/trash state, and live note link resolution.
 import { conflict, forbidden, notFound } from "../errors.js";
-import { query } from "../db/pool.js";
+import { query, withTransaction } from "../db/pool.js";
+import { mapCanvasObject, type CanvasObjectRow } from "../canvas/objects.js";
 import {
   DEFAULT_BACKGROUND,
   mapNote,
@@ -113,22 +114,32 @@ export async function createNote(
   const background: Background = input.background
     ? backgroundSchema.parse(input.background)
     : DEFAULT_BACKGROUND;
-  const result = await query<NoteRow>(
-    `INSERT INTO notes (owner_id, project_id, folder_id, title, kind, canvas_mode, background)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
-               favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at`,
-    [
-      ownerId,
-      input.projectId,
-      input.folderId ?? null,
-      input.title ?? "Untitled note",
-      "canvas",
-      input.canvasMode ?? "infinite",
-      JSON.stringify(background),
-    ],
-  );
-  return mapNote(result.rows[0]!);
+  return withTransaction(async (client) => {
+    const result = await client.query<NoteRow>(
+      `INSERT INTO notes (owner_id, project_id, folder_id, title, kind, canvas_mode, background)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
+                 favorite, archived_at, trashed_at, revision, pdf_file_id, created_at, updated_at`,
+      [
+        ownerId,
+        input.projectId,
+        input.folderId ?? null,
+        input.title ?? "Untitled note",
+        "canvas",
+        input.canvasMode ?? "infinite",
+        JSON.stringify(background),
+      ],
+    );
+    const note = result.rows[0]!;
+    if (note.canvas_mode === "paged") {
+      await client.query(
+        `INSERT INTO pages (owner_id, note_id, page_index, width, height, background)
+         VALUES ($1, $2, 0, 816, 1056, $3)`,
+        [ownerId, note.id, JSON.stringify(background)],
+      );
+    }
+    return mapNote(note);
+  });
 }
 
 export async function getNoteWithPages(
@@ -142,6 +153,78 @@ export async function getNoteWithPages(
     [ownerId, noteId],
   );
   return { note: mapNote(note), pages: pages.rows.map(mapPage) };
+}
+
+/** Inserts a persisted page below the requested page and moves later content down. */
+export async function createPageBelow(
+  ownerId: string,
+  noteId: string,
+  afterPageIndex: number,
+): Promise<{
+  page: PageJson;
+  pageCount: number;
+  noteRevision: number;
+  shiftedObjects: ReturnType<typeof mapCanvasObject>[];
+}> {
+  return withTransaction(async (client) => {
+    const noteResult = await client.query<NoteRow>(
+      `${NOTE_SELECT} WHERE owner_id = $1 AND id = $2 FOR UPDATE`,
+      [ownerId, noteId],
+    );
+    const note = noteResult.rows[0];
+    if (!note) throw notFound("Note");
+    if (note.canvas_mode !== "paged")
+      throw conflict("Note is not in page mode");
+
+    const countResult = await client.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM pages WHERE owner_id = $1 AND note_id = $2",
+      [ownerId, noteId],
+    );
+    const pageCount = Number(countResult.rows[0]?.count ?? 0);
+    if (afterPageIndex < 0 || afterPageIndex >= pageCount) {
+      throw conflict("Current page no longer exists");
+    }
+
+    await client.query(
+      `UPDATE pages SET page_index = -page_index - 1
+       WHERE owner_id = $1 AND note_id = $2 AND page_index > $3`,
+      [ownerId, noteId, afterPageIndex],
+    );
+    await client.query(
+      `UPDATE pages SET page_index = -page_index, updated_at = now()
+       WHERE owner_id = $1 AND note_id = $2 AND page_index < 0`,
+      [ownerId, noteId],
+    );
+    const pageResult = await client.query<PageRow>(
+      `INSERT INTO pages (owner_id, note_id, page_index, width, height, background)
+       VALUES ($1, $2, $3, 816, 1056, $4)
+       RETURNING id, owner_id, note_id, page_index, width, height, background, created_at, updated_at`,
+      [
+        ownerId,
+        noteId,
+        afterPageIndex + 1,
+        JSON.stringify(mergeBackground(note.background)),
+      ],
+    );
+    const shifted = await client.query<CanvasObjectRow>(
+      `UPDATE canvas_objects SET y = y + 1080, revision = revision + 1, updated_at = now()
+       WHERE owner_id = $1 AND note_id = $2 AND y >= $3
+       RETURNING id, owner_id, note_id, page_id, kind, x, y, width, height, rotation,
+                 z_index, locked, group_id, payload, revision, created_at, updated_at`,
+      [ownerId, noteId, (afterPageIndex + 1) * 1080],
+    );
+    const updatedNote = await client.query<{ revision: number }>(
+      `UPDATE notes SET revision = revision + 1, updated_at = now()
+       WHERE owner_id = $1 AND id = $2 RETURNING revision`,
+      [ownerId, noteId],
+    );
+    return {
+      page: mapPage(pageResult.rows[0]!),
+      pageCount: pageCount + 1,
+      noteRevision: updatedNote.rows[0]!.revision,
+      shiftedObjects: shifted.rows.map(mapCanvasObject),
+    };
+  });
 }
 
 export async function updateNote(

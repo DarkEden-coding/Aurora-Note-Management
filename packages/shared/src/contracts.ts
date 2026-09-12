@@ -180,6 +180,7 @@ export const serverEventSchema = z.discriminatedUnion("type", [
     noteId: idSchema,
     objects: z.array(canvasObjectSchema),
     deletedObjectIds: z.array(idSchema),
+    noteRevision: z.number().int().nonnegative().optional(),
     originOperationId: z.string(),
     serverTimestamp: isoDateSchema,
   }),
