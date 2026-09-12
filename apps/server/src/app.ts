@@ -19,6 +19,7 @@ import { registerFileRoutes } from "./files/routes.js";
 import { registerSearchRoutes } from "./search/search.js";
 import { registerSnapshotRoutes } from "./history/snapshots.js";
 import { registerExportRoutes } from "./backup/export.js";
+import { registerAiRoutes } from "./ai/routes.js";
 import "./http/request-context.js";
 
 export type BuildServerOptions = {
@@ -43,7 +44,7 @@ export async function buildServer(
   const app = Fastify({
     logger: options.logger ?? false,
     trustProxy: true,
-    bodyLimit: 1_048_576,
+    bodyLimit: 8_388_608,
   });
   app.auroraEnv = env;
 
@@ -93,6 +94,7 @@ export async function buildServer(
   registerSearchRoutes(app, env);
   registerSnapshotRoutes(app, env);
   registerExportRoutes(app, env);
+  registerAiRoutes(app, env);
 
   return app;
 }

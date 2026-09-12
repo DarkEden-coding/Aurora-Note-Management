@@ -191,6 +191,111 @@ export const serverEventSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+// ---- Agentic chat (GET/POST /api/ai/*) -----------------------------------
+
+export const chatConversationSchema = z.object({
+  id: idSchema,
+  projectId: idSchema,
+  title: z.string(),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema,
+});
+
+export const htmlActSchema = z.union([
+  z.object({ click: z.string().min(1).max(500) }),
+  z.object({
+    type: z.object({
+      selector: z.string().min(1).max(500),
+      text: z.string().max(8000),
+    }),
+  }),
+  z.object({ eval: z.string().min(1).max(8000) }),
+]);
+
+export const aiToolCallSchema = z.discriminatedUnion("name", [
+  z.object({ name: z.literal("list_notes"), arguments: z.object({}) }),
+  z.object({
+    name: z.literal("read_note"),
+    arguments: z.object({ noteId: idSchema }),
+  }),
+  z.object({
+    name: z.literal("grep_notes"),
+    arguments: z.object({ pattern: z.string().min(1).max(200) }),
+  }),
+  z.object({
+    name: z.literal("screenshot_note"),
+    arguments: z.object({
+      noteId: idSchema,
+      tile: z.number().int().min(0).optional(),
+    }),
+  }),
+  z.object({
+    name: z.literal("html_render"),
+    arguments: z.object({ html: z.string().min(1).max(400_000) }),
+  }),
+  z.object({
+    name: z.literal("html_act"),
+    arguments: z.object({
+      actions: z.array(htmlActSchema).min(1).max(20),
+      waitMs: z.number().int().min(0).max(10_000).optional(),
+    }),
+  }),
+  z.object({
+    name: z.literal("html_submit"),
+    arguments: z.object({
+      title: z.string().min(1).max(120),
+      html: z.string().min(1).max(400_000),
+    }),
+  }),
+]);
+
+export const chatPartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("html"),
+    title: z.string(),
+    html: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool-call"),
+    callId: z.string().min(1),
+    name: z.string().min(1),
+    arguments: z.record(z.string(), z.unknown()),
+  }),
+  z.object({
+    type: z.literal("tool-result"),
+    callId: z.string().min(1),
+    output: z.string(),
+    images: z.array(z.string()).optional(),
+  }),
+]);
+
+export const chatMessageSchema = z.object({
+  id: idSchema,
+  conversationId: idSchema,
+  role: z.enum(["user", "assistant", "tool"]),
+  parts: z.array(chatPartSchema).min(1),
+  createdAt: isoDateSchema,
+});
+
+export const chatTurnEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text-delta"), delta: z.string() }),
+  z.object({
+    type: z.literal("tool-call"),
+    callId: z.string(),
+    name: z.string(),
+    arguments: z.record(z.string(), z.unknown()),
+  }),
+  z.object({ type: z.literal("done"), message: chatMessageSchema }),
+  z.object({ type: z.literal("error"), message: z.string() }),
+]);
+
+export const aiAuthStatusSchema = z.object({
+  connected: z.boolean(),
+  email: z.string().optional(),
+  mode: z.enum(["chatgpt", "api-key", "none"]),
+});
+
 export type Theme = z.infer<typeof themeSchema>;
 export type DrawingPalette = z.infer<typeof drawingPaletteSchema>;
 export type CanvasMode = z.infer<typeof canvasModeSchema>;
@@ -212,3 +317,10 @@ export type LibraryFolder = z.infer<typeof libraryFolderSchema>;
 export type LibraryNote = z.infer<typeof libraryNoteSchema>;
 export type LibraryTree = z.infer<typeof libraryTreeSchema>;
 export type ServerEvent = z.infer<typeof serverEventSchema>;
+export type ChatConversation = z.infer<typeof chatConversationSchema>;
+export type HtmlAct = z.infer<typeof htmlActSchema>;
+export type AiToolCall = z.infer<typeof aiToolCallSchema>;
+export type ChatPart = z.infer<typeof chatPartSchema>;
+export type ChatMessage = z.infer<typeof chatMessageSchema>;
+export type ChatTurnEvent = z.infer<typeof chatTurnEventSchema>;
+export type AiAuthStatus = z.infer<typeof aiAuthStatusSchema>;

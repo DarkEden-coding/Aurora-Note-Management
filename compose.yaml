@@ -37,6 +37,11 @@ services:
       # Optional: pre-provision the one-time enrollment token instead of the
       # generated one printed to the container log on first start.
       AURORA_SETUP_TOKEN: ${AURORA_SETUP_TOKEN:-}
+      # Optional platform-key fallback; ChatGPT device login stores tokens in Postgres.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AURORA_AI_MODEL: ${AURORA_AI_MODEL:-gpt-5.5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AURORA_AI_MODEL: ${AURORA_AI_MODEL:-gpt-5.5}
     ports:
       - "${AURORA_PORT:-8080}:8787"
     volumes:

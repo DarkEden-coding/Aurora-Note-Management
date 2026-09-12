@@ -20,10 +20,16 @@ import type { Background, CanvasMode } from "@aurora/shared";
 import type { CachedNote } from "../../sync/db.js";
 import type { LibraryFolder, LibraryProject } from "./types.js";
 import { useLibrary } from "./LibraryContext.js";
+import type { ChatConversation } from "@aurora/shared";
+import { ChatSidebar } from "../chat/ChatSidebar.js";
 
 interface SidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  view: "notes" | "chat";
+  onViewChange: (view: "notes" | "chat") => void;
+  selectedConversationId: string | null;
+  onSelectConversation: (conversation: ChatConversation | null) => void;
 }
 type DialogState =
   | { kind: "project" }
@@ -62,7 +68,14 @@ const MODES: { value: CanvasMode; label: string }[] = [
   { value: "paged", label: "Pages" },
 ];
 
-export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
+export function Sidebar({
+  collapsed,
+  onToggleCollapsed,
+  view,
+  onViewChange,
+  selectedConversationId,
+  onSelectConversation,
+}: SidebarProps) {
   const library = useLibrary();
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     new Set(),
@@ -334,6 +347,24 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             )}
           </button>
         </div>
+        {collapsed ? null : (
+          <div className="sidebar-tabs">
+            <button
+              type="button"
+              data-selected={view === "notes" ? "true" : "false"}
+              onClick={() => onViewChange("notes")}
+            >
+              Notes
+            </button>
+            <button
+              type="button"
+              data-selected={view === "chat" ? "true" : "false"}
+              onClick={() => onViewChange("chat")}
+            >
+              Chat
+            </button>
+          </div>
+        )}
         {library.mutationError ? (
           <div className="error-text" role="alert">
             {library.mutationError}{" "}
@@ -347,7 +378,12 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             </button>
           </div>
         ) : null}
-        {collapsed ? null : (
+        {collapsed ? null : view === "chat" ? (
+          <ChatSidebar
+            selectedId={selectedConversationId}
+            onSelect={onSelectConversation}
+          />
+        ) : (
           <>
             <div className="field library-search">
               <label htmlFor="library-search">Search</label>

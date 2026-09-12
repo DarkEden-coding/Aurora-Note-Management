@@ -1,0 +1,174 @@
+/* Chat tab layout, transcript bubbles, HTML cards, and composer. Tokens only. */
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  gap: var(--gap);
+}
+
+.chat-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 4px 16px;
+}
+
+.chat-bubble {
+  max-width: 72%;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  border: var(--panel-border);
+  box-shadow: var(--shadow-outset);
+}
+
+.chat-bubble.user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+
+.chat-bubble.assistant {
+  align-self: flex-start;
+}
+
+.chat-text {
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.chat-tool {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.chat-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px;
+}
+
+.chat-composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 40px;
+  max-height: 160px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+}
+
+.chat-html-card {
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.chat-html-card.expanded {
+  width: min(1100px, 96vw);
+  height: min(80vh, 900px);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-html-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.chat-html-toolbar .label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chat-html-frame,
+.chat-workbench {
+  width: 100%;
+  height: 280px;
+  border: 0;
+  background: var(--bg);
+}
+
+/* Keep layout so screenshots are not blank; display:none (hidden) captures empty. */
+.chat-workbench.parked {
+  position: fixed;
+  left: -12000px;
+  top: 0;
+  width: 960px;
+  height: 540px;
+  pointer-events: none;
+}
+
+.chat-html-card.expanded .chat-html-frame {
+  flex: 1;
+  height: auto;
+}
+
+.chat-html-source {
+  margin: 0;
+  padding: 10px;
+  max-height: 280px;
+  overflow: auto;
+  font-size: 12px;
+  background: var(--surface-sunken);
+}
+
+.chat-html-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  padding: 24px;
+}
+
+.chat-banner {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.spin {
+  animation: chat-spin 0.9s linear infinite;
+}
+
+@keyframes chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sidebar-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.sidebar-tabs button {
+  min-height: 34px;
+  padding: 6px 8px;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.sidebar-tabs button[data-selected="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  box-shadow: var(--shadow-inset);
+}

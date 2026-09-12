@@ -3,7 +3,9 @@
 // the WebSocket event union — the payloads both Aurora runtimes exchange.
 import { describe, expect, it } from "vitest";
 import {
+  aiToolCallSchema,
   canvasModeSchema,
+  chatTurnEventSchema,
   drawingPaletteSchema,
   libraryTreeSchema,
   regionalObjectQueryResponseSchema,
@@ -184,5 +186,45 @@ describe("serverEventSchema", () => {
         serverTimestamp: new Date().toISOString(),
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("aiToolCallSchema", () => {
+  it("accepts list_notes with empty arguments", () => {
+    expect(
+      aiToolCallSchema.safeParse({ name: "list_notes", arguments: {} }).success,
+    ).toBe(true);
+  });
+
+  it("accepts html_act click and type actions", () => {
+    expect(
+      aiToolCallSchema.safeParse({
+        name: "html_act",
+        arguments: {
+          actions: [
+            { click: "#go" },
+            { type: { selector: "input", text: "hi" } },
+          ],
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects screenshot_note without a uuid", () => {
+    expect(
+      aiToolCallSchema.safeParse({
+        name: "screenshot_note",
+        arguments: { noteId: "nope" },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("chatTurnEventSchema", () => {
+  it("accepts a text-delta event", () => {
+    expect(
+      chatTurnEventSchema.safeParse({ type: "text-delta", delta: "Hi" })
+        .success,
+    ).toBe(true);
   });
 });

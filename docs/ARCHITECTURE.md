@@ -31,6 +31,8 @@ A single deployment runs the web/server image with PostgreSQL and a mounted uplo
 - `features/editor`: rich-text blocks and tables. It exposes serialized ProseMirror JSON, never editor instances.
 - `features/pdf`: PDF page rendering, annotation coordinates, and live page-reference objects.
 - `features/auth`: setup-token enrollment, passkey login, logout, and reset guidance.
+- `features/chat`: project-scoped agentic chat, HTML sandbox workbench, and note screenshots.
+- `features/settings`: account-level theme, ChatGPT connection, and sync drawers.
 - `sync`: IndexedDB cache, durable outbox, HTTP hydration, WebSocket subscription, retry, and conflict presentation.
 - `theme`: the three dark token sets and account-level selection.
 
@@ -42,6 +44,7 @@ Feature modules can depend on `packages/shared` and small shared UI primitives. 
 - `library`: project, folder, note, archive, favorite, trash, and link operations.
 - `canvas`: regional object queries and authoritative object mutation transactions.
 - `sync`: idempotent operation ingestion, conflict records, revision acknowledgements, and owner-scoped WebSocket broadcasts.
+- `ai`: ChatGPT device-code login, streamed note-reading chat turns, and HTML visualization tool results.
 - `files`: size-limited streaming uploads, content hashing, metadata, and safe downloads.
 - `pdf`: reserved for future PDF-note metadata and source-page reference resolution.
 - `search`: PostgreSQL full-text search over permitted text and filenames.

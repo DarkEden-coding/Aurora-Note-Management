@@ -10,7 +10,13 @@ import { syncEngine, type SyncStatus } from "../sync/engine.js";
 import { useSyncExternalStore } from "react";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { MainEditor } from "./MainEditor.js";
-import type { CanvasMode, DrawingPalette } from "@aurora/shared";
+import { ChatView } from "../features/chat/ChatView.js";
+import "../features/chat/chatStyles.css";
+import type {
+  CanvasMode,
+  ChatConversation,
+  DrawingPalette,
+} from "@aurora/shared";
 
 type DrawerKind = "none" | "settings" | "sync";
 
@@ -103,6 +109,10 @@ export function AuthenticatedShell({
   const library = useLibrary();
   const [collapsed, setCollapsed] = useState(false);
   const [drawer, setDrawer] = useState<DrawerKind>("none");
+  const [view, setView] = useState<"notes" | "chat">("notes");
+  const [conversation, setConversation] = useState<ChatConversation | null>(
+    null,
+  );
 
   // Start the sync engine (WebSocket subscription + outbox loop) once authenticated.
   useEffect(() => {
@@ -127,12 +137,18 @@ export function AuthenticatedShell({
       <Sidebar
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((value) => !value)}
+        view={view}
+        onViewChange={setView}
+        selectedConversationId={conversation?.id ?? null}
+        onSelectConversation={setConversation}
       />
 
       <div className="main-column">
         <div className="topbar">
           <div className="title">
-            {selectedNote ? (
+            {view === "chat" ? (
+              <span>{conversation?.title ?? "No chat selected"}</span>
+            ) : selectedNote ? (
               <NoteTitle
                 noteId={selectedNote.id}
                 title={selectedNote.title || "Untitled"}
@@ -143,7 +159,7 @@ export function AuthenticatedShell({
           </div>
           <div className="connection-status">
             <SyncPill onClick={() => setDrawer("sync")} />
-            {selectedNote ? (
+            {view === "notes" && selectedNote ? (
               <span className="canvas-mode-indicator">
                 {canvasModeLabel(selectedNote.canvasMode)}
               </span>
@@ -160,7 +176,9 @@ export function AuthenticatedShell({
         </div>
 
         <ErrorBoundary label="editor">
-          {selectedNote ? (
+          {view === "chat" ? (
+            <ChatView conversation={conversation} />
+          ) : selectedNote ? (
             <MainEditor
               ownerId={ownerId}
               noteId={selectedNote.id}

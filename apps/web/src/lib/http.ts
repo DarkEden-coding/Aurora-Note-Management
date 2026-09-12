@@ -2,7 +2,7 @@
 // Server route families (all session-authenticated): /api/auth/*, /api/library,
 // /api/projects, /api/folders, /api/notes, /api/notes/:id/objects/query,
 // /api/sync/operations, /api/sync/conflicts, /api/files, /api/search,
-// /api/backup, /api/snapshots. The WebSocket endpoint is /sync/ws.
+// /api/backup, /api/snapshots, /api/ai. The WebSocket endpoint is /sync/ws.
 // Payload schemas come from @aurora/shared.
 export class ApiError extends Error {
   readonly status: number;
