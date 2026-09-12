@@ -22,8 +22,7 @@ describe("startDeviceAuth", () => {
     );
 
     await expect(startDeviceAuth()).resolves.toEqual({
-      verificationUrl:
-        "https://auth.openai.com/api/accounts/deviceauth/authorize",
+      verificationUrl: "https://auth.openai.com/codex/device",
       userCode: "ABCD-EFGH",
       deviceAuthId: "device-1",
       interval: 5,

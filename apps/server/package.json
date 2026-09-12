@@ -10,6 +10,7 @@
     "test": "vitest run",
     "db:migrate": "tsx src/db/migrate.ts",
     "auth:reset": "tsx src/auth/reset-cli.ts",
+    "ai:import-codex": "tsx src/ai/importCodexAuth.ts",
     "jobs:cleanup": "tsx src/jobs/cleanup.ts"
   },
   "dependencies": {
