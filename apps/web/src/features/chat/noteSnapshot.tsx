@@ -263,25 +263,37 @@ export async function renderPdfPages(
 function PrintablePages({
   objects,
   regions,
+  onPrint,
 }: {
   objects: CanvasObject[];
   regions: ExportPage[];
+  onPrint: () => void;
 }) {
-  return regions.map((region, index) => (
-    <div className="pdf-print-page" key={index}>
-      <NoteSnapshotScene
-        objects={objects.filter((object) =>
-          boundsIntersect(object.bounds, region),
-        )}
-        minX={region.x}
-        minY={region.y}
-        width={region.width}
-        height={region.height}
-        scale={1}
-        background={region.background}
-      />
-    </div>
-  ));
+  return (
+    <>
+      <div className="pdf-print-controls">
+        <span>{regions.length} pages ready</span>
+        <button type="button" onClick={onPrint}>
+          Print or save PDF
+        </button>
+      </div>
+      {regions.map((region, index) => (
+        <div className="pdf-print-page" key={index}>
+          <NoteSnapshotScene
+            objects={objects.filter((object) =>
+              boundsIntersect(object.bounds, region),
+            )}
+            minX={region.x}
+            minY={region.y}
+            width={region.width}
+            height={region.height}
+            scale={1}
+            background={region.background}
+          />
+        </div>
+      ))}
+    </>
+  );
 }
 
 /** Mounts vector note pages directly into the print window without rasterizing them. */
@@ -291,7 +303,13 @@ export async function mountPrintablePages(
   regions: ExportPage[],
 ): Promise<() => void> {
   const root = createRoot(targetDocument.body);
-  root.render(<PrintablePages objects={objects} regions={regions} />);
+  root.render(
+    <PrintablePages
+      objects={objects}
+      regions={regions}
+      onPrint={() => targetDocument.defaultView?.print()}
+    />,
+  );
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   await waitForPdfCanvases(
@@ -328,7 +346,7 @@ export async function exportNoteToPdf(
   }
   const style = printWindow.document.createElement("style");
   style.textContent =
-    "html,body{margin:0;background:#fff}.pdf-print-page{width:8.5in;height:11in;overflow:hidden;break-after:page;print-color-adjust:exact}.pdf-print-page:last-child{break-after:auto}.pdf-print-page .chat-note-snapshot{width:8.5in!important;height:11in!important}@page{size:8.5in 11in;margin:0}";
+    "html,body{margin:0;background:#fff}.pdf-print-controls{position:fixed;z-index:100;top:12px;right:12px;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:#fff;background:#20242c;box-shadow:0 4px 16px #0008}.pdf-print-controls button{padding:8px 12px;border:0;border-radius:6px;cursor:pointer}.pdf-print-page{width:8.5in;height:11in;overflow:hidden;break-after:page;print-color-adjust:exact}.pdf-print-page:last-child{break-after:auto}.pdf-print-page .chat-note-snapshot{width:8.5in!important;height:11in!important}@media print{.pdf-print-controls{display:none}}@page{size:8.5in 11in;margin:0}";
   printWindow.document.head.appendChild(style);
   printWindow.document.body.textContent = "Preparing PDF…";
 
@@ -346,12 +364,7 @@ export async function exportNoteToPdf(
       response.objects,
       pages,
     );
-    const unmount = await mountPrintablePages(
-      printWindow.document,
-      response.objects,
-      regions,
-    );
-    printWindow.addEventListener("afterprint", unmount, { once: true });
+    await mountPrintablePages(printWindow.document, response.objects, regions);
     printWindow.focus();
     printWindow.print();
   } catch (cause) {
