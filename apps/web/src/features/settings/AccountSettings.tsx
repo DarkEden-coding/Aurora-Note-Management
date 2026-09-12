@@ -176,7 +176,7 @@ export function AccountSettings({
           onClick={() => {
             setDeviceError(null);
             window.open(
-              "https://auth.openai.com/codex/device",
+              "https://auth.openai.com/api/accounts/deviceauth/authorize",
               "_blank",
               "noopener,noreferrer",
             );

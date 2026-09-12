@@ -6,6 +6,7 @@ const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
 const DEVICE_USERCODE = `${ISSUER}/api/accounts/deviceauth/usercode`;
 const DEVICE_TOKEN = `${ISSUER}/api/accounts/deviceauth/token`;
+const DEVICE_AUTHORIZE = `${ISSUER}/api/accounts/deviceauth/authorize`;
 const TOKEN_URL = `${ISSUER}/oauth/token`;
 const DEVICE_REDIRECT = `${ISSUER}/deviceauth/callback`;
 const REFRESH_SKEW_MS = 60_000;
@@ -107,7 +108,9 @@ export async function startDeviceAuth(): Promise<DeviceStart> {
   }
   const interval = Number(data.interval);
   return {
-    verificationUrl: `${ISSUER}/codex/device`,
+    // Skip /codex/device's extra redirect. Some Chromium clients leave that
+    // route as a blank tab instead of following it to the authorization flow.
+    verificationUrl: DEVICE_AUTHORIZE,
     userCode: data.user_code,
     deviceAuthId: data.device_auth_id,
     interval: Number.isFinite(interval) && interval > 0 ? interval : 5,
