@@ -306,9 +306,8 @@
   align-items: center;
   width: max-content;
   max-width: calc(100% - 32px);
-  overflow-x: auto;
   gap: 8px;
-  padding: 7px;
+  padding: 10px;
   border: var(--panel-border);
   border-radius: calc(var(--radius) - 3px);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -340,15 +339,14 @@
   padding: 0;
   border: none;
   border-radius: 7px;
-  background: transparent;
+  background: var(--surface);
   color: var(--aurora-canvas-ink);
-  box-shadow: none;
   cursor: pointer;
   touch-action: manipulation;
 }
 
 .canvas-toolbar button:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--surface-raised);
 }
 
 .canvas-toolbar button:disabled {
@@ -856,6 +854,7 @@
 @media (max-width: 760px) {
   .canvas-toolbar {
     max-width: calc(100% - 16px);
+    overflow-x: auto;
     left: 8px;
     right: 8px;
     transform: none;
