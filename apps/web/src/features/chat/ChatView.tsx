@@ -183,7 +183,7 @@ export function ChatView({
         {toolProgress.length > 0 ? (
           <ToolProgressPanel progress={toolProgress} />
         ) : null}
-        <HtmlWorkbench ref={workbenchRef} visible={busy} />
+        <HtmlWorkbench ref={workbenchRef} visible={false} />
         {error ? (
           <div className="error-text" role="alert">
             {error}
@@ -285,19 +285,13 @@ function toolProgressLabel(progress: ToolProgress): string {
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   if (message.role === "tool") return null;
-  const tools = message.parts.filter((part) => part.type === "tool-call");
   const visible = message.parts.filter(
     (part) => part.type === "text" || part.type === "html",
   );
+  if (visible.length === 0) return null;
+  const hasHtml = visible.some((part) => part.type === "html");
   return (
-    <div className={`chat-bubble ${message.role}`}>
-      {tools.map((part) =>
-        part.type === "tool-call" ? (
-          <div key={part.callId} className="chat-tool">
-            {toolLabel(part.name)}
-          </div>
-        ) : null,
-      )}
+    <div className={`chat-bubble ${message.role}${hasHtml ? " has-html" : ""}`}>
       {visible.map((part, index) => {
         if (part.type === "text") {
           return (
@@ -315,25 +309,4 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       })}
     </div>
   );
-}
-
-function toolLabel(name: string): string {
-  switch (name) {
-    case "list_notes":
-      return "Listed notes";
-    case "read_note":
-      return "Read a note";
-    case "grep_notes":
-      return "Searched notes";
-    case "screenshot_note":
-      return "Captured a note";
-    case "html_render":
-      return "Rendered HTML";
-    case "html_act":
-      return "Interacted with HTML";
-    case "html_submit":
-      return "Submitted visualization";
-    default:
-      return name;
-  }
 }

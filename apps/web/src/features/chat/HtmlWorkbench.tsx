@@ -57,6 +57,8 @@ export const HtmlWorkbench = forwardRef<
       ref={iframeRef}
       className={`chat-workbench${visible && active ? "" : " parked"}`}
       title="HTML workbench"
+      aria-hidden={!visible || !active}
+      tabIndex={visible && active ? 0 : -1}
       sandbox="allow-scripts"
     />
   );

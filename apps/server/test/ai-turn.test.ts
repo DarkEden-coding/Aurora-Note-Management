@@ -2,7 +2,11 @@
 import fs from "node:fs";
 import { expect, it } from "vitest";
 import type { ChatMessage } from "@aurora/shared";
-import { messagesToInput, validateToolContinuation } from "../src/ai/turn.js";
+import {
+  latestRenderableHtml,
+  messagesToInput,
+  validateToolContinuation,
+} from "../src/ai/turn.js";
 
 it("replays encrypted reasoning before assistant output and tool calls", () => {
   const message: ChatMessage = {
@@ -86,6 +90,49 @@ it("rejects user interruptions and replayed tool results", () => {
       ],
     ),
   ).toThrow("Tool results do not match");
+});
+
+it("recovers the last rendered HTML when the model omits submit", () => {
+  const base = {
+    conversationId: "223e4567-e89b-42d3-a456-426614174000",
+    createdAt: new Date().toISOString(),
+  };
+  const history: ChatMessage[] = [
+    {
+      ...base,
+      id: "123e4567-e89b-42d3-a456-426614174000",
+      role: "user",
+      parts: [{ type: "text", text: "Show me" }],
+    },
+    {
+      ...base,
+      id: "323e4567-e89b-42d3-a456-426614174000",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call",
+          callId: "render-1",
+          name: "html_render",
+          arguments: { html: "<main>Visible</main>" },
+        },
+      ],
+    },
+    {
+      ...base,
+      id: "423e4567-e89b-42d3-a456-426614174000",
+      role: "tool",
+      parts: [{ type: "tool-result", callId: "render-1", output: "rendered" }],
+    },
+  ];
+
+  expect(latestRenderableHtml(history)).toEqual({
+    title: "Visualization",
+    html: "<main>Visible</main>",
+  });
+  history[2]!.parts = [
+    { type: "tool-result", callId: "render-1", output: "errors: broken" },
+  ];
+  expect(latestRenderableHtml(history)).toBeNull();
 });
 
 it("uses a conversation cache key and serializes turns", () => {

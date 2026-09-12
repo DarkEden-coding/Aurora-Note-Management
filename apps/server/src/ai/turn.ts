@@ -112,6 +112,46 @@ function titleFrom(text: string): string {
   return compact.slice(0, 60) || "New chat";
 }
 
+/** Returns the last successfully rendered HTML when the model omits html_submit. */
+export function latestRenderableHtml(
+  history: ChatMessage[],
+): { title: string; html: string } | null {
+  let candidate: { callId: string; html: string; rendered: boolean } | null =
+    null;
+  let start = 0;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index]?.role === "user") {
+      start = index + 1;
+      break;
+    }
+  }
+  for (const message of history.slice(start)) {
+    for (const part of message.parts) {
+      if (part.type === "tool-call" && part.name === "html_render") {
+        candidate = {
+          callId: part.callId,
+          html:
+            typeof part.arguments.html === "string" ? part.arguments.html : "",
+          rendered: false,
+        };
+      }
+      if (part.type === "tool-call" && part.name === "html_submit") {
+        candidate = null;
+      }
+      if (
+        part.type === "tool-result" &&
+        candidate &&
+        part.callId === candidate.callId
+      ) {
+        candidate.rendered = part.output === "rendered";
+      }
+    }
+  }
+  return candidate?.rendered && candidate.html
+    ? { title: "Visualization", html: candidate.html }
+    : null;
+}
+
 /** Rejects user interruptions plus missing, duplicate, and replayed tool results. */
 export function validateToolContinuation(
   history: ChatMessage[],
@@ -286,6 +326,10 @@ async function runTurn(params: StreamTurnParams): Promise<void> {
           typeof call.arguments.html === "string" ? call.arguments.html : "";
         if (html) parts.push({ type: "html", title, html });
       }
+    }
+    if (toolCalls.length === 0 && !parts.some((part) => part.type === "html")) {
+      const fallback = latestRenderableHtml(history);
+      if (fallback) parts.push({ type: "html", ...fallback });
     }
     if (parts.length === 0) {
       parts.push({ type: "text", text: "" });

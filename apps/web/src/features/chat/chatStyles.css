@@ -51,18 +51,15 @@
   align-self: flex-start;
 }
 
+.chat-bubble.has-html {
+  width: min(1100px, 100%);
+  max-width: 100%;
+}
+
 .chat-text {
   white-space: pre-wrap;
   font-size: 14px;
   line-height: 1.45;
-}
-
-.chat-tool {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 6px;
 }
 
 .chat-tool-progress {
