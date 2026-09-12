@@ -218,7 +218,6 @@ async function renderRegion(
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => resolve()),
     );
-    await document.fonts?.ready;
     await waitForPdfCanvases(
       host,
       visibleObjects.filter(
@@ -235,6 +234,7 @@ async function renderRegion(
     const canvas = await withTimeout(
       html2canvas(scene, {
         backgroundColor: null,
+        imageTimeout: 5_000,
         logging: false,
         scale: 1,
         useCORS: true,
@@ -252,9 +252,11 @@ async function renderRegion(
 export async function renderPdfPages(
   objects: CanvasObject[],
   regions: ExportPage[],
+  onPageStart?: (page: number, total: number) => void,
 ): Promise<string[]> {
   const sources: string[] = [];
-  for (const region of regions) {
+  for (const [index, region] of regions.entries()) {
+    onPageStart?.(index + 1, regions.length);
     sources.push(await renderRegion(objects, region));
   }
   return sources;
@@ -289,7 +291,13 @@ export async function exportNoteToPdf(
       response.objects,
       pages,
     );
-    const sources = await renderPdfPages(response.objects, regions);
+    const sources = await renderPdfPages(
+      response.objects,
+      regions,
+      (page, total) => {
+        printWindow.document.body.textContent = `Preparing PDF… page ${page} of ${total}`;
+      },
+    );
     printWindow.document.body.replaceChildren(
       ...sources.map((source) => {
         const image = printWindow.document.createElement("img");
