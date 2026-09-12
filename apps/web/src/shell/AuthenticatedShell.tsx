@@ -77,18 +77,38 @@ function ChatControls({
   onChange,
 }: {
   conversation: ChatConversation;
-  onChange: (patch: { model?: ChatModel; reasoning?: ChatReasoning }) => void;
+  onChange: (patch: {
+    model?: ChatModel;
+    reasoning?: ChatReasoning;
+  }) => Promise<void>;
 }) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const selectedModel =
     CHAT_MODELS.find((model) => model.id === conversation.model) ??
     CHAT_MODELS[1];
+  const change = async (patch: {
+    model?: ChatModel;
+    reasoning?: ChatReasoning;
+  }): Promise<void> => {
+    setSaving(true);
+    setSaveError(false);
+    try {
+      await onChange(patch);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="chat-topbar-controls">
       <select
         aria-label="Chat model"
         value={conversation.model}
+        disabled={saving}
         onChange={(event) =>
-          onChange({ model: event.target.value as ChatModel })
+          void change({ model: event.target.value as ChatModel })
         }
       >
         {CHAT_MODELS.map((model) => (
@@ -100,8 +120,9 @@ function ChatControls({
       <select
         aria-label="Reasoning level"
         value={conversation.reasoning}
+        disabled={saving}
         onChange={(event) =>
-          onChange({ reasoning: event.target.value as ChatReasoning })
+          void change({ reasoning: event.target.value as ChatReasoning })
         }
       >
         {selectedModel.reasoningLevels.map((level) => (
@@ -112,6 +133,11 @@ function ChatControls({
           </option>
         ))}
       </select>
+      {saveError ? (
+        <span className="error-text" role="alert">
+          Settings not saved
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -156,7 +182,9 @@ export function AuthenticatedShell({
   onLoggedOut: () => void;
 }) {
   const library = useLibrary();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(
+    () => window.matchMedia("(max-width: 760px)").matches,
+  );
   const [drawer, setDrawer] = useState<DrawerKind>("none");
   const [view, setView] = useState<"notes" | "chat">("notes");
   const [conversation, setConversation] = useState<ChatConversation | null>(
@@ -167,6 +195,15 @@ export function AuthenticatedShell({
   useEffect(() => {
     syncEngine.start();
     return () => syncEngine.stop();
+  }, []);
+
+  useEffect(() => {
+    const mobile = window.matchMedia("(max-width: 760px)");
+    const collapseOnMobile = (event: MediaQueryListEvent) => {
+      if (event.matches) setCollapsed(true);
+    };
+    mobile.addEventListener("change", collapseOnMobile);
+    return () => mobile.removeEventListener("change", collapseOnMobile);
   }, []);
 
   useEffect(() => {
@@ -199,7 +236,12 @@ export function AuthenticatedShell({
         view={view}
         onViewChange={setView}
         selectedConversation={conversation}
-        onSelectConversation={setConversation}
+        onSelectConversation={(selected) => {
+          setConversation(selected);
+          if (window.matchMedia("(max-width: 760px)").matches) {
+            setCollapsed(true);
+          }
+        }}
       />
 
       <div className="main-column">
@@ -220,9 +262,7 @@ export function AuthenticatedShell({
             {view === "chat" && conversation ? (
               <ChatControls
                 conversation={conversation}
-                onChange={(patch) =>
-                  void updateConversationSettings(patch).catch(() => undefined)
-                }
+                onChange={updateConversationSettings}
               />
             ) : null}
             <SyncPill onClick={() => setDrawer("sync")} />
@@ -244,7 +284,10 @@ export function AuthenticatedShell({
 
         <ErrorBoundary label="editor">
           {view === "chat" ? (
-            <ChatView conversation={conversation} />
+            <ChatView
+              conversation={conversation}
+              onConversationUpdated={setConversation}
+            />
           ) : selectedNote ? (
             <MainEditor
               ownerId={ownerId}

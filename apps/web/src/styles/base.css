@@ -755,9 +755,42 @@ button.tree-action.danger:hover {
 }
 
 @media (max-width: 760px) {
+  .app-shell {
+    position: relative;
+  }
   .sidebar {
-    width: 230px;
-    min-width: 230px;
+    position: absolute;
+    inset-block: var(--shell-padding);
+    left: var(--shell-padding);
+    z-index: 20;
+    width: min(280px, calc(100vw - 24px));
+    min-width: min(280px, calc(100vw - 24px));
+    height: auto;
+  }
+  .sidebar.collapsed {
+    width: 48px;
+    min-width: 48px;
+  }
+  .main-column {
+    margin-left: calc(48px + var(--gap));
+  }
+  .topbar {
+    flex-wrap: wrap;
+    padding: 6px;
+  }
+  .topbar .title {
+    flex: 1 1 0;
+  }
+  .topbar > button {
+    flex: 0 0 auto;
+  }
+  .connection-status {
+    order: 3;
+    width: 100%;
+  }
+  .connection-status .sync-pill {
+    padding-inline: 8px;
+    font-size: 0;
   }
   .theme-options {
     grid-template-columns: 1fr;

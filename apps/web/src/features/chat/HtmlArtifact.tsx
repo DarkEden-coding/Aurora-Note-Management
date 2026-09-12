@@ -1,12 +1,22 @@
 // Chat HTML artifact card: sandboxed iframe, expand, source, copy.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Code, Copy, Expand, Minimize2 } from "lucide-react";
 import { buildSrcdoc, themeVarsFrom } from "./sandboxBridge.js";
 
 export function HtmlArtifact({ title, html }: { title: string; html: string }) {
   const [expanded, setExpanded] = useState(false);
   const [showCode, setShowCode] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const srcdoc = useMemo(() => buildSrcdoc(html, themeVarsFrom()), [html]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (expanded && !dialog.open) dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+    };
+  }, [expanded]);
 
   const card = (
     <div className={`chat-html-card panel${expanded ? " expanded" : ""}`}>
@@ -52,8 +62,19 @@ export function HtmlArtifact({ title, html }: { title: string; html: string }) {
 
   if (!expanded) return card;
   return (
-    <div className="chat-html-overlay" onClick={() => setExpanded(false)}>
-      <div onClick={(event) => event.stopPropagation()}>{card}</div>
-    </div>
+    <dialog
+      ref={dialogRef}
+      className="chat-html-overlay"
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        setExpanded(false);
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) setExpanded(false);
+      }}
+    >
+      <div>{card}</div>
+    </dialog>
   );
 }

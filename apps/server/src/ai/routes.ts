@@ -1,12 +1,7 @@
 // HTTP routes for ChatGPT device login, chat CRUD, note context, and streamed turns.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import {
-  chatModelSchema,
-  chatPartSchema,
-  chatReasoningSchema,
-  idSchema,
-} from "@aurora/shared";
+import { chatModelSchema, chatReasoningSchema, idSchema } from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
 import { requireSessionPreHandler } from "../auth/sessions.js";
 import {
@@ -53,13 +48,29 @@ const pollBody = z.object({
 const turnBody = z.object({
   messages: z
     .array(
-      z.object({
-        role: z.enum(["user", "tool"]),
-        parts: z.array(chatPartSchema).min(1),
-      }),
+      z.discriminatedUnion("role", [
+        z.object({
+          role: z.literal("user"),
+          parts: z
+            .array(z.object({ type: z.literal("text"), text: z.string() }))
+            .min(1),
+        }),
+        z.object({
+          role: z.literal("tool"),
+          parts: z
+            .array(
+              z.object({
+                type: z.literal("tool-result"),
+                callId: z.string().min(1),
+                output: z.string(),
+                images: z.array(z.string()).optional(),
+              }),
+            )
+            .min(1),
+        }),
+      ]),
     )
-    .min(1)
-    .max(20),
+    .length(1),
 });
 
 export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
@@ -137,12 +148,15 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
     async (request, reply) => {
       const { id } = idParam.parse(request.params);
       const body = turnBody.parse(request.body);
+      const controller = new AbortController();
+      reply.raw.once("close", () => controller.abort());
       await streamTurn({
         env,
         ownerId: request.ownerId!,
         conversationId: id,
         incoming: body.messages,
         reply,
+        signal: controller.signal,
       });
     },
   );

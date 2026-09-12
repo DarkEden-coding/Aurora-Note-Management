@@ -17,6 +17,7 @@ const NOOP = {
 export async function screenshotNote(
   noteId: string,
   tile = 0,
+  signal?: AbortSignal,
 ): Promise<{ images: string[]; tileCount: number; truncated: boolean }> {
   const response = await apiPost<RegionalObjectQueryResponse>(
     `/api/notes/${noteId}/objects/query`,
@@ -28,6 +29,7 @@ export async function screenshotNote(
         height: 2_000_000,
       },
     },
+    signal ? { signal } : {},
   );
   const objects = response.objects;
   let minX = 0;
@@ -50,6 +52,9 @@ export async function screenshotNote(
   const renderWidth = Math.ceil(width * scale);
   const renderHeight = Math.ceil(height * scale);
   const tileCount = Math.max(1, Math.ceil(renderHeight / TILE_HEIGHT));
+  if (!Number.isInteger(tile) || tile < 0 || tile >= tileCount) {
+    throw new Error(`Screenshot tile ${tile} is outside 0-${tileCount - 1}`);
+  }
   const host = document.createElement("div");
   host.style.cssText =
     "position:fixed;left:-10000px;top:0;pointer-events:none;z-index:-1;";

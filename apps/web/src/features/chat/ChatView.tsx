@@ -1,6 +1,12 @@
 // Chat transcript, streaming composer, HTML workbench, and tool activity.
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Check, LoaderCircle } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  LoaderCircle,
+  Square,
+  TriangleAlert,
+} from "lucide-react";
 import type {
   AiAuthStatus,
   ChatConversation,
@@ -14,8 +20,10 @@ import "./chatStyles.css";
 
 export function ChatView({
   conversation,
+  onConversationUpdated,
 }: {
   conversation: ChatConversation | null;
+  onConversationUpdated: (conversation: ChatConversation) => void;
 }) {
   const [auth, setAuth] = useState<AiAuthStatus | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -27,6 +35,7 @@ export function ChatView({
   const workbenchRef = useRef<HtmlWorkbenchHandle>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const messageLoadRef = useRef(0);
 
   useEffect(() => {
     void chatApi
@@ -37,17 +46,26 @@ export function ChatView({
 
   useEffect(() => {
     abortRef.current?.abort();
+    const loadId = ++messageLoadRef.current;
+    setMessages([]);
     setStreamText("");
     setToolProgress([]);
     setError(null);
-    if (!conversation) {
-      setMessages([]);
-      return;
-    }
+    if (!conversation) return;
     void chatApi
       .listMessages(conversation.id)
-      .then((result) => setMessages(result.messages))
-      .catch(() => setMessages([]));
+      .then((result) => {
+        if (messageLoadRef.current === loadId) setMessages(result.messages);
+      })
+      .catch(() => {
+        if (messageLoadRef.current === loadId) {
+          setError("Could not load this chat.");
+        }
+      });
+    return () => {
+      messageLoadRef.current += 1;
+      abortRef.current?.abort();
+    };
   }, [conversation?.id]);
 
   useEffect(() => {
@@ -57,6 +75,7 @@ export function ChatView({
   const send = async () => {
     if (!conversation || !draft.trim() || busy || !workbenchRef.current) return;
     const text = draft.trim();
+    messageLoadRef.current += 1;
     setDraft("");
     setBusy(true);
     setError(null);
@@ -72,6 +91,7 @@ export function ChatView({
       createdAt: new Date().toISOString(),
     };
     setMessages((current) => [...current, userMessage]);
+    let turnFailed = false;
     try {
       await runAgentTurn({
         conversationId: conversation.id,
@@ -80,8 +100,13 @@ export function ChatView({
         workbench: workbenchRef.current,
         signal: controller.signal,
         handlers: {
-          onTextDelta: (delta) => setStreamText((current) => current + delta),
+          onTextDelta: (delta) => {
+            if (!controller.signal.aborted) {
+              setStreamText((current) => current + delta);
+            }
+          },
           onAssistant: (message) => {
+            if (controller.signal.aborted) return;
             setStreamText("");
             setMessages((current) => [...current, message]);
           },
@@ -97,16 +122,34 @@ export function ChatView({
               );
             });
           },
-          onError: (message) => setError(message),
+          onError: (message) => {
+            turnFailed = true;
+            setError(message);
+          },
         },
       });
+      if (!turnFailed && !controller.signal.aborted) {
+        void chatApi
+          .listConversations(conversation.projectId)
+          .then(({ conversations }) => {
+            if (controller.signal.aborted) return;
+            const updated = conversations.find(
+              (item) => item.id === conversation.id,
+            );
+            if (updated) onConversationUpdated(updated);
+          })
+          .catch(() => undefined);
+      }
     } catch (caught) {
       if (!controller.signal.aborted) {
         setError(caught instanceof Error ? caught.message : "Turn failed");
       }
     } finally {
-      setBusy(false);
-      setStreamText("");
+      if (abortRef.current === controller) {
+        setBusy(false);
+        setStreamText("");
+        abortRef.current = null;
+      }
     }
   };
 
@@ -160,23 +203,24 @@ export function ChatView({
           placeholder="Ask about this project's notes…"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
               event.preventDefault();
               void send();
             }
           }}
         />
         <button
-          type="submit"
+          type={busy ? "button" : "submit"}
           className="ghost icon-button"
-          disabled={busy || !draft.trim()}
-          aria-label="Send"
+          disabled={!busy && !draft.trim()}
+          aria-label={busy ? "Stop response" : "Send"}
+          onClick={busy ? () => abortRef.current?.abort() : undefined}
         >
-          {busy ? (
-            <LoaderCircle size={16} className="spin" />
-          ) : (
-            <ArrowUp size={16} />
-          )}
+          {busy ? <Square size={14} /> : <ArrowUp size={16} />}
         </button>
       </form>
     </div>
@@ -194,6 +238,8 @@ function ToolProgressPanel({ progress }: { progress: ToolProgress[] }) {
             <LoaderCircle size={13} className="spin" />
           ) : item.status === "completed" ? (
             <Check size={13} />
+          ) : item.status === "failed" ? (
+            <TriangleAlert size={13} />
           ) : (
             <span className="chat-tool-progress-dot" />
           )}
@@ -203,7 +249,9 @@ function ToolProgressPanel({ progress }: { progress: ToolProgress[] }) {
               ? "Waiting"
               : item.status === "running"
                 ? "Running"
-                : "Done"}
+                : item.status === "failed"
+                  ? "Failed"
+                  : "Done"}
           </span>
         </div>
       ))}

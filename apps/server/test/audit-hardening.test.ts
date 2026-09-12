@@ -55,6 +55,12 @@ describe("SQL concurrency and ownership guards", () => {
     );
     expect(migrations).toContain("pg_advisory_unlock");
   });
+
+  it("binds chat message ownership to its conversation", () => {
+    const migration = source("../src/db/migrations/008_chat_integrity.sql");
+    expect(migration).toContain("UNIQUE (id, owner_id)");
+    expect(migration).toContain("FOREIGN KEY (conversation_id, owner_id)");
+  });
 });
 
 describe("recovery contract corrections", () => {

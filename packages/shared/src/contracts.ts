@@ -283,6 +283,12 @@ export const aiToolCallSchema = z.discriminatedUnion("name", [
 export const chatPartSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
+    type: z.literal("reasoning"),
+    id: z.string().min(1),
+    encryptedContent: z.string().min(1),
+    summary: z.array(z.string()),
+  }),
+  z.object({
     type: z.literal("html"),
     title: z.string(),
     html: z.string(),

@@ -78,24 +78,33 @@ export type ProjectNoteHit = {
 
 export function listProjectNotes(
   projectId: string,
+  signal?: AbortSignal,
 ): Promise<{ notes: ProjectNoteHit[] }> {
-  return api(`/api/ai/projects/${projectId}/notes`);
+  return api(`/api/ai/projects/${projectId}/notes`, signal ? { signal } : {});
 }
 
 export function readNoteText(
   noteId: string,
   projectId: string,
+  signal?: AbortSignal,
 ): Promise<{ id: string; title: string; text: string }> {
-  return api(`/api/ai/notes/${noteId}/text?projectId=${projectId}`);
+  return api(
+    `/api/ai/notes/${noteId}/text?projectId=${projectId}`,
+    signal ? { signal } : {},
+  );
 }
 
 export function grepProjectNotes(
   projectId: string,
   q: string,
+  signal?: AbortSignal,
 ): Promise<{
   hits: Array<{ noteId: string; title: string; snippet: string }>;
 }> {
-  return api(`/api/ai/projects/${projectId}/grep?q=${encodeURIComponent(q)}`);
+  return api(
+    `/api/ai/projects/${projectId}/grep?q=${encodeURIComponent(q)}`,
+    signal ? { signal } : {},
+  );
 }
 
 export async function* streamTurn(

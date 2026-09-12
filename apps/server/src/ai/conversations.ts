@@ -7,7 +7,7 @@ import type {
   ChatReasoning,
 } from "@aurora/shared";
 import { notFound } from "../errors.js";
-import { query } from "../db/pool.js";
+import { query, withTransaction } from "../db/pool.js";
 import { getProject } from "../library/projects.js";
 
 type ConversationRow = {
@@ -133,11 +133,17 @@ export async function deleteConversation(
   ownerId: string,
   conversationId: string,
 ): Promise<void> {
-  const result = await query(
-    `DELETE FROM chat_conversations WHERE owner_id = $1 AND id = $2`,
-    [ownerId, conversationId],
-  );
-  if (result.rowCount === 0) throw notFound("Conversation");
+  await withTransaction(async (client) => {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 1096110671))",
+      [conversationId],
+    );
+    const result = await client.query(
+      `DELETE FROM chat_conversations WHERE owner_id = $1 AND id = $2`,
+      [ownerId, conversationId],
+    );
+    if (result.rowCount === 0) throw notFound("Conversation");
+  });
 }
 
 export async function listMessages(
@@ -171,16 +177,4 @@ export async function insertMessage(
     [ownerId, conversationId],
   );
   return mapMessage(result.rows[0]!);
-}
-
-export async function countMessages(
-  ownerId: string,
-  conversationId: string,
-): Promise<number> {
-  const result = await query<{ count: string }>(
-    `SELECT count(*)::text AS count FROM chat_messages
-     WHERE owner_id = $1 AND conversation_id = $2`,
-    [ownerId, conversationId],
-  );
-  return Number(result.rows[0]?.count ?? 0);
 }

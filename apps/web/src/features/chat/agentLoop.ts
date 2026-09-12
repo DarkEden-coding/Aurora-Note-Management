@@ -11,7 +11,7 @@ export type ToolProgress = {
   callId: string;
   name: string;
   arguments: Record<string, unknown>;
-  status: "queued" | "running" | "completed";
+  status: "queued" | "running" | "completed" | "failed";
 };
 
 export type TurnHandlers = {
@@ -31,6 +31,7 @@ export async function runAgentTurn(params: {
 }): Promise<void> {
   let next = params.incoming;
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
+    params.signal?.throwIfAborted();
     let assistant: ChatMessage | null = null;
     const calls: Array<{
       callId: string;
@@ -57,14 +58,23 @@ export async function runAgentTurn(params: {
     if (!assistant || calls.length === 0) return;
     const parts: ChatPart[] = [];
     for (const call of calls) {
+      params.signal?.throwIfAborted();
       params.handlers.onToolProgress({ ...call, status: "running" });
       const result = await executeTool(
         call,
         params.projectId,
         params.workbench,
+        params.signal,
       );
+      params.signal?.throwIfAborted();
       parts.push(result);
-      params.handlers.onToolProgress({ ...call, status: "completed" });
+      const failed =
+        result.type === "tool-result" &&
+        /^(Invalid tool arguments:|Tool failed:|errors:)/.test(result.output);
+      params.handlers.onToolProgress({
+        ...call,
+        status: failed ? "failed" : "completed",
+      });
     }
     next = [{ role: "tool", parts }];
   }
@@ -74,6 +84,7 @@ async function executeTool(
   call: { callId: string; name: string; arguments: Record<string, unknown> },
   projectId: string,
   workbench: HtmlWorkbenchHandle,
+  signal?: AbortSignal,
 ): Promise<ChatPart> {
   const parsed = aiToolCallSchema.safeParse({
     name: call.name,
@@ -89,7 +100,7 @@ async function executeTool(
   try {
     switch (parsed.data.name) {
       case "list_notes": {
-        const { notes } = await chatApi.listProjectNotes(projectId);
+        const { notes } = await chatApi.listProjectNotes(projectId, signal);
         return {
           type: "tool-result",
           callId: call.callId,
@@ -100,6 +111,7 @@ async function executeTool(
         const note = await chatApi.readNoteText(
           parsed.data.arguments.noteId,
           projectId,
+          signal,
         );
         return {
           type: "tool-result",
@@ -111,6 +123,7 @@ async function executeTool(
         const { hits } = await chatApi.grepProjectNotes(
           projectId,
           parsed.data.arguments.pattern,
+          signal,
         );
         return {
           type: "tool-result",
@@ -120,7 +133,11 @@ async function executeTool(
       }
       case "screenshot_note": {
         const tile = parsed.data.arguments.tile ?? 0;
-        const shot = await screenshotNote(parsed.data.arguments.noteId, tile);
+        const shot = await screenshotNote(
+          parsed.data.arguments.noteId,
+          tile,
+          signal,
+        );
         return {
           type: "tool-result",
           callId: call.callId,
@@ -170,7 +187,7 @@ async function executeTool(
     return {
       type: "tool-result",
       callId: call.callId,
-      output: error instanceof Error ? error.message : "Tool failed",
+      output: `Tool failed: ${error instanceof Error ? error.message : "Unknown error"}`,
     };
   }
 }
