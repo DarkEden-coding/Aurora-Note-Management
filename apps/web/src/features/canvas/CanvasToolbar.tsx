@@ -17,7 +17,6 @@ import {
   Type,
   Minus,
   Undo2,
-  Upload,
 } from "lucide-react";
 export type CanvasTool =
   | "select"
@@ -45,7 +44,6 @@ export interface CanvasToolbarProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
-  onImportPdf: () => void;
 }
 
 interface ToolButton {
@@ -85,7 +83,6 @@ export function CanvasToolbar({
   onZoomIn,
   onZoomOut,
   onZoomReset,
-  onImportPdf,
 }: CanvasToolbarProps): ReactNode {
   return (
     <>
@@ -106,19 +103,6 @@ export function CanvasToolbar({
               {button.icon}
             </button>
           ))}
-        </div>
-        <div className="canvas-toolbar-divider" />
-        <div className="canvas-toolbar-group">
-          <button
-            type="button"
-            title="Import PDF"
-            aria-label="Import PDF"
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={onImportPdf}
-          >
-            <Upload size={16} />
-          </button>
         </div>
         <div className="canvas-toolbar-divider" />
         <div className="canvas-toolbar-group">

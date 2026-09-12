@@ -100,6 +100,9 @@ export interface CanvasWorkspaceProps {
   onDrawingPaletteChange?: (palette: DrawingPalette) => void | Promise<void>;
   /** Receives every coalesced upsert/delete operation produced by editing gestures. */
   onOperation?: (operation: SyncOperation) => void;
+  /** PDF selected while creating this note from the library. */
+  importedPdf?: File;
+  onPdfImported?: () => void;
 }
 
 const STROKE_TOOL_WIDTH = 2.5;
@@ -239,6 +242,8 @@ export function CanvasWorkspace({
   drawingPalette,
   onDrawingPaletteChange,
   onOperation,
+  importedPdf,
+  onPdfImported,
 }: CanvasWorkspaceProps): ReactNode {
   const activeMode: CanvasMode = mode ?? "infinite";
   const isControlled = objects !== undefined;
@@ -271,7 +276,7 @@ export function CanvasWorkspace({
 
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [importError, setImportError] = useState<string | null>(null);
-  const pdfInputRef = useRef<HTMLInputElement | null>(null);
+  const importedPdfRef = useRef<File | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
   const changeTool = useCallback((nextTool: CanvasTool): void => {
@@ -654,16 +659,18 @@ export function CanvasWorkspace({
   );
 
   useEffect(() => {
+    if (!importedPdf || importedPdfRef.current === importedPdf) return;
+    importedPdfRef.current = importedPdf;
+    onPdfImported?.();
+    void importPdfs([importedPdf], { x: 0, y: 0 });
+  }, [importPdfs, importedPdf, onPdfImported]);
+
+  useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
       if (isInsideEditable(event.target)) return;
       const files = [...(event.clipboardData?.files ?? [])];
       const hasImages = files.some((file) => file.type.startsWith("image/"));
-      const hasPdfs = files.some(
-        (file) =>
-          file.type === "application/pdf" ||
-          file.name.toLowerCase().endsWith(".pdf"),
-      );
-      if (!hasImages && !hasPdfs) return;
+      if (!hasImages) return;
       event.preventDefault();
       const at = {
         x:
@@ -673,14 +680,11 @@ export function CanvasWorkspace({
           viewportRef.current.y +
           containerSize.height / viewportRef.current.zoom / 2,
       };
-      void (async () => {
-        if (hasImages) await importImages(files, at);
-        if (hasPdfs) await importPdfs(files, at);
-      })();
+      void importImages(files, at);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [containerSize.height, containerSize.width, importImages, importPdfs]);
+  }, [containerSize.height, containerSize.width, importImages]);
 
   const createObject = useCallback(
     (
@@ -1722,10 +1726,8 @@ export function CanvasWorkspace({
         onPointerLeave={() => setEraserPointer(null)}
         onDragOver={(event) => {
           if (
-            [...event.dataTransfer.items].some(
-              (item) =>
-                item.type.startsWith("image/") ||
-                item.type === "application/pdf",
+            [...event.dataTransfer.items].some((item) =>
+              item.type.startsWith("image/"),
             )
           ) {
             event.preventDefault();
@@ -1737,22 +1739,14 @@ export function CanvasWorkspace({
           const hasImages = files.some((file) =>
             file.type.startsWith("image/"),
           );
-          const hasPdfs = files.some(
-            (file) =>
-              file.type === "application/pdf" ||
-              file.name.toLowerCase().endsWith(".pdf"),
-          );
-          if (!hasImages && !hasPdfs) return;
+          if (!hasImages) return;
           event.preventDefault();
           const rect = event.currentTarget.getBoundingClientRect();
           const at = screenToCanvas(
             { x: event.clientX - rect.left, y: event.clientY - rect.top },
             viewportRef.current,
           );
-          void (async () => {
-            if (hasImages) await importImages(files, at);
-            if (hasPdfs) await importPdfs(files, at);
-          })();
+          void importImages(files, at);
         }}
       >
         {activeMode === "infinite" ? (
@@ -2006,25 +2000,6 @@ export function CanvasWorkspace({
         ) : null}
       </div>
 
-      <input
-        ref={pdfInputRef}
-        type="file"
-        accept="application/pdf,.pdf"
-        multiple
-        hidden
-        onChange={(event) => {
-          const files = [...(event.currentTarget.files ?? [])];
-          event.currentTarget.value = "";
-          void importPdfs(files, {
-            x:
-              viewportRef.current.x +
-              containerSize.width / viewportRef.current.zoom / 2,
-            y:
-              viewportRef.current.y +
-              containerSize.height / viewportRef.current.zoom / 2,
-          });
-        }}
-      />
       <CanvasToolbar
         tool={tool}
         zoom={zoom}
@@ -2038,7 +2013,6 @@ export function CanvasWorkspace({
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onZoomReset={zoomReset}
-        onImportPdf={() => pdfInputRef.current?.click()}
       />
       {placementTool !== null && placementPropertiesOpen ? (
         <DrawingPlacementPanel

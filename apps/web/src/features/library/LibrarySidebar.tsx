@@ -15,6 +15,7 @@ import {
   Search,
   Star,
   Trash2,
+  Upload,
 } from "lucide-react";
 import type { Background, CanvasMode } from "@aurora/shared";
 import type { CachedNote } from "../../sync/db.js";
@@ -48,7 +49,8 @@ type DialogState =
 type MenuTarget =
   | { kind: "project"; item: LibraryProject }
   | { kind: "folder"; item: LibraryFolder }
-  | { kind: "note"; item: CachedNote };
+  | { kind: "note"; item: CachedNote }
+  | { kind: "add-note"; projectId: string; folderId: string | null };
 interface MenuState {
   x: number;
   y: number;
@@ -86,6 +88,11 @@ export function Sidebar({
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [trashExpanded, setTrashExpanded] = useState(false);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const pdfTargetRef = useRef<{
+    projectId: string;
+    folderId: string | null;
+  } | null>(null);
   const query = library.search.trim().toLowerCase();
   const matches = useMemo(
     () =>
@@ -199,6 +206,13 @@ export function Sidebar({
             onClick={() =>
               setDialog({ kind: "note", projectId, folderId: folder.id })
             }
+            onContextMenu={(event) =>
+              openMenu(event, {
+                kind: "add-note",
+                projectId,
+                folderId: folder.id,
+              })
+            }
           >
             <Plus size={15} />
           </button>
@@ -256,6 +270,13 @@ export function Sidebar({
             onClick={() =>
               setDialog({ kind: "note", projectId: project.id, folderId: null })
             }
+            onContextMenu={(event) =>
+              openMenu(event, {
+                kind: "add-note",
+                projectId: project.id,
+                folderId: null,
+              })
+            }
           >
             <Plus size={15} />
           </button>
@@ -275,7 +296,18 @@ export function Sidebar({
     if (!menu) return;
     const { target } = menu;
     setMenu(null);
-    if (target.kind === "project") {
+    if (target.kind === "add-note") {
+      if (action === "note")
+        setDialog({
+          kind: "note",
+          projectId: target.projectId,
+          folderId: target.folderId,
+        });
+      if (action === "pdf") {
+        pdfTargetRef.current = target;
+        pdfInputRef.current?.click();
+      }
+    } else if (target.kind === "project") {
       if (action === "rename")
         setDialog({
           kind: "rename-project",
@@ -479,6 +511,22 @@ export function Sidebar({
           </>
         )}
       </aside>
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        hidden
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          const target = pdfTargetRef.current;
+          pdfTargetRef.current = null;
+          if (file && target)
+            void library
+              .importPdf(target.projectId, target.folderId, file)
+              .catch(() => undefined);
+        }}
+      />
       {menu ? <ContextMenu menu={menu} onAction={contextAction} /> : null}
       {dialog ? (
         <LibraryDialog state={dialog} onClose={() => setDialog(null)} />
@@ -494,7 +542,9 @@ function ContextMenu({
   menu: MenuState;
   onAction: (action: string) => void;
 }) {
-  const isContainer = menu.target.kind !== "note";
+  const isAddNote = menu.target.kind === "add-note";
+  const isContainer =
+    menu.target.kind === "project" || menu.target.kind === "folder";
   return (
     <div
       className="context-menu panel"
@@ -502,12 +552,19 @@ function ContextMenu({
       style={{ left: menu.x, top: menu.y }}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <button role="menuitem" onClick={() => onAction("rename")}>
-        Rename
-      </button>
-      {isContainer ? (
+      {isAddNote ? null : (
+        <button role="menuitem" onClick={() => onAction("rename")}>
+          Rename
+        </button>
+      )}
+      {isContainer || isAddNote ? (
         <button role="menuitem" onClick={() => onAction("note")}>
           <Plus size={14} /> New note
+        </button>
+      ) : null}
+      {isAddNote ? (
+        <button role="menuitem" onClick={() => onAction("pdf")}>
+          <Upload size={14} /> Import PDF
         </button>
       ) : null}
       {isContainer ? (
@@ -521,15 +578,19 @@ function ContextMenu({
           {menu.target.item.favorite ? "Remove favorite" : "Add favorite"}
         </button>
       ) : null}
-      <div className="context-divider" />
-      <button
-        role="menuitem"
-        className="danger"
-        onClick={() => onAction("delete")}
-      >
-        <Trash2 size={14} />{" "}
-        {menu.target.kind === "note" ? "Move to trash" : "Delete"}
-      </button>
+      {isAddNote ? null : (
+        <>
+          <div className="context-divider" />
+          <button
+            role="menuitem"
+            className="danger"
+            onClick={() => onAction("delete")}
+          >
+            <Trash2 size={14} />{" "}
+            {menu.target.kind === "note" ? "Move to trash" : "Delete"}
+          </button>
+        </>
+      )}
     </div>
   );
 }

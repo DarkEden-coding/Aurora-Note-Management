@@ -8,6 +8,7 @@ import type { SyncOperation } from "@aurora/shared";
 import type { Background, CanvasMode, DrawingPalette } from "@aurora/shared";
 import { syncEngine } from "../sync/engine.js";
 import { enqueueObjectMutation } from "../sync/outbox.js";
+import { useLibrary } from "../features/library/LibraryContext.js";
 
 export function MainEditor({
   ownerId,
@@ -26,6 +27,11 @@ export function MainEditor({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const library = useLibrary();
+  const pendingPdf =
+    library.pendingPdfImport?.noteId === noteId
+      ? library.pendingPdfImport.file
+      : undefined;
 
   // Every coalesced canvas operation enters the durable outbox; the upserted
   // object is already the local cache version, so acknowledgements can advance
@@ -69,6 +75,12 @@ export function MainEditor({
         background={background}
         drawingPalette={drawingPalette}
         onDrawingPaletteChange={onDrawingPaletteChange}
+        {...(pendingPdf
+          ? {
+              importedPdf: pendingPdf,
+              onPdfImported: () => library.clearPendingPdfImport(noteId),
+            }
+          : {})}
         onOperation={handleOperation}
       />
     </div>

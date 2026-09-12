@@ -43,6 +43,13 @@ export interface LibraryState {
     title: string,
     options?: Pick<CachedNote, "canvasMode" | "background">,
   ) => Promise<void>;
+  importPdf: (
+    projectId: string,
+    folderId: string | null,
+    file: File,
+  ) => Promise<void>;
+  pendingPdfImport: { noteId: string; file: File } | null;
+  clearPendingPdfImport: (noteId: string) => void;
   renameFolder: (folderId: string, name: string) => Promise<void>;
   deleteFolder: (folderId: string) => Promise<void>;
   toggleFavorite: (noteId: string) => Promise<void>;
@@ -82,6 +89,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [recents, setRecents] = useState<string[]>(readRecents);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [pendingPdfImport, setPendingPdfImport] = useState<{
+    noteId: string;
+    file: File;
+  } | null>(null);
 
   const showCachedNotes = useCallback((cached: readonly CachedNote[]) => {
     const partitioned = partitionCachedNotes(cached);
@@ -345,6 +356,33 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [selectNote, showNote],
   );
 
+  const importPdf = useCallback(
+    async (projectId: string, folderId: string | null, file: File) => {
+      const title = file.name.replace(/\.pdf$/i, "") || "Untitled";
+      const note = await libraryApi.createNote(projectId, folderId, title, {
+        canvasMode: "paged",
+        background: {
+          pattern: "blank",
+          color: "#ffffff",
+          patternColor: "#ffffff",
+          spacing: 24,
+        },
+      });
+      const cached = toCachedNote(note);
+      await db.notes.put(cached);
+      showNote(cached);
+      setPendingPdfImport({ noteId: note.id, file });
+      selectNote(note.id);
+    },
+    [selectNote, showNote],
+  );
+
+  const clearPendingPdfImport = useCallback((noteId: string): void => {
+    setPendingPdfImport((current) =>
+      current?.noteId === noteId ? null : current,
+    );
+  }, []);
+
   const toggleFavorite = useCallback(
     async (noteId: string) => {
       const note = [...notes, ...trashedNotes].find(
@@ -435,6 +473,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       renameFolder,
       deleteFolder,
       addNote,
+      importPdf,
+      pendingPdfImport,
+      clearPendingPdfImport,
       toggleFavorite,
       trashNote,
       restoreNote,
@@ -460,6 +501,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       renameFolder,
       deleteFolder,
       addNote,
+      importPdf,
+      pendingPdfImport,
+      clearPendingPdfImport,
       toggleFavorite,
       trashNote,
       restoreNote,
