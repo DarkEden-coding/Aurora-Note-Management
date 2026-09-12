@@ -112,11 +112,11 @@ function titleFrom(text: string): string {
   return compact.slice(0, 60) || "New chat";
 }
 
-/** Returns the last successfully rendered HTML when the model omits html_submit. */
+/** Returns the last completed HTML attempt when the model omits html_submit. */
 export function latestRenderableHtml(
   history: ChatMessage[],
 ): { title: string; html: string } | null {
-  let candidate: { callId: string; html: string; rendered: boolean } | null =
+  let candidate: { callId: string; html: string; completed: boolean } | null =
     null;
   let start = 0;
   for (let index = history.length - 1; index >= 0; index -= 1) {
@@ -132,7 +132,7 @@ export function latestRenderableHtml(
           callId: part.callId,
           html:
             typeof part.arguments.html === "string" ? part.arguments.html : "",
-          rendered: false,
+          completed: false,
         };
       }
       if (part.type === "tool-call" && part.name === "html_submit") {
@@ -143,20 +143,17 @@ export function latestRenderableHtml(
         candidate &&
         part.callId === candidate.callId
       ) {
-        candidate.rendered = part.output === "rendered";
+        candidate.completed = true;
       }
     }
   }
-  return candidate?.rendered && candidate.html
+  return candidate?.completed && candidate.html
     ? { title: "Visualization", html: candidate.html }
     : null;
 }
 
-/** Rejects user interruptions plus missing, duplicate, and replayed tool results. */
-export function validateToolContinuation(
-  history: ChatMessage[],
-  incoming: StreamTurnParams["incoming"],
-): void {
+/** Returns tool calls that have no persisted browser result yet. */
+export function pendingToolCallIds(history: ChatMessage[]): string[] {
   let assistantIndex = -1;
   for (let index = history.length - 1; index >= 0; index -= 1) {
     if (history[index]?.role === "assistant") {
@@ -176,13 +173,17 @@ export function validateToolContinuation(
     }
   }
 
+  return [...pending];
+}
+
+/** Rejects missing, duplicate, and replayed browser tool results. */
+export function validateToolContinuation(
+  history: ChatMessage[],
+  incoming: StreamTurnParams["incoming"],
+): void {
   const message = incoming[0];
-  if (message?.role !== "tool") {
-    if (pending.size > 0) {
-      throw invalid("Finish the pending tool request before sending a message");
-    }
-    return;
-  }
+  if (message?.role !== "tool") return;
+  const pending = new Set(pendingToolCallIds(history));
   for (const part of message.parts) {
     if (part.type !== "tool-result" || !pending.delete(part.callId)) {
       throw invalid("Tool results do not match the latest assistant request");
@@ -216,6 +217,23 @@ async function runTurn(params: StreamTurnParams): Promise<void> {
   const priorCount = prior.length;
   validateToolContinuation(prior, params.incoming);
   const inserted: ChatMessage[] = [];
+  if (params.incoming[0]?.role === "user") {
+    const interrupted = pendingToolCallIds(prior);
+    if (interrupted.length > 0) {
+      inserted.push(
+        await insertMessage(
+          params.ownerId,
+          params.conversationId,
+          "tool",
+          interrupted.map((callId) => ({
+            type: "tool-result" as const,
+            callId,
+            output: "Tool execution was interrupted before completion.",
+          })),
+        ),
+      );
+    }
+  }
   for (const message of params.incoming) {
     inserted.push(
       await insertMessage(

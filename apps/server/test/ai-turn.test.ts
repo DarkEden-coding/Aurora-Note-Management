@@ -5,6 +5,7 @@ import type { ChatMessage } from "@aurora/shared";
 import {
   latestRenderableHtml,
   messagesToInput,
+  pendingToolCallIds,
   validateToolContinuation,
 } from "../src/ai/turn.js";
 
@@ -51,7 +52,7 @@ it("replays encrypted reasoning before assistant output and tool calls", () => {
   ]);
 });
 
-it("rejects user interruptions and replayed tool results", () => {
+it("detects interrupted tools and rejects replayed results", () => {
   const assistant: ChatMessage = {
     id: "123e4567-e89b-42d3-a456-426614174000",
     conversationId: "223e4567-e89b-42d3-a456-426614174000",
@@ -73,12 +74,8 @@ it("rejects user interruptions and replayed tool results", () => {
     parts: [{ type: "tool-result", callId: "call-1", output: "[]" }],
   };
 
-  expect(() =>
-    validateToolContinuation(
-      [assistant],
-      [{ role: "user", parts: [{ type: "text", text: "Interrupt" }] }],
-    ),
-  ).toThrow("Finish the pending tool request");
+  expect(pendingToolCallIds([assistant])).toEqual(["call-1"]);
+  expect(pendingToolCallIds([assistant, result])).toEqual([]);
   expect(() =>
     validateToolContinuation(
       [assistant, result],
@@ -132,7 +129,11 @@ it("recovers the last rendered HTML when the model omits submit", () => {
   history[2]!.parts = [
     { type: "tool-result", callId: "render-1", output: "errors: broken" },
   ];
-  expect(latestRenderableHtml(history)).toBeNull();
+  expect(latestRenderableHtml(history)).toEqual({
+    title: "Visualization",
+    html: "<main>Visible</main>",
+  });
+  expect(latestRenderableHtml(history.slice(0, 2))).toBeNull();
 });
 
 it("uses a conversation cache key and serializes turns", () => {

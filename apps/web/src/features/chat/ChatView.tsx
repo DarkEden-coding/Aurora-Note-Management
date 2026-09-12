@@ -183,7 +183,7 @@ export function ChatView({
         {toolProgress.length > 0 ? (
           <ToolProgressPanel progress={toolProgress} />
         ) : null}
-        <HtmlWorkbench ref={workbenchRef} visible={false} />
+        <HtmlWorkbench ref={workbenchRef} />
         {error ? (
           <div className="error-text" role="alert">
             {error}
