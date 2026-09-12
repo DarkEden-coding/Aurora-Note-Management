@@ -125,16 +125,14 @@ export function planPdfPages(
 async function withTimeout<T>(
   promise: Promise<T>,
   message: string,
+  timeoutMs: number = PDF_RENDER_TIMEOUT,
 ): Promise<T> {
   let timer = 0;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = window.setTimeout(
-          () => reject(new Error(message)),
-          PDF_RENDER_TIMEOUT,
-        );
+        timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
       }),
     ]);
   } finally {
@@ -262,6 +260,58 @@ export async function renderPdfPages(
   return sources;
 }
 
+function PrintablePages({
+  objects,
+  regions,
+}: {
+  objects: CanvasObject[];
+  regions: ExportPage[];
+}) {
+  return regions.map((region, index) => (
+    <div className="pdf-print-page" key={index}>
+      <NoteSnapshotScene
+        objects={objects.filter((object) =>
+          boundsIntersect(object.bounds, region),
+        )}
+        minX={region.x}
+        minY={region.y}
+        width={region.width}
+        height={region.height}
+        scale={1}
+        background={region.background}
+      />
+    </div>
+  ));
+}
+
+/** Mounts vector note pages directly into the print window without rasterizing them. */
+export async function mountPrintablePages(
+  targetDocument: Document,
+  objects: CanvasObject[],
+  regions: ExportPage[],
+): Promise<() => void> {
+  const root = createRoot(targetDocument.body);
+  root.render(<PrintablePages objects={objects} regions={regions} />);
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await waitForPdfCanvases(
+    targetDocument.body,
+    objects.filter(
+      (object) =>
+        object.kind === "pdf-page-reference" &&
+        object.payload.importedDocument === true,
+    ).length,
+  );
+  await withTimeout(
+    Promise.allSettled(
+      [...targetDocument.images].map((image) => image.decode()),
+    ).then(() => undefined),
+    "Loading images for PDF export timed out",
+    5_000,
+  );
+  return () => root.unmount();
+}
+
 /** Opens a print-ready copy of a note so the browser can save it as PDF. */
 export async function exportNoteToPdf(
   noteId: string,
@@ -271,9 +321,14 @@ export async function exportNoteToPdf(
   if (!printWindow) throw new Error("Allow pop-ups to export this note");
 
   printWindow.document.title = title;
+  for (const stylesheet of document.querySelectorAll(
+    'link[rel="stylesheet"]',
+  )) {
+    printWindow.document.head.appendChild(stylesheet.cloneNode(true));
+  }
   const style = printWindow.document.createElement("style");
   style.textContent =
-    "html,body{margin:0;background:#fff}img{display:block;width:100%;break-after:page}img:last-child{break-after:auto}@page{size:8.5in 11in;margin:0}";
+    "html,body{margin:0;background:#fff}.pdf-print-page{width:8.5in;height:11in;overflow:hidden;break-after:page;print-color-adjust:exact}.pdf-print-page:last-child{break-after:auto}.pdf-print-page .chat-note-snapshot{width:8.5in!important;height:11in!important}@page{size:8.5in 11in;margin:0}";
   printWindow.document.head.appendChild(style);
   printWindow.document.body.textContent = "Preparing PDF…";
 
@@ -291,27 +346,12 @@ export async function exportNoteToPdf(
       response.objects,
       pages,
     );
-    const sources = await renderPdfPages(
+    const unmount = await mountPrintablePages(
+      printWindow.document,
       response.objects,
       regions,
-      (page, total) => {
-        printWindow.document.body.textContent = `Preparing PDF… page ${page} of ${total}`;
-      },
     );
-    printWindow.document.body.replaceChildren(
-      ...sources.map((source) => {
-        const image = printWindow.document.createElement("img");
-        image.src = source;
-        image.alt = "";
-        return image;
-      }),
-    );
-    await withTimeout(
-      Promise.all(
-        [...printWindow.document.images].map((image) => image.decode()),
-      ).then(() => undefined),
-      "Preparing the PDF images timed out",
-    );
+    printWindow.addEventListener("afterprint", unmount, { once: true });
     printWindow.focus();
     printWindow.print();
   } catch (cause) {
