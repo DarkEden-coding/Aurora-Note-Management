@@ -7,9 +7,17 @@ import { screenshotNote } from "./noteSnapshot.js";
 
 const MAX_ROUNDS = 16;
 
+export type ToolProgress = {
+  callId: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: "queued" | "running" | "completed";
+};
+
 export type TurnHandlers = {
   onTextDelta: (delta: string) => void;
   onAssistant: (message: ChatMessage) => void;
+  onToolProgress: (progress: ToolProgress) => void;
   onError: (message: string) => void;
 };
 
@@ -35,7 +43,10 @@ export async function runAgentTurn(params: {
       params.signal,
     )) {
       if (event.type === "text-delta") params.handlers.onTextDelta(event.delta);
-      if (event.type === "tool-call") calls.push(event);
+      if (event.type === "tool-call") {
+        calls.push(event);
+        params.handlers.onToolProgress({ ...event, status: "queued" });
+      }
       if (event.type === "error") {
         params.handlers.onError(event.message);
         return;
@@ -46,12 +57,14 @@ export async function runAgentTurn(params: {
     if (!assistant || calls.length === 0) return;
     const parts: ChatPart[] = [];
     for (const call of calls) {
+      params.handlers.onToolProgress({ ...call, status: "running" });
       const result = await executeTool(
         call,
         params.projectId,
         params.workbench,
       );
       parts.push(result);
+      params.handlers.onToolProgress({ ...call, status: "completed" });
     }
     next = [{ role: "tool", parts }];
   }

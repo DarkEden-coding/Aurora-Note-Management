@@ -1,6 +1,6 @@
 // Chat transcript, streaming composer, HTML workbench, and tool activity.
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, LoaderCircle } from "lucide-react";
+import { ArrowUp, Check, LoaderCircle } from "lucide-react";
 import type {
   AiAuthStatus,
   ChatConversation,
@@ -8,7 +8,7 @@ import type {
 } from "@aurora/shared";
 import { HtmlArtifact } from "./HtmlArtifact.js";
 import { HtmlWorkbench, type HtmlWorkbenchHandle } from "./HtmlWorkbench.js";
-import { runAgentTurn } from "./agentLoop.js";
+import { runAgentTurn, type ToolProgress } from "./agentLoop.js";
 import * as chatApi from "./api.js";
 import "./chatStyles.css";
 
@@ -22,6 +22,7 @@ export function ChatView({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState("");
+  const [toolProgress, setToolProgress] = useState<ToolProgress[]>([]);
   const [error, setError] = useState<string | null>(null);
   const workbenchRef = useRef<HtmlWorkbenchHandle>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -37,6 +38,7 @@ export function ChatView({
   useEffect(() => {
     abortRef.current?.abort();
     setStreamText("");
+    setToolProgress([]);
     setError(null);
     if (!conversation) {
       setMessages([]);
@@ -50,7 +52,7 @@ export function ChatView({
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages, streamText]);
+  }, [messages, streamText, toolProgress]);
 
   const send = async () => {
     if (!conversation || !draft.trim() || busy || !workbenchRef.current) return;
@@ -59,6 +61,7 @@ export function ChatView({
     setBusy(true);
     setError(null);
     setStreamText("");
+    setToolProgress([]);
     const controller = new AbortController();
     abortRef.current = controller;
     const userMessage: ChatMessage = {
@@ -81,6 +84,18 @@ export function ChatView({
           onAssistant: (message) => {
             setStreamText("");
             setMessages((current) => [...current, message]);
+          },
+          onToolProgress: (progress) => {
+            if (controller.signal.aborted) return;
+            setToolProgress((current) => {
+              const existing = current.findIndex(
+                (item) => item.callId === progress.callId,
+              );
+              if (existing === -1) return [...current, progress];
+              return current.map((item, index) =>
+                index === existing ? progress : item,
+              );
+            });
           },
           onError: (message) => setError(message),
         },
@@ -121,6 +136,9 @@ export function ChatView({
           <div className="chat-bubble assistant">
             <div className="chat-text">{streamText}</div>
           </div>
+        ) : null}
+        {toolProgress.length > 0 ? (
+          <ToolProgressPanel progress={toolProgress} />
         ) : null}
         <HtmlWorkbench ref={workbenchRef} visible={busy} />
         {error ? (
@@ -163,6 +181,58 @@ export function ChatView({
       </form>
     </div>
   );
+}
+
+/** Shows tool activity from the current turn as it advances. */
+function ToolProgressPanel({ progress }: { progress: ToolProgress[] }) {
+  return (
+    <div className="chat-tool-progress panel" aria-live="polite">
+      <div className="chat-tool-progress-title">Agent activity</div>
+      {progress.map((item) => (
+        <div className="chat-tool-progress-row" key={item.callId}>
+          {item.status === "running" ? (
+            <LoaderCircle size={13} className="spin" />
+          ) : item.status === "completed" ? (
+            <Check size={13} />
+          ) : (
+            <span className="chat-tool-progress-dot" />
+          )}
+          <span>{toolProgressLabel(item)}</span>
+          <span className={`chat-tool-progress-status ${item.status}`}>
+            {item.status === "queued"
+              ? "Waiting"
+              : item.status === "running"
+                ? "Running"
+                : "Done"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Produces a concise description without displaying bulky tool arguments. */
+function toolProgressLabel(progress: ToolProgress): string {
+  switch (progress.name) {
+    case "list_notes":
+      return "List project notes";
+    case "read_note":
+      return "Read note";
+    case "grep_notes":
+      return typeof progress.arguments.pattern === "string"
+        ? `Search notes for “${progress.arguments.pattern}”`
+        : "Search notes";
+    case "screenshot_note":
+      return "Capture note preview";
+    case "html_render":
+      return "Render visualization";
+    case "html_act":
+      return "Interact with visualization";
+    case "html_submit":
+      return "Submit visualization";
+    default:
+      return progress.name;
+  }
 }
 
 function MessageBubble({ message }: { message: ChatMessage }) {

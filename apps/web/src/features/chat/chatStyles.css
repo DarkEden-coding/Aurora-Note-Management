@@ -65,6 +65,53 @@
   margin-bottom: 6px;
 }
 
+.chat-tool-progress {
+  align-self: flex-start;
+  width: min(420px, 86%);
+  padding: 10px 12px;
+}
+
+.chat-tool-progress-title {
+  margin-bottom: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.chat-tool-progress-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.chat-tool-progress-row svg {
+  color: var(--accent);
+}
+
+.chat-tool-progress-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.chat-tool-progress-status {
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chat-tool-progress-status.running {
+  color: var(--accent);
+}
+
 .chat-composer {
   display: flex;
   gap: 8px;
