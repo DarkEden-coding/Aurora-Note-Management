@@ -304,7 +304,9 @@
   z-index: 10;
   display: flex;
   align-items: center;
-  width: min(920px, calc(100% - 32px));
+  width: max-content;
+  max-width: calc(100% - 32px);
+  overflow-x: auto;
   gap: 8px;
   padding: 7px;
   border: var(--panel-border);
@@ -316,11 +318,9 @@
 
 .canvas-toolbar-group {
   display: flex;
-  flex: none;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
   gap: 4px;
-  flex: 1;
 }
 
 .canvas-toolbar-divider {
@@ -332,14 +332,17 @@
 
 .canvas-toolbar button {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: clamp(38px, 4.2vw, 52px);
   height: 44px;
+  padding: 0;
   border: none;
   border-radius: 7px;
   background: transparent;
   color: var(--aurora-canvas-ink);
+  box-shadow: none;
   cursor: pointer;
   touch-action: manipulation;
 }
@@ -853,13 +856,9 @@
 @media (max-width: 760px) {
   .canvas-toolbar {
     max-width: calc(100% - 16px);
-    overflow-x: auto;
     left: 8px;
     right: 8px;
     transform: none;
-  }
-  .canvas-toolbar-group {
-    flex: 0 0 auto;
   }
   .drawing-properties-panel,
   .shape-properties-popover {
