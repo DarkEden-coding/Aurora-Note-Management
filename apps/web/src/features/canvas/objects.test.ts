@@ -10,6 +10,7 @@ import {
   getImageFileId,
   getImageSrc,
   getLineEndpoints,
+  getPdfPageReference,
   getShapeCornerRadius,
   getShapeDashArray,
   getShapeFill,
@@ -93,6 +94,23 @@ describe("image imports", () => {
 });
 
 describe("payload conventions", () => {
+  it("derives a durable PDF URL from an uploaded file ID", () => {
+    const page = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c013",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "pdf-page-reference",
+      bounds: { x: 0, y: 0, width: 612, height: 792 },
+      zIndex: 1,
+      payload: { sourceNoteId: NOTE_ID, pageNumber: 2, fileId: "file/id" },
+    });
+    expect(getPdfPageReference(page)).toEqual({
+      sourceNoteId: NOTE_ID,
+      pageNumber: 2,
+      pdfUrl: "/api/files/file%2Fid",
+    });
+  });
+
   it("parses stroke points and rejects malformed rows", () => {
     expect(getStrokePoints(makeStroke())).toEqual([
       { x: 5, y: 5, pressure: 0.5 },

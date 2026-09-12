@@ -166,8 +166,8 @@ async function readImageSize(
   }
 }
 
-/** Uploads one image and returns its durable server file ID. */
-async function uploadImage(file: File): Promise<string> {
+/** Uploads one file and returns its durable server file ID. */
+async function uploadFile(file: File): Promise<string> {
   const body = new FormData();
   body.append("file", file);
   const response = await fetch("/api/files", { method: "POST", body });
@@ -270,7 +270,8 @@ export function CanvasWorkspace({
   );
 
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
-  const [imageImportError, setImageImportError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
   const changeTool = useCallback((nextTool: CanvasTool): void => {
@@ -559,11 +560,11 @@ export function CanvasWorkspace({
       const images = files.filter((file) => file.type.startsWith("image/"));
       const available = MAX_OBJECTS_PER_NOTE - objectsRef.current.length;
       if (images.length === 0 || available <= 0) return;
-      setImageImportError(null);
+      setImportError(null);
       try {
         for (const [index, file] of images.slice(0, available).entries()) {
           const dimensions = await readImageSize(file);
-          const fileId = await uploadImage(file);
+          const fileId = await uploadFile(file);
           const size = fitImageSize(dimensions.width, dimensions.height);
           appendObject(
             makeCanvasObject({
@@ -582,8 +583,70 @@ export function CanvasWorkspace({
           );
         }
       } catch (error) {
-        setImageImportError(
+        setImportError(
           error instanceof Error ? error.message : "Image import failed",
+        );
+      }
+    },
+    [activeMode, appendObject, noteId, ownerId],
+  );
+
+  const importPdfs = useCallback(
+    async (files: File[], at: Point): Promise<void> => {
+      const pdfs = files.filter(
+        (file) =>
+          file.type === "application/pdf" ||
+          file.name.toLowerCase().endsWith(".pdf"),
+      );
+      let available = MAX_OBJECTS_PER_NOTE - objectsRef.current.length;
+      if (pdfs.length === 0 || available <= 0) return;
+      setImportError(null);
+      try {
+        const { loadPdfFile } = await import("../pdf/usePdfDocument");
+        let y = at.y;
+        for (const file of pdfs) {
+          if (available <= 0) break;
+          const pdf = await loadPdfFile(file);
+          try {
+            const fileId = await uploadFile(file);
+            for (
+              let pageNumber = 1;
+              pageNumber <= pdf.numPages && available > 0;
+              pageNumber += 1
+            ) {
+              const page = await pdf.getPage(pageNumber);
+              const viewport = page.getViewport({ scale: 1 });
+              const width = Math.min(720, viewport.width);
+              const height = width * (viewport.height / viewport.width);
+              const base = makeCanvasObject({
+                id: newId(),
+                ownerId:
+                  ownerId ?? objectsRef.current[0]?.ownerId ?? DEMO_OWNER_ID,
+                noteId,
+                kind: "pdf-page-reference",
+                bounds: clampBoundsToMode(
+                  { x: at.x, y, width, height },
+                  activeMode,
+                ),
+                zIndex: nextZIndex(objectsRef.current),
+                payload: {
+                  fileId,
+                  sourceNoteId: noteId,
+                  pageNumber,
+                  importedDocument: true,
+                },
+              });
+              appendObject({ ...base, locked: true });
+              y += height + 32;
+              available -= 1;
+            }
+          } finally {
+            await pdf.cleanup();
+          }
+        }
+      } catch (error) {
+        setImportError(
+          error instanceof Error ? error.message : "PDF import failed",
         );
       }
     },
@@ -594,20 +657,30 @@ export function CanvasWorkspace({
     const onPaste = (event: ClipboardEvent): void => {
       if (isInsideEditable(event.target)) return;
       const files = [...(event.clipboardData?.files ?? [])];
-      if (!files.some((file) => file.type.startsWith("image/"))) return;
+      const hasImages = files.some((file) => file.type.startsWith("image/"));
+      const hasPdfs = files.some(
+        (file) =>
+          file.type === "application/pdf" ||
+          file.name.toLowerCase().endsWith(".pdf"),
+      );
+      if (!hasImages && !hasPdfs) return;
       event.preventDefault();
-      void importImages(files, {
+      const at = {
         x:
           viewportRef.current.x +
           containerSize.width / viewportRef.current.zoom / 2,
         y:
           viewportRef.current.y +
           containerSize.height / viewportRef.current.zoom / 2,
-      });
+      };
+      void (async () => {
+        if (hasImages) await importImages(files, at);
+        if (hasPdfs) await importPdfs(files, at);
+      })();
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [containerSize.height, containerSize.width, importImages]);
+  }, [containerSize.height, containerSize.width, importImages, importPdfs]);
 
   const createObject = useCallback(
     (
@@ -1649,8 +1722,10 @@ export function CanvasWorkspace({
         onPointerLeave={() => setEraserPointer(null)}
         onDragOver={(event) => {
           if (
-            [...event.dataTransfer.items].some((item) =>
-              item.type.startsWith("image/"),
+            [...event.dataTransfer.items].some(
+              (item) =>
+                item.type.startsWith("image/") ||
+                item.type === "application/pdf",
             )
           ) {
             event.preventDefault();
@@ -1659,16 +1734,25 @@ export function CanvasWorkspace({
         }}
         onDrop={(event) => {
           const files = [...event.dataTransfer.files];
-          if (!files.some((file) => file.type.startsWith("image/"))) return;
+          const hasImages = files.some((file) =>
+            file.type.startsWith("image/"),
+          );
+          const hasPdfs = files.some(
+            (file) =>
+              file.type === "application/pdf" ||
+              file.name.toLowerCase().endsWith(".pdf"),
+          );
+          if (!hasImages && !hasPdfs) return;
           event.preventDefault();
           const rect = event.currentTarget.getBoundingClientRect();
-          void importImages(
-            files,
-            screenToCanvas(
-              { x: event.clientX - rect.left, y: event.clientY - rect.top },
-              viewportRef.current,
-            ),
+          const at = screenToCanvas(
+            { x: event.clientX - rect.left, y: event.clientY - rect.top },
+            viewportRef.current,
           );
+          void (async () => {
+            if (hasImages) await importImages(files, at);
+            if (hasPdfs) await importPdfs(files, at);
+          })();
         }}
       >
         {activeMode === "infinite" ? (
@@ -1708,7 +1792,10 @@ export function CanvasWorkspace({
           ))}
 
           {visible
-            .filter((object) => object.kind === "image")
+            .filter(
+              (object) =>
+                object.kind === "image" || object.kind === "pdf-page-reference",
+            )
             .map((object) => (
               <HtmlObject
                 key={object.id}
@@ -1767,7 +1854,8 @@ export function CanvasWorkspace({
                 o.kind !== "ellipse" &&
                 o.kind !== "line" &&
                 o.kind !== "arrow" &&
-                o.kind !== "matrix",
+                o.kind !== "matrix" &&
+                o.kind !== "pdf-page-reference",
             )
             .map((o) => (
               <HtmlObject
@@ -1831,14 +1919,14 @@ export function CanvasWorkspace({
           className="canvas-ink-preview"
           aria-hidden="true"
         />
-        {imageImportError !== null ? (
+        {importError !== null ? (
           <button
             type="button"
             className="canvas-import-error"
             role="alert"
-            onClick={() => setImageImportError(null)}
+            onClick={() => setImportError(null)}
           >
-            {imageImportError}
+            {importError}
           </button>
         ) : null}
         {tool === "eraser" && eraserPointer !== null ? (
@@ -1918,6 +2006,25 @@ export function CanvasWorkspace({
         ) : null}
       </div>
 
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = [...(event.currentTarget.files ?? [])];
+          event.currentTarget.value = "";
+          void importPdfs(files, {
+            x:
+              viewportRef.current.x +
+              containerSize.width / viewportRef.current.zoom / 2,
+            y:
+              viewportRef.current.y +
+              containerSize.height / viewportRef.current.zoom / 2,
+          });
+        }}
+      />
       <CanvasToolbar
         tool={tool}
         zoom={zoom}
@@ -1931,6 +2038,7 @@ export function CanvasWorkspace({
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onZoomReset={zoomReset}
+        onImportPdf={() => pdfInputRef.current?.click()}
       />
       {placementTool !== null && placementPropertiesOpen ? (
         <DrawingPlacementPanel

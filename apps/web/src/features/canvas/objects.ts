@@ -278,10 +278,15 @@ export function getPdfPageReference(o: CanvasObject): PdfPageReference | null {
   )
     return null;
   const pdfUrl = o.payload.pdfUrl;
+  const fileId = o.payload.fileId;
   return {
     sourceNoteId,
     pageNumber,
-    ...(typeof pdfUrl === "string" ? { pdfUrl } : {}),
+    ...(typeof fileId === "string" && fileId.length > 0
+      ? { pdfUrl: `/api/files/${encodeURIComponent(fileId)}` }
+      : typeof pdfUrl === "string"
+        ? { pdfUrl }
+        : {}),
   };
 }
 

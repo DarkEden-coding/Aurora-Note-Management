@@ -373,6 +373,18 @@ function PdfRefContent({ object }: { object: CanvasObject }): ReactNode {
   const ref = getPdfPageReference(object);
   if (ref === null)
     return <div className="canvas-pdf-ref-empty">Invalid page reference</div>;
+  if (object.payload.importedDocument === true) {
+    return (
+      <Suspense fallback={null}>
+        <PdfPageView
+          className="pdf-document-page"
+          pdfUrl={ref.pdfUrl}
+          pageNumber={ref.pageNumber - 1}
+          targetWidth={object.bounds.width}
+        />
+      </Suspense>
+    );
+  }
   return (
     <div className="pdf-ref-block">
       <div className="pdf-ref-header">

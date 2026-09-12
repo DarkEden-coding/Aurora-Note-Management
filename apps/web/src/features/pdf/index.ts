@@ -2,7 +2,7 @@
 import "./pdfStyles.css";
 import "./pdfRefStyles.css";
 
-export { usePdfDocument, setPdfWorkerSrc } from "./usePdfDocument";
+export { usePdfDocument, setPdfWorkerSrc, loadPdfFile } from "./usePdfDocument";
 export type { PdfDocumentState } from "./usePdfDocument";
 export { PdfPageView } from "./PdfPageView";
 export type { PdfPageViewProps } from "./PdfPageView";

@@ -88,7 +88,9 @@ export async function startDeviceAuth(): Promise<DeviceStart> {
     throw new DomainError(
       502,
       "upstream",
-      `ChatGPT device login failed to start (${response.status})`,
+      response.status === 403
+        ? "OpenAI blocked device login. Retry in your regular browser or from another network."
+        : `ChatGPT device login failed to start (${response.status})`,
     );
   }
   const data = (await response.json()) as {

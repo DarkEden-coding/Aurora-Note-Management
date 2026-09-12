@@ -30,6 +30,12 @@ function ensureWorkerConfigured(): void {
   }
 }
 
+/** Loads a local PDF so callers can inspect its pages before uploading it. */
+export async function loadPdfFile(file: File): Promise<PDFDocumentProxy> {
+  ensureWorkerConfigured();
+  return pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+}
+
 const EMPTY_STATE: PdfDocumentState = {
   document: null,
   loading: false,

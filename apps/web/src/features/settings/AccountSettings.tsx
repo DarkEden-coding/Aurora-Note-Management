@@ -175,6 +175,11 @@ export function AccountSettings({
           disabled={device !== null}
           onClick={() => {
             setDeviceError(null);
+            window.open(
+              "https://auth.openai.com/codex/device",
+              "_blank",
+              "noopener,noreferrer",
+            );
             void chatApi
               .startDeviceAuth()
               .then(setDevice)
