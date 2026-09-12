@@ -104,6 +104,20 @@ describe("mode clamping", () => {
     expect(canvasSurfaceFrames([], "infinite")).toEqual([]);
   });
 
+  it("does not place a canvas sheet behind imported PDF pages", () => {
+    const pdfPage = makeCanvasObject({
+      id: "00000000-0000-4000-8000-00000000c002",
+      ownerId: OWNER_ID,
+      noteId: NOTE_ID,
+      kind: "pdf-page-reference",
+      bounds: { x: 0, y: 0, width: 612, height: 792 },
+      zIndex: 1,
+      payload: { importedDocument: true },
+    });
+
+    expect(canvasSurfaceFrames([pdfPage], "paged")).toEqual([]);
+  });
+
   it("leaves writing room past content and grows with content", () => {
     const view = { width: 400, height: 600 };
     const base = canvasScrollBounds([], "paged", view.width, view.height)!;

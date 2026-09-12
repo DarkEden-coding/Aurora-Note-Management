@@ -141,6 +141,15 @@ export function canvasSurfaceFrames(
   pageWidth: number = PAGE_WIDTH,
   pageHeight: number = PAGE_HEIGHT,
 ): Bounds[] {
+  if (
+    objects.some(
+      (object) =>
+        object.kind === "pdf-page-reference" &&
+        object.payload.importedDocument === true,
+    )
+  )
+    return [];
+
   switch (mode) {
     case "fixed-width":
       return [
