@@ -3,7 +3,9 @@ import type {
   AiAuthStatus,
   ChatConversation,
   ChatMessage,
+  ChatModel,
   ChatPart,
+  ChatReasoning,
   ChatTurnEvent,
 } from "@aurora/shared";
 import { api, apiPatch, apiPost } from "../../lib/http.js";
@@ -46,11 +48,15 @@ export function createConversation(
   return apiPost("/api/ai/conversations", { projectId, title });
 }
 
-export function renameConversation(
+export function updateConversation(
   id: string,
-  title: string,
+  patch: {
+    title?: string;
+    model?: ChatModel;
+    reasoning?: ChatReasoning;
+  },
 ): Promise<ChatConversation> {
-  return apiPatch(`/api/ai/conversations/${id}`, { title });
+  return apiPatch(`/api/ai/conversations/${id}`, patch);
 }
 
 export function deleteConversation(id: string): Promise<void> {

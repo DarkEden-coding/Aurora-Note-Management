@@ -1,5 +1,11 @@
 // Owner-scoped chat conversation and message persistence.
-import type { ChatConversation, ChatMessage, ChatPart } from "@aurora/shared";
+import type {
+  ChatConversation,
+  ChatMessage,
+  ChatModel,
+  ChatPart,
+  ChatReasoning,
+} from "@aurora/shared";
 import { notFound } from "../errors.js";
 import { query } from "../db/pool.js";
 import { getProject } from "../library/projects.js";
@@ -8,6 +14,8 @@ type ConversationRow = {
   id: string;
   project_id: string;
   title: string;
+  model: ChatModel;
+  reasoning: ChatReasoning;
   created_at: Date;
   updated_at: Date;
 };
@@ -25,6 +33,8 @@ function mapConversation(row: ConversationRow): ChatConversation {
     id: row.id,
     projectId: row.project_id,
     title: row.title,
+    model: row.model,
+    reasoning: row.reasoning,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -46,13 +56,15 @@ export async function listConversations(
 ): Promise<ChatConversation[]> {
   const result = projectId
     ? await query<ConversationRow>(
-        `SELECT id, project_id, title, created_at, updated_at FROM chat_conversations
+        `SELECT id, project_id, title, model, reasoning, created_at, updated_at
+         FROM chat_conversations
          WHERE owner_id = $1 AND project_id = $2
          ORDER BY updated_at DESC`,
         [ownerId, projectId],
       )
     : await query<ConversationRow>(
-        `SELECT id, project_id, title, created_at, updated_at FROM chat_conversations
+        `SELECT id, project_id, title, model, reasoning, created_at, updated_at
+         FROM chat_conversations
          WHERE owner_id = $1
          ORDER BY updated_at DESC`,
         [ownerId],
@@ -69,7 +81,7 @@ export async function createConversation(
   const result = await query<ConversationRow>(
     `INSERT INTO chat_conversations (owner_id, project_id, title)
      VALUES ($1, $2, $3)
-     RETURNING id, project_id, title, created_at, updated_at`,
+     RETURNING id, project_id, title, model, reasoning, created_at, updated_at`,
     [ownerId, projectId, title],
   );
   return mapConversation(result.rows[0]!);
@@ -80,8 +92,8 @@ export async function getConversation(
   conversationId: string,
 ): Promise<ChatConversation> {
   const result = await query<ConversationRow>(
-    `SELECT id, project_id, title, created_at, updated_at FROM chat_conversations
-     WHERE owner_id = $1 AND id = $2`,
+    `SELECT id, project_id, title, model, reasoning, created_at, updated_at
+     FROM chat_conversations WHERE owner_id = $1 AND id = $2`,
     [ownerId, conversationId],
   );
   const row = result.rows[0];
@@ -92,13 +104,25 @@ export async function getConversation(
 export async function patchConversation(
   ownerId: string,
   conversationId: string,
-  title: string,
+  patch: {
+    title?: string | undefined;
+    model?: ChatModel | undefined;
+    reasoning?: ChatReasoning | undefined;
+  },
 ): Promise<ChatConversation> {
   const result = await query<ConversationRow>(
-    `UPDATE chat_conversations SET title = $3, updated_at = now()
+    `UPDATE chat_conversations SET
+       title = COALESCE($3, title), model = COALESCE($4, model),
+       reasoning = COALESCE($5, reasoning), updated_at = now()
      WHERE owner_id = $1 AND id = $2
-     RETURNING id, project_id, title, created_at, updated_at`,
-    [ownerId, conversationId, title],
+     RETURNING id, project_id, title, model, reasoning, created_at, updated_at`,
+    [
+      ownerId,
+      conversationId,
+      patch.title ?? null,
+      patch.model ?? null,
+      patch.reasoning ?? null,
+    ],
   );
   const row = result.rows[0];
   if (!row) throw notFound("Conversation");

@@ -13,12 +13,13 @@ import { useLibrary } from "../library/LibraryContext.js";
 import * as chatApi from "./api.js";
 
 export function ChatSidebar({
-  selectedId,
+  selectedConversation,
   onSelect,
 }: {
-  selectedId: string | null;
+  selectedConversation: ChatConversation | null;
   onSelect: (conversation: ChatConversation | null) => void;
 }) {
+  const selectedId = selectedConversation?.id ?? null;
   const library = useLibrary();
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -35,6 +36,15 @@ export function ChatSidebar({
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    if (!selectedConversation) return;
+    setConversations((current) =>
+      current.map((item) =>
+        item.id === selectedConversation.id ? selectedConversation : item,
+      ),
+    );
+  }, [selectedConversation]);
 
   const create = async (projectId: string) => {
     const conversation = await chatApi.createConversation(projectId);
@@ -54,7 +64,7 @@ export function ChatSidebar({
     const title = renameValue.trim();
     setRenameId(null);
     if (!title) return;
-    const updated = await chatApi.renameConversation(renameId, title);
+    const updated = await chatApi.updateConversation(renameId, { title });
     setConversations((current) =>
       current.map((item) => (item.id === updated.id ? updated : item)),
     );

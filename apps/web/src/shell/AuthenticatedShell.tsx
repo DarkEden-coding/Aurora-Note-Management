@@ -11,11 +11,15 @@ import { useSyncExternalStore } from "react";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { MainEditor } from "./MainEditor.js";
 import { ChatView } from "../features/chat/ChatView.js";
+import * as chatApi from "../features/chat/api.js";
 import "../features/chat/chatStyles.css";
-import type {
-  CanvasMode,
-  ChatConversation,
-  DrawingPalette,
+import {
+  CHAT_MODELS,
+  type CanvasMode,
+  type ChatConversation,
+  type ChatModel,
+  type ChatReasoning,
+  type DrawingPalette,
 } from "@aurora/shared";
 
 type DrawerKind = "none" | "settings" | "sync";
@@ -65,6 +69,51 @@ function canvasModeLabel(mode: CanvasMode): string {
     case "infinite":
       return "Infinite";
   }
+}
+
+/** Per-conversation model controls shown in the chat top bar. */
+function ChatControls({
+  conversation,
+  onChange,
+}: {
+  conversation: ChatConversation;
+  onChange: (patch: { model?: ChatModel; reasoning?: ChatReasoning }) => void;
+}) {
+  const selectedModel =
+    CHAT_MODELS.find((model) => model.id === conversation.model) ??
+    CHAT_MODELS[1];
+  return (
+    <div className="chat-topbar-controls">
+      <select
+        aria-label="Chat model"
+        value={conversation.model}
+        onChange={(event) =>
+          onChange({ model: event.target.value as ChatModel })
+        }
+      >
+        {CHAT_MODELS.map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.label}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="Reasoning level"
+        value={conversation.reasoning}
+        onChange={(event) =>
+          onChange({ reasoning: event.target.value as ChatReasoning })
+        }
+      >
+        {selectedModel.reasoningLevels.map((level) => (
+          <option key={level} value={level}>
+            {level === "xhigh"
+              ? "XHigh"
+              : `${level[0]!.toUpperCase()}${level.slice(1)}`}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 }
 
 function SyncPill({ onClick }: { onClick: () => void }) {
@@ -132,6 +181,16 @@ export function AuthenticatedShell({
   const selectedNote =
     library.notes.find((note) => note.id === library.selectedNoteId) ?? null;
 
+  /** Persists model controls on the selected conversation. */
+  const updateConversationSettings = async (patch: {
+    model?: ChatModel;
+    reasoning?: ChatReasoning;
+  }): Promise<void> => {
+    if (!conversation) return;
+    const updated = await chatApi.updateConversation(conversation.id, patch);
+    setConversation(updated);
+  };
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -139,7 +198,7 @@ export function AuthenticatedShell({
         onToggleCollapsed={() => setCollapsed((value) => !value)}
         view={view}
         onViewChange={setView}
-        selectedConversationId={conversation?.id ?? null}
+        selectedConversation={conversation}
         onSelectConversation={setConversation}
       />
 
@@ -158,6 +217,14 @@ export function AuthenticatedShell({
             )}
           </div>
           <div className="connection-status">
+            {view === "chat" && conversation ? (
+              <ChatControls
+                conversation={conversation}
+                onChange={(patch) =>
+                  void updateConversationSettings(patch).catch(() => undefined)
+                }
+              />
+            ) : null}
             <SyncPill onClick={() => setDrawer("sync")} />
             {view === "notes" && selectedNote ? (
               <span className="canvas-mode-indicator">

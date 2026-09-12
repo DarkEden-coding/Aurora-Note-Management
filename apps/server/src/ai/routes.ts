@@ -1,7 +1,12 @@
 // HTTP routes for ChatGPT device login, chat CRUD, note context, and streamed turns.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { chatPartSchema, idSchema } from "@aurora/shared";
+import {
+  chatModelSchema,
+  chatPartSchema,
+  chatReasoningSchema,
+  idSchema,
+} from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
 import { requireSessionPreHandler } from "../auth/sessions.js";
 import {
@@ -33,7 +38,13 @@ const createBody = z.object({
   projectId: idSchema,
   title: z.string().min(1).max(120).optional(),
 });
-const patchBody = z.object({ title: z.string().min(1).max(120) });
+const patchBody = z
+  .object({
+    title: z.string().min(1).max(120).optional(),
+    model: chatModelSchema.optional(),
+    reasoning: chatReasoningSchema.optional(),
+  })
+  .refine((patch) => Object.keys(patch).length > 0, "Patch cannot be empty");
 const grepQuery = z.object({ q: z.string().min(1).max(200) });
 const pollBody = z.object({
   deviceAuthId: z.string().min(1).max(200),
@@ -98,7 +109,7 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
   app.patch("/api/ai/conversations/:id", { preHandler }, async (request) => {
     const { id } = idParam.parse(request.params);
     const body = patchBody.parse(request.body);
-    return patchConversation(request.ownerId!, id, body.title);
+    return patchConversation(request.ownerId!, id, body);
   });
 
   app.delete(

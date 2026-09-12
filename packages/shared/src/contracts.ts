@@ -193,10 +193,41 @@ export const serverEventSchema = z.discriminatedUnion("type", [
 
 // ---- Agentic chat (GET/POST /api/ai/*) -----------------------------------
 
+export const CHAT_REASONING_LEVELS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+export const CHAT_MODELS = [
+  { id: "gpt-5.6-sol", label: "Sol", reasoningLevels: CHAT_REASONING_LEVELS },
+  {
+    id: "gpt-5.6-terra",
+    label: "Terra",
+    reasoningLevels: CHAT_REASONING_LEVELS,
+  },
+  {
+    id: "gpt-5.6-luna",
+    label: "Luna",
+    reasoningLevels: CHAT_REASONING_LEVELS,
+  },
+  { id: "gpt-6-astra", label: "Astra", reasoningLevels: CHAT_REASONING_LEVELS },
+] as const;
+export const chatModelSchema = z.enum([
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-6-astra",
+]);
+export const chatReasoningSchema = z.enum(CHAT_REASONING_LEVELS);
+
 export const chatConversationSchema = z.object({
   id: idSchema,
   projectId: idSchema,
   title: z.string(),
+  model: chatModelSchema,
+  reasoning: chatReasoningSchema,
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema,
 });
@@ -317,6 +348,8 @@ export type LibraryFolder = z.infer<typeof libraryFolderSchema>;
 export type LibraryNote = z.infer<typeof libraryNoteSchema>;
 export type LibraryTree = z.infer<typeof libraryTreeSchema>;
 export type ServerEvent = z.infer<typeof serverEventSchema>;
+export type ChatModel = z.infer<typeof chatModelSchema>;
+export type ChatReasoning = z.infer<typeof chatReasoningSchema>;
 export type ChatConversation = z.infer<typeof chatConversationSchema>;
 export type HtmlAct = z.infer<typeof htmlActSchema>;
 export type AiToolCall = z.infer<typeof aiToolCallSchema>;

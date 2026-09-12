@@ -3,8 +3,10 @@
 // the WebSocket event union — the payloads both Aurora runtimes exchange.
 import { describe, expect, it } from "vitest";
 import {
+  CHAT_MODELS,
   aiToolCallSchema,
   canvasModeSchema,
+  chatConversationSchema,
   chatTurnEventSchema,
   drawingPaletteSchema,
   libraryTreeSchema,
@@ -216,6 +218,50 @@ describe("aiToolCallSchema", () => {
         name: "screenshot_note",
         arguments: { noteId: "nope" },
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("chatConversationSchema", () => {
+  it("publishes the requested model names and their reasoning levels", () => {
+    expect(
+      CHAT_MODELS.map(({ id, label, reasoningLevels }) => ({
+        id,
+        label,
+        reasoningLevels: [...reasoningLevels],
+      })),
+    ).toEqual(
+      [
+        ["gpt-5.6-sol", "Sol"],
+        ["gpt-5.6-terra", "Terra"],
+        ["gpt-5.6-luna", "Luna"],
+        ["gpt-6-astra", "Astra"],
+      ].map(([id, label]) => ({
+        id,
+        label,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+      })),
+    );
+  });
+
+  it("accepts supported model settings and rejects unknown ones", () => {
+    const conversation = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      title: "Chat",
+      model: "gpt-5.6-terra",
+      reasoning: "medium",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    expect(chatConversationSchema.safeParse(conversation).success).toBe(true);
+    expect(
+      chatConversationSchema.safeParse({ ...conversation, model: "unknown" })
+        .success,
+    ).toBe(false);
+    expect(
+      chatConversationSchema.safeParse({ ...conversation, reasoning: "off" })
+        .success,
     ).toBe(false);
   });
 });

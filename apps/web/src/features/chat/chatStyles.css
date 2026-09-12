@@ -1,4 +1,20 @@
 /* Chat tab layout, transcript bubbles, HTML cards, and composer. Tokens only. */
+.chat-topbar-controls {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.chat-topbar-controls select {
+  width: auto;
+  min-width: 92px;
+  padding: 7px 28px 7px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: var(--panel-border);
+  border-radius: 999px;
+  font: inherit;
+}
+
 .chat-view {
   display: flex;
   flex-direction: column;

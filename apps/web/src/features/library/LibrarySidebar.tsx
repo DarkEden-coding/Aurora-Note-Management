@@ -28,7 +28,7 @@ interface SidebarProps {
   onToggleCollapsed: () => void;
   view: "notes" | "chat";
   onViewChange: (view: "notes" | "chat") => void;
-  selectedConversationId: string | null;
+  selectedConversation: ChatConversation | null;
   onSelectConversation: (conversation: ChatConversation | null) => void;
 }
 type DialogState =
@@ -73,7 +73,7 @@ export function Sidebar({
   onToggleCollapsed,
   view,
   onViewChange,
-  selectedConversationId,
+  selectedConversation,
   onSelectConversation,
 }: SidebarProps) {
   const library = useLibrary();
@@ -380,7 +380,7 @@ export function Sidebar({
         ) : null}
         {collapsed ? null : view === "chat" ? (
           <ChatSidebar
-            selectedId={selectedConversationId}
+            selectedConversation={selectedConversation}
             onSelect={onSelectConversation}
           />
         ) : (

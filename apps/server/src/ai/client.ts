@@ -1,5 +1,6 @@
 // Builds an OpenAI Responses client for ChatGPT Codex OAuth or a platform API key.
 import OpenAI from "openai";
+import type { ChatModel } from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
 import { DomainError } from "../errors.js";
 import {
@@ -19,13 +20,14 @@ export type AiClient = {
 export async function createAiClient(
   env: AuroraEnv,
   ownerId: string,
+  model?: ChatModel,
 ): Promise<AiClient> {
   const existing = await loadCredentials(ownerId);
   if (existing) {
     const creds = await getValidAccessToken(ownerId);
     return {
       openai: openaiFromChatGpt(creds),
-      model: env.AURORA_AI_MODEL,
+      model: model ?? env.AURORA_AI_MODEL,
       store: false,
     };
   }
@@ -38,7 +40,7 @@ export async function createAiClient(
   }
   return {
     openai: new OpenAI({ apiKey: env.OPENAI_API_KEY }),
-    model: env.AURORA_AI_MODEL,
+    model: model ?? env.AURORA_AI_MODEL,
     store: true,
   };
 }

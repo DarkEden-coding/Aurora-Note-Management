@@ -128,11 +128,9 @@ export async function streamTurn(params: {
       .map((part) => part.text)
       .join(" ");
     if (text) {
-      await patchConversation(
-        params.ownerId,
-        params.conversationId,
-        titleFrom(text),
-      );
+      await patchConversation(params.ownerId, params.conversationId, {
+        title: titleFrom(text),
+      });
     }
   }
 
@@ -140,6 +138,7 @@ export async function streamTurn(params: {
   const { openai, model, store } = await createAiClient(
     params.env,
     params.ownerId,
+    conversation.model,
   );
   const projectLine = `Current project id: ${conversation.projectId}`;
 
@@ -159,6 +158,7 @@ export async function streamTurn(params: {
       tools: AGENT_TOOLS as never,
       stream: true,
       store,
+      reasoning: { effort: conversation.reasoning },
     });
 
     let text = "";
