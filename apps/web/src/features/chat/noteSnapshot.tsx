@@ -14,6 +14,46 @@ const NOOP = {
   onStickyTextChange: () => undefined,
 };
 
+/** Opens a print-ready copy of a note so the browser can save it as PDF. */
+export async function exportNoteToPdf(
+  noteId: string,
+  title: string,
+): Promise<void> {
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) throw new Error("Allow pop-ups to export this note");
+
+  printWindow.document.title = title;
+  const style = printWindow.document.createElement("style");
+  style.textContent =
+    "html,body{margin:0;background:#fff}img{display:block;width:100%;break-after:page}img:last-child{break-after:auto}@page{margin:0}";
+  printWindow.document.head.appendChild(style);
+  printWindow.document.body.textContent = "Preparing PDF…";
+
+  try {
+    const first = await screenshotNote(noteId);
+    const images = [...first.images];
+    for (let tile = 1; tile < first.tileCount; tile += 1) {
+      images.push(...(await screenshotNote(noteId, tile)).images);
+    }
+    printWindow.document.body.replaceChildren(
+      ...images.map((source) => {
+        const image = printWindow.document.createElement("img");
+        image.src = source;
+        image.alt = "";
+        return image;
+      }),
+    );
+    await Promise.all(
+      [...printWindow.document.images].map((image) => image.decode()),
+    );
+    printWindow.focus();
+    printWindow.print();
+  } catch (cause) {
+    printWindow.close();
+    throw cause;
+  }
+}
+
 export async function screenshotNote(
   noteId: string,
   tile = 0,

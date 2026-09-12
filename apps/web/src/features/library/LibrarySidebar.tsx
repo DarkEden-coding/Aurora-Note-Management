@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  Download,
   FileText,
   Folder,
   FolderOpen,
@@ -23,6 +24,7 @@ import type { LibraryFolder, LibraryProject } from "./types.js";
 import { useLibrary } from "./LibraryContext.js";
 import type { ChatConversation } from "@aurora/shared";
 import { ChatSidebar } from "../chat/ChatSidebar.js";
+import { exportNoteToPdf } from "../chat/noteSnapshot.js";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -350,6 +352,15 @@ export function Sidebar({
           value: target.item.name,
         });
     } else {
+      if (action === "export")
+        void exportNoteToPdf(
+          target.item.id,
+          target.item.title || "Untitled",
+        ).catch((cause: unknown) =>
+          window.alert(
+            cause instanceof Error ? cause.message : "Could not export note",
+          ),
+        );
       if (action === "rename")
         setDialog({
           kind: "rename-note",
@@ -573,10 +584,15 @@ function ContextMenu({
         </button>
       ) : null}
       {menu.target.kind === "note" ? (
-        <button role="menuitem" onClick={() => onAction("favorite")}>
-          <Star size={14} />{" "}
-          {menu.target.item.favorite ? "Remove favorite" : "Add favorite"}
-        </button>
+        <>
+          <button role="menuitem" onClick={() => onAction("export")}>
+            <Download size={14} /> Export to PDF
+          </button>
+          <button role="menuitem" onClick={() => onAction("favorite")}>
+            <Star size={14} />{" "}
+            {menu.target.item.favorite ? "Remove favorite" : "Add favorite"}
+          </button>
+        </>
       ) : null}
       {isAddNote ? null : (
         <>
