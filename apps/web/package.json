@@ -24,10 +24,15 @@
     "dexie": "^4.4.5",
     "dexie-react-hooks": "^1.1.7",
     "html2canvas": "^1.4.1",
+    "katex": "^0.16.47",
     "lucide-react": "^1.39.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",

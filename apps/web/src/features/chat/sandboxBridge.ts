@@ -1,6 +1,5 @@
-// Srcdoc sandbox: theme tokens, html2canvas screenshot, click/type/eval via postMessage.
+// Srcdoc sandbox: theme tokens, DOM screenshot, click/type/eval via postMessage.
 import type { HtmlAct } from "@aurora/shared";
-import html2canvasSource from "html2canvas/dist/html2canvas.min.js?raw";
 
 const HOST = "aurora-host";
 const SANDBOX = "aurora-sandbox";
@@ -28,8 +27,7 @@ export function themeVarsFrom(
 
 export function buildSrcdoc(html: string, themeCss: string): string {
   const themeStyle = `:root { ${themeCss} } html,body{margin:0;min-height:100%;background:var(--bg,#151820);color:var(--text,#f1f3f8);font-family:var(--font,sans-serif);}`;
-  const canvasSource = html2canvasSource.replace(/<\/script/gi, "<\\/script");
-  const bridge = `<script>${canvasSource}</script><script>${BRIDGE_SOURCE}</script>`;
+  const bridge = `<script>${BRIDGE_SOURCE}</script>`;
   if (/<html[\s>]/i.test(html)) {
     let doc = html;
     if (/<head[\s>]/i.test(doc)) {
@@ -68,12 +66,24 @@ const BRIDGE_SOURCE = `
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
   }
   async function capture() {
-    var target = document.documentElement;
-    if (window.html2canvas) {
-      var canvas = await window.html2canvas(target, { backgroundColor: null, scale: 1, useCORS: true });
-      return canvas.toDataURL("image/png");
-    }
-    throw new Error("html2canvas missing");
+    var width = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+    var height = Math.max(document.documentElement.scrollHeight, window.innerHeight);
+    var clone = document.documentElement.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    clone.querySelectorAll("script,iframe,object,embed").forEach(function (node) { node.remove(); });
+    var markup = new XMLSerializer().serializeToString(clone);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '"><foreignObject width="100%" height="100%">' + markup + '</foreignObject></svg>';
+    var image = new Image();
+    await new Promise(function (resolve, reject) {
+      image.onload = resolve;
+      image.onerror = function () { reject(new Error("Could not rasterize HTML")); };
+      image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    });
+    var canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(image, 0, 0);
+    return canvas.toDataURL("image/png");
   }
   async function act(action) {
     if (action.click) {

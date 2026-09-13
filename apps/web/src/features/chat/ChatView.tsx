@@ -14,6 +14,7 @@ import type {
 } from "@aurora/shared";
 import { HtmlArtifact } from "./HtmlArtifact.js";
 import { HtmlWorkbench, type HtmlWorkbenchHandle } from "./HtmlWorkbench.js";
+import { MarkdownText } from "./MarkdownText.js";
 import { runAgentTurn, type ToolProgress } from "./agentLoop.js";
 import * as chatApi from "./api.js";
 import "./chatStyles.css";
@@ -177,7 +178,7 @@ export function ChatView({
         ))}
         {streamText ? (
           <div className="chat-bubble assistant">
-            <div className="chat-text">{streamText}</div>
+            <MarkdownText>{streamText}</MarkdownText>
           </div>
         ) : null}
         {toolProgress.length > 0 ? (
@@ -294,7 +295,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     <div className={`chat-bubble ${message.role}${hasHtml ? " has-html" : ""}`}>
       {visible.map((part, index) => {
         if (part.type === "text") {
-          return (
+          return message.role === "assistant" ? (
+            <MarkdownText key={index}>{part.text}</MarkdownText>
+          ) : (
             <div key={index} className="chat-text">
               {part.text}
             </div>
