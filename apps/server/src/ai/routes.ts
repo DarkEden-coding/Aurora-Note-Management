@@ -181,7 +181,7 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
   app.post(
     "/api/ai/math/solve",
     { preHandler, bodyLimit: 8_388_608 },
-    async (request) => {
+    async (request, reply) => {
       const { image } = mathSolveBody.parse(request.body);
       const { openai, store } = await createAiClient(
         env,
@@ -192,9 +192,9 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
         model: "gpt-5.6-luna",
         store,
         stream: true,
-        reasoning: { effort: "high" },
+        reasoning: { effort: "high", summary: "auto" },
         instructions:
-          "Read and solve or simplify the mathematical content in the image. A valid problem may be only a numerical expression with no variables, question text, or equals sign. Evaluate arithmetic expressions and simplify fractions, powers, radicals, and similar numeric notation. Return plain text only. Show concise, numbered steps, then finish with a line starting exactly 'Answer:'. Only report missing content when no mathematical expression is visible or the visible notation is genuinely incomplete; never require a variable or equation.",
+          "Read and solve or simplify the mathematical content in the image. A valid problem may be only a numerical expression with no variables, question text, or equals sign. Evaluate arithmetic expressions and simplify fractions, powers, radicals, and similar numeric notation. Return plain text only. Begin by rewriting the original visible question or expression on a line starting exactly 'Question:'. Then show concise, numbered steps and finish with a line starting exactly 'Answer:'. Only report missing content when no mathematical expression is visible or the visible notation is genuinely incomplete; never require a variable or equation.",
         input: [
           {
             role: "user",
@@ -205,20 +205,47 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
           },
         ],
       });
+
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      const send = (event: Record<string, unknown>): void => {
+        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
       let solution = "";
-      for await (const event of stream) {
-        if (event.type === "response.output_text.delta") {
-          solution += event.delta;
+      let reasoningDone = false;
+      try {
+        for await (const event of stream) {
+          if (event.type === "response.reasoning_summary_text.delta") {
+            send({ type: "reasoning-delta", delta: event.delta });
+          }
+          if (event.type === "response.output_text.delta") {
+            if (!reasoningDone) {
+              send({ type: "reasoning-done" });
+              reasoningDone = true;
+            }
+            solution += event.delta;
+            send({ type: "text-delta", delta: event.delta });
+          }
         }
+        if (!solution.trim()) {
+          send({ type: "error", message: "Math solver returned no solution" });
+        } else {
+          send({ type: "done" });
+        }
+      } catch (error) {
+        send({
+          type: "error",
+          message:
+            error instanceof Error ? error.message : "Math solver failed",
+        });
+      } finally {
+        reply.raw.end();
       }
-      if (!solution.trim()) {
-        throw new DomainError(
-          502,
-          "upstream",
-          "Math solver returned no solution",
-        );
-      }
-      return { solution };
     },
   );
 

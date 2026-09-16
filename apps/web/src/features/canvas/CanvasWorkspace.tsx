@@ -91,7 +91,7 @@ import {
   captureMathRegion,
   expandResultRegion,
   normalizeRegion,
-  solveMathImage,
+  streamMathSolution,
   type ScreenRegion,
 } from "./mathSolver";
 import { usePenCapture } from "./usePenCapture";
@@ -295,8 +295,15 @@ export function CanvasWorkspace({
   const [importError, setImportError] = useState<string | null>(null);
   const [mathSelection, setMathSelection] = useState<ScreenRegion | null>(null);
   const [mathImage, setMathImage] = useState<string | null>(null);
+  const [mathReasoning, setMathReasoning] = useState("");
+  const [mathReasoningOpen, setMathReasoningOpen] = useState(true);
   const [mathSolution, setMathSolution] = useState<string | null>(null);
   const [mathBusy, setMathBusy] = useState(false);
+  const mathDragRef = useRef<{
+    pointerId: number;
+    start: Point;
+    origin: Point;
+  } | null>(null);
   const importedPdfRef = useRef<File | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
@@ -1071,6 +1078,8 @@ export function CanvasWorkspace({
 
       if (tool === "math") {
         setMathImage(null);
+        setMathReasoning("");
+        setMathReasoningOpen(true);
         setMathSolution(null);
         setMathSelection({ x: screen.x, y: screen.y, width: 0, height: 0 });
         setActiveGesture({ kind: "math", start: screen, current: screen });
@@ -1438,14 +1447,27 @@ export function CanvasWorkspace({
                 viewport.clientHeight,
               ),
             );
-            return solveMathImage(image);
+            return image;
           })
-          .then(setMathSolution)
-          .catch((error: unknown) =>
+          .then(async (image) => {
+            for await (const event of streamMathSolution(image)) {
+              if (event.type === "reasoning-delta") {
+                setMathReasoning((current) => current + event.delta);
+                setMathReasoningOpen(true);
+              } else if (event.type === "reasoning-done") {
+                setMathReasoningOpen(false);
+              } else if (event.type === "text-delta") {
+                setMathReasoningOpen(false);
+                setMathSolution((current) => (current ?? "") + event.delta);
+              }
+            }
+          })
+          .catch((error: unknown) => {
+            setMathReasoningOpen(false);
             setMathSolution(
               error instanceof Error ? error.message : "Math solver failed",
-            ),
-          )
+            );
+          })
           .finally(() => {
             setMathBusy(false);
             setTool("select");
@@ -2147,21 +2169,78 @@ export function CanvasWorkspace({
             aria-hidden={
               !mathBusy && mathSolution === null ? "true" : undefined
             }
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerMove={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
           >
             {mathBusy || mathSolution !== null ? (
               <>
-                <button
-                  type="button"
-                  className="ghost icon-button"
-                  aria-label="Close math solution"
-                  onClick={() => {
-                    setMathImage(null);
-                    setMathSolution(null);
-                    setMathSelection(null);
+                <div
+                  className="canvas-math-header"
+                  onPointerDown={(event) => {
+                    if (mathSelection === null) return;
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    mathDragRef.current = {
+                      pointerId: event.pointerId,
+                      start: { x: event.clientX, y: event.clientY },
+                      origin: { x: mathSelection.x, y: mathSelection.y },
+                    };
+                  }}
+                  onPointerMove={(event) => {
+                    const drag = mathDragRef.current;
+                    if (
+                      drag === null ||
+                      drag.pointerId !== event.pointerId ||
+                      mathSelection === null
+                    )
+                      return;
+                    setMathSelection((current) =>
+                      current === null
+                        ? null
+                        : {
+                            ...current,
+                            x: Math.max(
+                              0,
+                              Math.min(
+                                containerSize.width - current.width,
+                                drag.origin.x + event.clientX - drag.start.x,
+                              ),
+                            ),
+                            y: Math.max(
+                              0,
+                              Math.min(
+                                containerSize.height - current.height,
+                                drag.origin.y + event.clientY - drag.start.y,
+                              ),
+                            ),
+                          },
+                    );
+                  }}
+                  onPointerUp={(event) => {
+                    if (mathDragRef.current?.pointerId === event.pointerId) {
+                      mathDragRef.current = null;
+                      event.currentTarget.releasePointerCapture(
+                        event.pointerId,
+                      );
+                    }
                   }}
                 >
-                  <X size={14} />
-                </button>
+                  <span>Math solution</span>
+                  <button
+                    type="button"
+                    className="ghost icon-button"
+                    aria-label="Close math solution"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => {
+                      setMathImage(null);
+                      setMathReasoning("");
+                      setMathSolution(null);
+                      setMathSelection(null);
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
                 {mathImage === null ? (
                   mathBusy ? (
                     <LoaderCircle className="canvas-math-spinner" size={28} />
@@ -2172,13 +2251,33 @@ export function CanvasWorkspace({
                   <div className="canvas-math-content">
                     <img src={mathImage} alt="Selected math problem" />
                     <div className="canvas-math-answer">
-                      {mathBusy ? (
+                      {mathBusy &&
+                      mathReasoning.length === 0 &&
+                      !mathSolution ? (
                         <LoaderCircle
                           className="canvas-math-spinner"
                           size={28}
                         />
                       ) : (
-                        <pre>{mathSolution}</pre>
+                        <div className="canvas-math-stream">
+                          {mathReasoning ? (
+                            <details
+                              className="canvas-math-reasoning"
+                              open={mathReasoningOpen}
+                              onToggle={(event) =>
+                                setMathReasoningOpen(event.currentTarget.open)
+                              }
+                            >
+                              <summary>Reasoning</summary>
+                              <pre>{mathReasoning}</pre>
+                            </details>
+                          ) : null}
+                          {mathSolution !== null ? (
+                            <pre className="canvas-math-solution">
+                              {mathSolution}
+                            </pre>
+                          ) : null}
+                        </div>
                       )}
                     </div>
                   </div>

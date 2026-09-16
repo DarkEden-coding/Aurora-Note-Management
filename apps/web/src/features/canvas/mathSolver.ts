@@ -84,15 +84,23 @@ export async function captureMathRegion(
   return output.toDataURL("image/png");
 }
 
-/** Sends a captured problem to the authenticated Luna math solver. */
-export async function solveMathImage(image: string): Promise<string> {
+export type MathSolveEvent =
+  | { type: "reasoning-delta"; delta: string }
+  | { type: "reasoning-done" }
+  | { type: "text-delta"; delta: string }
+  | { type: "done" };
+
+/** Streams a captured problem through the authenticated Luna math solver. */
+export async function* streamMathSolution(
+  image: string,
+): AsyncGenerator<MathSolveEvent> {
   const response = await fetch("/api/ai/math/solve", {
     method: "POST",
     credentials: "same-origin",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ image }),
   });
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     const body = (await response.json().catch(() => null)) as {
       error?: { message?: unknown };
     } | null;
@@ -103,9 +111,25 @@ export async function solveMathImage(image: string): Promise<string> {
         : `Math solver failed (${response.status})`,
     );
   }
-  const body = (await response.json()) as { solution?: unknown };
-  if (typeof body.solution !== "string" || !body.solution.trim()) {
-    throw new Error("Math solver returned no solution");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const line = chunk
+        .split("\n")
+        .find((entry) => entry.startsWith("data: "));
+      if (!line) continue;
+      const event = JSON.parse(line.slice(6)) as
+        MathSolveEvent | { type: "error"; message: string };
+      if (event.type === "error") throw new Error(event.message);
+      yield event;
+    }
   }
-  return body.solution;
 }
