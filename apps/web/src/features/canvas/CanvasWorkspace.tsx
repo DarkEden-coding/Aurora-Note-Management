@@ -89,6 +89,7 @@ import {
 import { shouldRejectTouch } from "./pointerInput";
 import {
   captureMathRegion,
+  expandResultRegion,
   normalizeRegion,
   solveMathImage,
   type ScreenRegion,
@@ -293,6 +294,7 @@ export function CanvasWorkspace({
   const [pageCount, setPageCount] = useState(1);
   const [importError, setImportError] = useState<string | null>(null);
   const [mathSelection, setMathSelection] = useState<ScreenRegion | null>(null);
+  const [mathImage, setMathImage] = useState<string | null>(null);
   const [mathSolution, setMathSolution] = useState<string | null>(null);
   const [mathBusy, setMathBusy] = useState(false);
   const importedPdfRef = useRef<File | null>(null);
@@ -1068,6 +1070,7 @@ export function CanvasWorkspace({
       if (tool !== "select" && isInsideEditable(e.target)) return;
 
       if (tool === "math") {
+        setMathImage(null);
         setMathSolution(null);
         setMathSelection({ x: screen.x, y: screen.y, width: 0, height: 0 });
         setActiveGesture({ kind: "math", start: screen, current: screen });
@@ -1424,8 +1427,19 @@ export function CanvasWorkspace({
         }
         setMathSelection(region);
         setMathBusy(true);
-        void captureMathRegion(e.currentTarget, region)
-          .then(solveMathImage)
+        const viewport = e.currentTarget;
+        void captureMathRegion(viewport, region)
+          .then((image) => {
+            setMathImage(image);
+            setMathSelection(
+              expandResultRegion(
+                region,
+                viewport.clientWidth,
+                viewport.clientHeight,
+              ),
+            );
+            return solveMathImage(image);
+          })
           .then(setMathSolution)
           .catch((error: unknown) =>
             setMathSolution(
@@ -2134,22 +2148,41 @@ export function CanvasWorkspace({
               !mathBusy && mathSolution === null ? "true" : undefined
             }
           >
-            {mathBusy ? (
-              <LoaderCircle className="canvas-math-spinner" size={28} />
-            ) : mathSolution !== null ? (
+            {mathBusy || mathSolution !== null ? (
               <>
                 <button
                   type="button"
                   className="ghost icon-button"
                   aria-label="Close math solution"
                   onClick={() => {
+                    setMathImage(null);
                     setMathSolution(null);
                     setMathSelection(null);
                   }}
                 >
                   <X size={14} />
                 </button>
-                <pre>{mathSolution}</pre>
+                {mathImage === null ? (
+                  mathBusy ? (
+                    <LoaderCircle className="canvas-math-spinner" size={28} />
+                  ) : (
+                    <pre>{mathSolution}</pre>
+                  )
+                ) : (
+                  <div className="canvas-math-content">
+                    <img src={mathImage} alt="Selected math problem" />
+                    <div className="canvas-math-answer">
+                      {mathBusy ? (
+                        <LoaderCircle
+                          className="canvas-math-spinner"
+                          size={28}
+                        />
+                      ) : (
+                        <pre>{mathSolution}</pre>
+                      )}
+                    </div>
+                  </div>
+                )}
               </>
             ) : null}
           </div>

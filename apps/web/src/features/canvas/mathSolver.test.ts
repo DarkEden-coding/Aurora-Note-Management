@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { normalizeRegion, solveMathImage } from "./mathSolver";
+import {
+  expandResultRegion,
+  normalizeRegion,
+  solveMathImage,
+} from "./mathSolver";
 
 const originalFetch = globalThis.fetch;
 
@@ -17,6 +21,14 @@ describe("normalizeRegion", () => {
       width: 70,
       height: 40,
     });
+  });
+});
+
+describe("expandResultRegion", () => {
+  it("centers the expanded result and keeps it inside the viewport", () => {
+    expect(
+      expandResultRegion({ x: 700, y: 500, width: 100, height: 50 }, 800, 600),
+    ).toEqual({ x: 168, y: 248, width: 620, height: 340 });
   });
 });
 

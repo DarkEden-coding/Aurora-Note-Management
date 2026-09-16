@@ -26,6 +26,41 @@ export function normalizeRegion(
   };
 }
 
+/** Expands a selected region around its center without leaving the viewport. */
+export function expandResultRegion(
+  region: ScreenRegion,
+  viewportWidth: number,
+  viewportHeight: number,
+): ScreenRegion {
+  const margin = 12;
+  const width = Math.min(
+    Math.max(1, viewportWidth - margin * 2),
+    Math.max(region.width, 620),
+  );
+  const height = Math.min(
+    Math.max(1, viewportHeight - margin * 2),
+    Math.max(region.height, 340),
+  );
+  return {
+    x: Math.max(
+      margin,
+      Math.min(
+        region.x + region.width / 2 - width / 2,
+        viewportWidth - width - margin,
+      ),
+    ),
+    y: Math.max(
+      margin,
+      Math.min(
+        region.y + region.height / 2 - height / 2,
+        viewportHeight - height - margin,
+      ),
+    ),
+    width,
+    height,
+  };
+}
+
 /** Captures a selected viewport region as a PNG data URL. */
 export async function captureMathRegion(
   viewport: HTMLElement,
