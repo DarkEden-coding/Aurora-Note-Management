@@ -25,7 +25,7 @@ import {
   fetchNote,
 } from "../library/api";
 import { syncEngine } from "../../sync/engine";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { CanvasScrollbars } from "./CanvasScrollbars";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
@@ -87,6 +87,12 @@ import {
   resizeBoundsInMode,
 } from "./pageLayout";
 import { shouldRejectTouch } from "./pointerInput";
+import {
+  captureMathRegion,
+  normalizeRegion,
+  solveMathImage,
+  type ScreenRegion,
+} from "./mathSolver";
 import { usePenCapture } from "./usePenCapture";
 import { useSelection } from "./useSelection";
 import { useViewport } from "./useViewport";
@@ -141,7 +147,8 @@ type Gesture =
       start: Point;
       current: Point;
       snapTo45: boolean;
-    };
+    }
+  | { kind: "math"; start: Point; current: Point };
 
 type CreateTool =
   "line" | "rectangle" | "ellipse" | "arrow" | "matrix" | "sticky" | "text";
@@ -285,6 +292,9 @@ export function CanvasWorkspace({
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [pageCount, setPageCount] = useState(1);
   const [importError, setImportError] = useState<string | null>(null);
+  const [mathSelection, setMathSelection] = useState<ScreenRegion | null>(null);
+  const [mathSolution, setMathSolution] = useState<string | null>(null);
+  const [mathBusy, setMathBusy] = useState(false);
   const importedPdfRef = useRef<File | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
@@ -1057,6 +1067,18 @@ export function CanvasWorkspace({
 
       if (tool !== "select" && isInsideEditable(e.target)) return;
 
+      if (tool === "math") {
+        setMathSolution(null);
+        setMathSelection({ x: screen.x, y: screen.y, width: 0, height: 0 });
+        setActiveGesture({ kind: "math", start: screen, current: screen });
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch {
+          // Pointer capture is best-effort.
+        }
+        return;
+      }
+
       if (tool === "eraser") {
         const removed = new Map<string, CanvasObject>();
         setActiveGesture({ kind: "erase", last: canvasPoint, removed });
@@ -1275,6 +1297,18 @@ export function CanvasWorkspace({
         return;
       }
 
+      if (current.kind === "math") {
+        current.current = screen;
+        setMathSelection(
+          normalizeRegion(
+            current.start,
+            screen,
+            containerSize.width,
+            containerSize.height,
+          ),
+        );
+        return;
+      }
       const canvasPoint = screenToCanvas(screen, viewportRef.current);
       if (current.kind === "erase") {
         eraseStrokeBetween(current.last, canvasPoint, current.removed);
@@ -1375,6 +1409,36 @@ export function CanvasWorkspace({
       const current = gestureRef.current;
       setActiveGesture(null);
       if (current === null) return;
+
+      if (current.kind === "math") {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const region = normalizeRegion(
+          current.start,
+          { x: e.clientX - rect.left, y: e.clientY - rect.top },
+          e.currentTarget.clientWidth,
+          e.currentTarget.clientHeight,
+        );
+        if (region.width < 12 || region.height < 12) {
+          setMathSelection(null);
+          return;
+        }
+        setMathSelection(region);
+        setMathBusy(true);
+        void captureMathRegion(e.currentTarget, region)
+          .then(solveMathImage)
+          .then(setMathSolution)
+          .catch((error: unknown) =>
+            setMathSolution(
+              error instanceof Error ? error.message : "Math solver failed",
+            ),
+          )
+          .finally(() => {
+            setMathBusy(false);
+            setMathSelection(null);
+            setTool("select");
+          });
+        return;
+      }
 
       if (current.kind === "erase") {
         const rect = e.currentTarget.getBoundingClientRect();
@@ -1493,7 +1557,9 @@ export function CanvasWorkspace({
         return;
       }
       const current = gestureRef.current;
-      if (current?.kind === "erase") {
+      if (current?.kind === "math") {
+        setMathSelection(null);
+      } else if (current?.kind === "erase") {
         const next = [...objectsRef.current, ...current.removed.values()];
         objectsRef.current = next;
         setMirror(next);
@@ -2051,6 +2117,34 @@ export function CanvasWorkspace({
           >
             {importError}
           </button>
+        ) : null}
+        {mathSelection !== null ? (
+          <div
+            className="canvas-math-selection"
+            style={mathSelection}
+            aria-hidden="true"
+          />
+        ) : null}
+        {mathBusy ? (
+          <div className="canvas-math-result" role="status">
+            Solving with Luna…
+          </div>
+        ) : mathSolution !== null ? (
+          <div
+            className="canvas-math-result panel"
+            role="dialog"
+            aria-label="Math solution"
+          >
+            <button
+              type="button"
+              className="ghost icon-button"
+              aria-label="Close math solution"
+              onClick={() => setMathSolution(null)}
+            >
+              <X size={14} />
+            </button>
+            <pre>{mathSolution}</pre>
+          </div>
         ) : null}
         {tool === "eraser" && eraserPointer !== null ? (
           <span

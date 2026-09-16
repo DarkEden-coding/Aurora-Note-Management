@@ -24,6 +24,7 @@ import {
   readNoteText,
 } from "./noteText.js";
 import { streamTurn } from "./turn.js";
+import { createAiClient } from "./client.js";
 
 const idParam = z.object({ id: idSchema });
 const projectParam = z.object({ projectId: idSchema });
@@ -44,6 +45,12 @@ const grepQuery = z.object({ q: z.string().min(1).max(200) });
 const pollBody = z.object({
   deviceAuthId: z.string().min(1).max(200),
   userCode: z.string().min(1).max(64),
+});
+const mathSolveBody = z.object({
+  image: z
+    .string()
+    .max(8_000_000)
+    .regex(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/),
 });
 const turnBody = z.object({
   messages: z
@@ -158,6 +165,36 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
         reply,
         signal: controller.signal,
       });
+    },
+  );
+
+  app.post(
+    "/api/ai/math/solve",
+    { preHandler, bodyLimit: 8_388_608 },
+    async (request) => {
+      const { image } = mathSolveBody.parse(request.body);
+      const { openai, store } = await createAiClient(
+        env,
+        request.ownerId!,
+        "gpt-5.6-luna",
+      );
+      const response = await openai.responses.create({
+        model: "gpt-5.6-luna",
+        store,
+        reasoning: { effort: "high" },
+        instructions:
+          "Solve the math problem in the image. Return plain text only. Show concise, numbered steps, then finish with a line starting exactly 'Answer:'. If the image is unclear or the problem is incomplete, say exactly what is missing instead of guessing.",
+        input: [
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: "Solve the selected problem." },
+              { type: "input_image", image_url: image, detail: "high" },
+            ],
+          },
+        ],
+      });
+      return { solution: response.output_text };
     },
   );
 

@@ -66,6 +66,38 @@
   cursor: crosshair;
 }
 
+.canvas-math-selection {
+  position: absolute;
+  z-index: 12;
+  border: 2px solid var(--aurora-canvas-accent);
+  background: color-mix(in srgb, var(--aurora-canvas-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.canvas-math-result {
+  position: absolute;
+  z-index: 13;
+  top: 16px;
+  right: 16px;
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.canvas-math-result .icon-button {
+  float: right;
+}
+
+.canvas-math-result pre {
+  margin: 0;
+  color: var(--text);
+  font: inherit;
+  white-space: pre-wrap;
+}
+
 .canvas-background {
   position: absolute;
   inset: 0;
