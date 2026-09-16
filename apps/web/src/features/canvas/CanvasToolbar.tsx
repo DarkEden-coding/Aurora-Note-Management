@@ -7,16 +7,12 @@ import {
   Circle,
   Eraser,
   Hand,
-  Maximize,
   MousePointer2,
   Pen,
-  Plus,
   Redo2,
   Slash,
   Square,
-  StickyNote,
   Type,
-  Minus,
   Undo2,
 } from "lucide-react";
 export type CanvasTool =
@@ -30,7 +26,6 @@ export type CanvasTool =
   | "ellipse"
   | "arrow"
   | "matrix"
-  | "sticky"
   | "text";
 
 export interface CanvasToolbarProps {
@@ -43,9 +38,6 @@ export interface CanvasToolbarProps {
   onToolChange: (tool: CanvasTool) => void;
   onUndo: () => void;
   onRedo: () => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
 }
 
 interface ToolButton {
@@ -70,7 +62,6 @@ const TOOLS: ToolButton[] = [
     label: "Matrix brackets (M)",
     icon: <Brackets size={16} />,
   },
-  { tool: "sticky", label: "Sticky note (S)", icon: <StickyNote size={16} /> },
 ];
 
 export function CanvasToolbar({
@@ -83,9 +74,6 @@ export function CanvasToolbar({
   onToolChange,
   onUndo,
   onRedo,
-  onZoomIn,
-  onZoomOut,
-  onZoomReset,
 }: CanvasToolbarProps): ReactNode {
   return (
     <>
@@ -106,39 +94,6 @@ export function CanvasToolbar({
               {button.icon}
             </button>
           ))}
-        </div>
-        <div className="canvas-toolbar-divider" />
-        <div className="canvas-toolbar-group">
-          <button
-            type="button"
-            title="Zoom out"
-            aria-label="Zoom out"
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={onZoomOut}
-          >
-            <Minus size={16} />
-          </button>
-          <button
-            type="button"
-            title="Reset zoom"
-            aria-label="Reset zoom"
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={onZoomReset}
-          >
-            <Maximize size={16} />
-          </button>
-          <button
-            type="button"
-            title="Zoom in"
-            aria-label="Zoom in"
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={onZoomIn}
-          >
-            <Plus size={16} />
-          </button>
         </div>
         <div className="canvas-toolbar-divider" />
         <div className="canvas-toolbar-group">

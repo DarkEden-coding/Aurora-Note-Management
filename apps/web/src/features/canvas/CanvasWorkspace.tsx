@@ -17,6 +17,7 @@ import {
   type CanvasObject,
   type DrawingPalette,
   type SyncOperation,
+  type Viewport,
 } from "@aurora/shared";
 import { reconcileObject } from "./reconcileObject";
 import { db } from "../../sync/db";
@@ -120,9 +121,7 @@ export interface CanvasWorkspaceProps {
 }
 
 const STROKE_TOOL_WIDTH = 2.5;
-const DEFAULT_STICKY_WIDTH = 190;
-const DEFAULT_STICKY_HEIGHT = 190;
-const STICKY_COLOR = "#f7d774";
+const VIEWPORT_STATE_PREFIX = "aurora.viewport.";
 const HANDLE_SCREEN_SIZE = 9;
 const HANDLE_HIT_TOLERANCE_SCREEN = 12;
 
@@ -153,7 +152,7 @@ type Gesture =
   | { kind: "math"; start: Point; current: Point };
 
 type CreateTool =
-  "line" | "rectangle" | "ellipse" | "arrow" | "matrix" | "sticky" | "text";
+  "line" | "rectangle" | "ellipse" | "arrow" | "matrix" | "text";
 
 type HistoryEntry = {
   before: CanvasObject[];
@@ -202,9 +201,50 @@ const CREATE_TOOLS: readonly string[] = [
   "ellipse",
   "arrow",
   "matrix",
-  "sticky",
   "text",
 ];
+
+/** Restores a note's canvas position when the stored state is valid. */
+function readSavedViewport(
+  noteId: string,
+): Pick<Viewport, "x" | "y" | "zoom"> | null {
+  try {
+    const saved: unknown = JSON.parse(
+      localStorage.getItem(`${VIEWPORT_STATE_PREFIX}${noteId}`) ?? "null",
+    );
+    const candidate = saved as Record<string, unknown> | null;
+    if (
+      candidate !== null &&
+      Number.isFinite(candidate.x) &&
+      Number.isFinite(candidate.y) &&
+      Number.isFinite(candidate.zoom) &&
+      typeof candidate.x === "number" &&
+      typeof candidate.y === "number" &&
+      typeof candidate.zoom === "number" &&
+      candidate.zoom > 0
+    ) {
+      return { x: candidate.x, y: candidate.y, zoom: candidate.zoom };
+    }
+  } catch {
+    // Start at the default position when browser storage is unavailable or stale.
+  }
+  return null;
+}
+
+/** Saves only the canvas position needed to restore this note. */
+function saveViewport(
+  noteId: string,
+  viewport: Pick<Viewport, "x" | "y" | "zoom">,
+): void {
+  try {
+    localStorage.setItem(
+      `${VIEWPORT_STATE_PREFIX}${noteId}`,
+      JSON.stringify(viewport),
+    );
+  } catch {
+    // State restoration is optional when browser storage is unavailable.
+  }
+}
 
 function isCreateTool(tool: CanvasTool): tool is CreateTool {
   return CREATE_TOOLS.includes(tool);
@@ -757,19 +797,17 @@ export function CanvasWorkspace({
       if (objectsRef.current.length >= MAX_OBJECTS_PER_NOTE) return;
       const bounds = clampBoundsToMode(raw, activeMode);
       const kind =
-        createTool === "sticky"
-          ? ("sticky-note" as const)
-          : createTool === "text"
-            ? ("rich-text" as const)
-            : createTool === "rectangle"
-              ? ("rectangle" as const)
-              : createTool === "ellipse"
-                ? ("ellipse" as const)
-                : createTool === "arrow"
-                  ? ("arrow" as const)
-                  : createTool === "matrix"
-                    ? ("matrix" as const)
-                    : ("line" as const);
+        createTool === "text"
+          ? ("rich-text" as const)
+          : createTool === "rectangle"
+            ? ("rectangle" as const)
+            : createTool === "ellipse"
+              ? ("ellipse" as const)
+              : createTool === "arrow"
+                ? ("arrow" as const)
+                : createTool === "matrix"
+                  ? ("matrix" as const)
+                  : ("line" as const);
       let shapePayload: CanvasObject["payload"] = {
         color: drawingStyle.strokeColor,
         strokeWidth: drawingStyle.strokeWidth,
@@ -801,14 +839,12 @@ export function CanvasWorkspace({
         bounds,
         zIndex: nextZIndex(objectsRef.current),
         payload:
-          createTool === "sticky"
-            ? { text: "", color: STICKY_COLOR }
-            : createTool === "text"
-              ? {
-                  doc: { type: "doc", content: [{ type: "paragraph" }] },
-                  color: drawingStyle.strokeColor,
-                }
-              : shapePayload,
+          createTool === "text"
+            ? {
+                doc: { type: "doc", content: [{ type: "paragraph" }] },
+                color: drawingStyle.strokeColor,
+              }
+            : shapePayload,
       });
       appendObject(object);
       setTool("select");
@@ -853,7 +889,6 @@ export function CanvasWorkspace({
       e: "ellipse",
       a: "arrow",
       m: "matrix",
-      s: "sticky",
     };
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.isComposing) return;
@@ -1189,16 +1224,6 @@ export function CanvasWorkspace({
             origins,
           });
         }
-        return;
-      }
-
-      if (tool === "sticky") {
-        createObject("sticky", {
-          x: canvasPoint.x,
-          y: canvasPoint.y,
-          width: DEFAULT_STICKY_WIDTH,
-          height: DEFAULT_STICKY_HEIGHT,
-        });
         return;
       }
 
@@ -1753,19 +1778,21 @@ export function CanvasWorkspace({
       ),
     [displayObjects, activeMode, view.width, view.height, pageCount],
   );
-  const centeredModeRef = useRef("");
+  const initializedModeRef = useRef("");
 
   useLayoutEffect(() => {
     if (scrollBounds === null) return;
     const identity = `${noteId}:${activeMode}`;
-    const shouldCenter = centeredModeRef.current !== identity;
-    if (shouldCenter) centeredModeRef.current = identity;
+    const shouldInitialize = initializedModeRef.current !== identity;
+    if (shouldInitialize) initializedModeRef.current = identity;
+    const saved = shouldInitialize ? readSavedViewport(noteId) : null;
     setViewport((current) => {
-      const nextX = shouldCenter
+      if (saved !== null) return { ...current, ...saved };
+      const nextX = shouldInitialize
         ? (scrollBounds.contentWidth - view.width) / 2
         : Math.max(scrollBounds.minX, Math.min(current.x, scrollBounds.maxX));
       const preferredTop = -80 / current.zoom;
-      const nextY = shouldCenter
+      const nextY = shouldInitialize
         ? Math.max(scrollBounds.minY, preferredTop)
         : Math.max(scrollBounds.minY, Math.min(current.y, scrollBounds.maxY));
       return nextX === current.x && nextY === current.y
@@ -1781,6 +1808,12 @@ export function CanvasWorkspace({
     viewport.x,
     viewport.y,
   ]);
+
+  useEffect(() => {
+    if (initializedModeRef.current === `${noteId}:${activeMode}`) {
+      saveViewport(noteId, viewport);
+    }
+  }, [activeMode, noteId, viewport]);
   const inView = queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN);
   const visibleIds = new Set(inView.map((object) => object.id));
   // Keep selected editors mounted when scrolling so their selection and undo survive.
@@ -1820,7 +1853,7 @@ export function CanvasWorkspace({
 
   // In-progress creation preview.
   let previewShape: CanvasObject | null = null;
-  let previewStickyBounds: Bounds | null = null;
+  let previewTextBounds: Bounds | null = null;
   if (gesture?.kind === "create") {
     const lineGeometry =
       gesture.tool === "line" || gesture.tool === "arrow"
@@ -1835,8 +1868,8 @@ export function CanvasWorkspace({
         : null;
     const raw =
       lineGeometry?.bounds ?? dragBoundsFree(gesture.start, gesture.current);
-    if (gesture.tool === "sticky" || gesture.tool === "text") {
-      previewStickyBounds = raw;
+    if (gesture.tool === "text") {
+      previewTextBounds = raw;
     } else {
       let payload: CanvasObject["payload"] = {
         color: drawingStyle.strokeColor,
@@ -1871,21 +1904,6 @@ export function CanvasWorkspace({
     }
   }
 
-  const zoomIn = (): void => {
-    zoomAt(
-      { x: containerSize.width / 2, y: containerSize.height / 2 },
-      zoom * 1.25,
-    );
-  };
-  const zoomOut = (): void => {
-    zoomAt(
-      { x: containerSize.width / 2, y: containerSize.height / 2 },
-      zoom / 1.25,
-    );
-  };
-  const zoomReset = (): void => {
-    zoomAt({ x: containerSize.width / 2, y: containerSize.height / 2 }, 1);
-  };
   const placementTool =
     tool === "pen" || tool === "text" || isVectorTool(tool) ? tool : null;
   const currentPageIndex = Math.max(
@@ -2069,14 +2087,14 @@ export function CanvasWorkspace({
             </svg>
           ) : null}
 
-          {previewStickyBounds !== null ? (
+          {previewTextBounds !== null ? (
             <div
               className="canvas-create-preview"
               style={{
-                left: previewStickyBounds.x,
-                top: previewStickyBounds.y,
-                width: previewStickyBounds.width,
-                height: previewStickyBounds.height,
+                left: previewTextBounds.x,
+                top: previewTextBounds.y,
+                width: previewTextBounds.width,
+                height: previewTextBounds.height,
               }}
             />
           ) : null}
@@ -2410,9 +2428,6 @@ export function CanvasWorkspace({
         onToolChange={changeTool}
         onUndo={undo}
         onRedo={redo}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        onZoomReset={zoomReset}
       />
       {placementTool !== null && placementPropertiesOpen ? (
         <DrawingPlacementPanel

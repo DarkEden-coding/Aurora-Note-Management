@@ -62,6 +62,17 @@ export interface LibraryState {
 
 const LibraryContext = createContext<LibraryState | null>(null);
 const RECENTS_KEY = "aurora.recents";
+const SELECTED_NOTE_KEY = "aurora.selected-note";
+
+/** Reads the note selected when the app was last open. */
+function readSelectedNoteId(): string | null {
+  try {
+    const noteId = localStorage.getItem(SELECTED_NOTE_KEY);
+    return noteId === null || noteId === "" ? null : noteId;
+  } catch {
+    return null;
+  }
+}
 
 function readRecents(): string[] {
   try {
@@ -88,12 +99,23 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [trashedNotes, setTrashedNotes] = useState<CachedNote[]>([]);
   const [search, setSearch] = useState("");
   const [recents, setRecents] = useState<string[]>(readRecents);
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(
+    readSelectedNoteId,
+  );
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [pendingPdfImport, setPendingPdfImport] = useState<{
     noteId: string;
     file: File;
   } | null>(null);
+
+  useEffect(() => {
+    try {
+      if (selectedNoteId === null) localStorage.removeItem(SELECTED_NOTE_KEY);
+      else localStorage.setItem(SELECTED_NOTE_KEY, selectedNoteId);
+    } catch {
+      // State restoration is optional when browser storage is unavailable.
+    }
+  }, [selectedNoteId]);
 
   const showCachedNotes = useCallback((cached: readonly CachedNote[]) => {
     const partitioned = partitionCachedNotes(cached);
