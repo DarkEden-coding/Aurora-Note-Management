@@ -188,9 +188,10 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
         request.ownerId!,
         "gpt-5.6-luna",
       );
-      const response = await openai.responses.create({
+      const stream = await openai.responses.create({
         model: "gpt-5.6-luna",
         store,
+        stream: true,
         reasoning: { effort: "high" },
         instructions:
           "Solve the math problem in the image. Return plain text only. Show concise, numbered steps, then finish with a line starting exactly 'Answer:'. If the image is unclear or the problem is incomplete, say exactly what is missing instead of guessing.",
@@ -204,7 +205,20 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
           },
         ],
       });
-      return { solution: response.output_text };
+      let solution = "";
+      for await (const event of stream) {
+        if (event.type === "response.output_text.delta") {
+          solution += event.delta;
+        }
+      }
+      if (!solution.trim()) {
+        throw new DomainError(
+          502,
+          "upstream",
+          "Math solver returned no solution",
+        );
+      }
+      return { solution };
     },
   );
 
