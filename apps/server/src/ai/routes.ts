@@ -3,10 +3,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { chatModelSchema, chatReasoningSchema, idSchema } from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
+import { DomainError } from "../errors.js";
 import { requireSessionPreHandler } from "../auth/sessions.js";
 import {
   deleteCredentials,
   extractEmail,
+  getValidAccessToken,
   loadCredentials,
   pollDeviceAuth,
   startDeviceAuth,
@@ -86,11 +88,19 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
   app.get("/api/ai/auth/status", { preHandler }, async (request) => {
     const creds = await loadCredentials(request.ownerId!);
     if (creds) {
-      return {
-        connected: true,
-        email: extractEmail(creds.accessToken, creds.idToken),
-        mode: "chatgpt" as const,
-      };
+      try {
+        const valid = await getValidAccessToken(request.ownerId!);
+        return {
+          connected: true,
+          email: extractEmail(valid.accessToken, valid.idToken),
+          mode: "chatgpt" as const,
+        };
+      } catch (error) {
+        if (error instanceof DomainError && error.status === 401) {
+          return { connected: false, mode: "none" as const };
+        }
+        throw error;
+      }
     }
     if (env.OPENAI_API_KEY) {
       return { connected: true, mode: "api-key" as const };

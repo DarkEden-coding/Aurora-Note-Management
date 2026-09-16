@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { normalizeRegion } from "./mathSolver";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { normalizeRegion, solveMathImage } from "./mathSolver";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe("normalizeRegion", () => {
   it("normalizes a reverse drag and clamps it to the viewport", () => {
@@ -11,5 +17,24 @@ describe("normalizeRegion", () => {
       width: 70,
       height: 40,
     });
+  });
+});
+
+describe("solveMathImage", () => {
+  it("shows the server's actionable authentication error", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "ChatGPT session expired; connect again in settings",
+          },
+        }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(solveMathImage("data:image/png;base64,test")).rejects.toThrow(
+      "ChatGPT session expired; connect again in settings",
+    );
   });
 });

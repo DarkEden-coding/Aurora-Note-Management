@@ -71,7 +71,17 @@ export async function solveMathImage(image: string): Promise<string> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ image }),
   });
-  if (!response.ok) throw new Error(`Math solver failed (${response.status})`);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: { message?: unknown };
+    } | null;
+    const message = body?.error?.message;
+    throw new Error(
+      typeof message === "string"
+        ? message
+        : `Math solver failed (${response.status})`,
+    );
+  }
   const body = (await response.json()) as { solution?: unknown };
   if (typeof body.solution !== "string" || !body.solution.trim()) {
     throw new Error("Math solver returned no solution");
