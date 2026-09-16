@@ -32,34 +32,20 @@ export async function captureMathRegion(
   region: ScreenRegion,
 ): Promise<string> {
   const { default: html2canvas } = await import("html2canvas-pro");
-  const source = await html2canvas(viewport, {
+  const output = await html2canvas(viewport, {
     backgroundColor: null,
     logging: false,
     scale: 2,
     useCORS: true,
+    x: region.x,
+    y: region.y,
+    width: region.width,
+    height: region.height,
     ignoreElements: (element) =>
       element.hasAttribute("data-canvas-controls") ||
       element.classList.contains("canvas-math-selection") ||
       element.classList.contains("canvas-math-result"),
   });
-  const ratioX = source.width / viewport.clientWidth;
-  const ratioY = source.height / viewport.clientHeight;
-  const output = document.createElement("canvas");
-  output.width = Math.max(1, Math.round(region.width * ratioX));
-  output.height = Math.max(1, Math.round(region.height * ratioY));
-  output
-    .getContext("2d")!
-    .drawImage(
-      source,
-      Math.round(region.x * ratioX),
-      Math.round(region.y * ratioY),
-      output.width,
-      output.height,
-      0,
-      0,
-      output.width,
-      output.height,
-    );
   return output.toDataURL("image/png");
 }
 

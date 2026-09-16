@@ -194,7 +194,7 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
         stream: true,
         reasoning: { effort: "high" },
         instructions:
-          "Solve the math problem in the image. Return plain text only. Show concise, numbered steps, then finish with a line starting exactly 'Answer:'. If the image is unclear or the problem is incomplete, say exactly what is missing instead of guessing.",
+          "Read and solve or simplify the mathematical content in the image. A valid problem may be only a numerical expression with no variables, question text, or equals sign. Evaluate arithmetic expressions and simplify fractions, powers, radicals, and similar numeric notation. Return plain text only. Show concise, numbered steps, then finish with a line starting exactly 'Answer:'. Only report missing content when no mathematical expression is visible or the visible notation is genuinely incomplete; never require a variable or equation.",
         input: [
           {
             role: "user",
