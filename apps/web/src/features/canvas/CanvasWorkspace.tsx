@@ -25,7 +25,7 @@ import {
   fetchNote,
 } from "../library/api";
 import { syncEngine } from "../../sync/engine";
-import { Plus, Trash2, X } from "lucide-react";
+import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import { CanvasScrollbars } from "./CanvasScrollbars";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
@@ -1434,7 +1434,6 @@ export function CanvasWorkspace({
           )
           .finally(() => {
             setMathBusy(false);
-            setMathSelection(null);
             setTool("select");
           });
         return;
@@ -2120,30 +2119,39 @@ export function CanvasWorkspace({
         ) : null}
         {mathSelection !== null ? (
           <div
-            className="canvas-math-selection"
-            style={mathSelection}
-            aria-hidden="true"
-          />
-        ) : null}
-        {mathBusy ? (
-          <div className="canvas-math-result" role="status">
-            Solving with Luna…
-          </div>
-        ) : mathSolution !== null ? (
-          <div
-            className="canvas-math-result panel"
-            role="dialog"
-            aria-label="Math solution"
+            className={`canvas-math-selection${mathBusy || mathSolution !== null ? " canvas-math-result panel" : ""}`}
+            style={{
+              left: mathSelection.x,
+              top: mathSelection.y,
+              width: mathSelection.width,
+              height: mathSelection.height,
+            }}
+            role={
+              mathBusy ? "status" : mathSolution !== null ? "dialog" : undefined
+            }
+            aria-label={mathSolution !== null ? "Math solution" : undefined}
+            aria-hidden={
+              !mathBusy && mathSolution === null ? "true" : undefined
+            }
           >
-            <button
-              type="button"
-              className="ghost icon-button"
-              aria-label="Close math solution"
-              onClick={() => setMathSolution(null)}
-            >
-              <X size={14} />
-            </button>
-            <pre>{mathSolution}</pre>
+            {mathBusy ? (
+              <LoaderCircle className="canvas-math-spinner" size={28} />
+            ) : mathSolution !== null ? (
+              <>
+                <button
+                  type="button"
+                  className="ghost icon-button"
+                  aria-label="Close math solution"
+                  onClick={() => {
+                    setMathSolution(null);
+                    setMathSelection(null);
+                  }}
+                >
+                  <X size={14} />
+                </button>
+                <pre>{mathSolution}</pre>
+              </>
+            ) : null}
           </div>
         ) : null}
         {tool === "eraser" && eraserPointer !== null ? (

@@ -75,27 +75,41 @@
 }
 
 .canvas-math-result {
-  position: absolute;
   z-index: 13;
-  top: 16px;
-  right: 16px;
-  width: min(420px, calc(100% - 32px));
-  max-height: calc(100% - 32px);
+  display: grid;
+  place-items: center;
   padding: 14px;
   overflow: auto;
-  white-space: pre-wrap;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  pointer-events: auto;
   user-select: text;
 }
 
 .canvas-math-result .icon-button {
-  float: right;
+  position: absolute;
+  top: 4px;
+  right: 4px;
 }
 
 .canvas-math-result pre {
-  margin: 0;
-  color: var(--text);
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  overflow: auto;
+  color: inherit;
   font: inherit;
   white-space: pre-wrap;
+}
+
+.canvas-math-spinner {
+  animation: canvas-math-spin 0.8s linear infinite;
+}
+
+@keyframes canvas-math-spin {
+  to {
+    rotate: 360deg;
+  }
 }
 
 .canvas-background {

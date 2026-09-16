@@ -31,7 +31,7 @@ export async function captureMathRegion(
   viewport: HTMLElement,
   region: ScreenRegion,
 ): Promise<string> {
-  const { default: html2canvas } = await import("html2canvas");
+  const { default: html2canvas } = await import("html2canvas-pro");
   const source = await html2canvas(viewport, {
     backgroundColor: null,
     logging: false,
