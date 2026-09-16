@@ -1,3 +1,5 @@
+import type { Background, CanvasObject } from "@aurora/shared";
+import { renderNoteRegion } from "../chat/noteSnapshot";
 import type { Point } from "./viewport";
 
 export type ScreenRegion = {
@@ -61,27 +63,13 @@ export function expandResultRegion(
   };
 }
 
-/** Captures a selected viewport region as a PNG data URL. */
+/** Renders a canvas-coordinate note region without workspace UI or transforms. */
 export async function captureMathRegion(
-  viewport: HTMLElement,
+  objects: CanvasObject[],
   region: ScreenRegion,
+  background: Background,
 ): Promise<string> {
-  const { default: html2canvas } = await import("html2canvas-pro");
-  const output = await html2canvas(viewport, {
-    backgroundColor: null,
-    logging: false,
-    scale: 2,
-    useCORS: true,
-    x: region.x,
-    y: region.y,
-    width: region.width,
-    height: region.height,
-    ignoreElements: (element) =>
-      element.hasAttribute("data-canvas-controls") ||
-      element.classList.contains("canvas-math-selection") ||
-      element.classList.contains("canvas-math-result"),
-  });
-  return output.toDataURL("image/png");
+  return renderNoteRegion(objects, { ...region, background });
 }
 
 export type MathSolveEvent =

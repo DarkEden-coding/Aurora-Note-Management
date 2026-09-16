@@ -24,7 +24,6 @@
     "dexie": "^4.4.5",
     "dexie-react-hooks": "^1.1.7",
     "html2canvas": "^1.4.1",
-    "html2canvas-pro": "^2.4.3",
     "katex": "^0.16.47",
     "lucide-react": "^1.39.0",
     "pdfjs-dist": "^6.3.289",

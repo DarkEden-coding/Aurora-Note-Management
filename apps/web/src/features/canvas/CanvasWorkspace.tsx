@@ -27,6 +27,7 @@ import {
 import { syncEngine } from "../../sync/engine";
 import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import { CanvasScrollbars } from "./CanvasScrollbars";
+import { MarkdownText } from "../chat/MarkdownText";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
   DrawingPlacementPanel,
@@ -1436,15 +1437,26 @@ export function CanvasWorkspace({
         }
         setMathSelection(region);
         setMathBusy(true);
-        const viewport = e.currentTarget;
-        void captureMathRegion(viewport, region)
+        const viewportElement = e.currentTarget;
+        const activeViewport = viewportRef.current;
+        const captureRegion = {
+          x: activeViewport.x + region.x / activeViewport.zoom,
+          y: activeViewport.y + region.y / activeViewport.zoom,
+          width: region.width / activeViewport.zoom,
+          height: region.height / activeViewport.zoom,
+        };
+        void captureMathRegion(
+          objectsRef.current,
+          captureRegion,
+          background ?? DEFAULT_BACKGROUND,
+        )
           .then((image) => {
             setMathImage(image);
             setMathSelection(
               expandResultRegion(
                 region,
-                viewport.clientWidth,
-                viewport.clientHeight,
+                viewportElement.clientWidth,
+                viewportElement.clientHeight,
               ),
             );
             return image;
@@ -2269,13 +2281,23 @@ export function CanvasWorkspace({
                               }
                             >
                               <summary>Reasoning</summary>
-                              <pre>{mathReasoning}</pre>
+                              {mathBusy ? (
+                                <pre>{mathReasoning}</pre>
+                              ) : (
+                                <MarkdownText>{mathReasoning}</MarkdownText>
+                              )}
                             </details>
                           ) : null}
                           {mathSolution !== null ? (
-                            <pre className="canvas-math-solution">
-                              {mathSolution}
-                            </pre>
+                            mathBusy ? (
+                              <pre className="canvas-math-solution">
+                                {mathSolution}
+                              </pre>
+                            ) : (
+                              <div className="canvas-math-solution">
+                                <MarkdownText>{mathSolution}</MarkdownText>
+                              </div>
+                            )
                           ) : null}
                         </div>
                       )}

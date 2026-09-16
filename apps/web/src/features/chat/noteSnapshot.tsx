@@ -186,7 +186,7 @@ async function waitForPdfCanvases(
 }
 
 /** Renders one bounded canvas region to a PNG. */
-async function renderRegion(
+export async function renderNoteRegion(
   objects: CanvasObject[],
   region: ExportPage,
 ): Promise<string> {
@@ -255,7 +255,7 @@ export async function renderPdfPages(
   const sources: string[] = [];
   for (const [index, region] of regions.entries()) {
     onPageStart?.(index + 1, regions.length);
-    sources.push(await renderRegion(objects, region));
+    sources.push(await renderNoteRegion(objects, region));
   }
   return sources;
 }
@@ -407,7 +407,7 @@ export async function screenshotNote(
     patternColor: "#1b1d21",
     spacing: 24,
   };
-  const png = await renderRegion(objects, {
+  const png = await renderNoteRegion(objects, {
     x: minX,
     y: minY + y,
     width,

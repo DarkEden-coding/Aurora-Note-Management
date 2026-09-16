@@ -194,7 +194,7 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
         stream: true,
         reasoning: { effort: "high", summary: "auto" },
         instructions:
-          "Read and solve or simplify the mathematical content in the image. A valid problem may be only a numerical expression with no variables, question text, or equals sign. Evaluate arithmetic expressions and simplify fractions, powers, radicals, and similar numeric notation. Return plain text only. Begin by rewriting the original visible question or expression on a line starting exactly 'Question:'. Then show concise, numbered steps and finish with a line starting exactly 'Answer:'. Only report missing content when no mathematical expression is visible or the visible notation is genuinely incomplete; never require a variable or equation.",
+          "Read and solve or simplify the mathematical content in the image. A valid problem may be only a numerical expression with no variables, question text, or equals sign. First transcribe the expression exactly, paying special attention to plus versus minus signs, fraction-bar scope, exponents, multiplication, and parentheses. Verify that transcription against the image before calculating, then independently check the arithmetic. Return Markdown with LaTeX math using $...$ inline or $$...$$ on its own line. Begin by rewriting the original visible question or expression on a line starting exactly 'Question:'. Then show concise, numbered steps and finish with a line starting exactly 'Answer:'. Only report missing content when no mathematical expression is visible or the visible notation is genuinely incomplete; never require a variable or equation.",
         input: [
           {
             role: "user",
