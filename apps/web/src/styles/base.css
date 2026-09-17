@@ -525,6 +525,54 @@ button.tree-action.danger:hover {
   gap: 8px;
 }
 
+.calculator {
+  position: relative;
+}
+
+.calculator-popover {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 224px;
+  padding: 10px;
+  border: var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-outset);
+}
+
+.calculator-display {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.calculator-display input {
+  width: 100%;
+  min-width: 0;
+  text-align: right;
+}
+
+.calculator-error {
+  display: block;
+  margin: -3px 0 6px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.calculator-keys {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+
+.calculator-keys button {
+  min-height: 32px;
+  padding: 4px;
+  box-shadow: none;
+}
+
 .canvas-mode-indicator {
   font-size: 11px;
   color: var(--text-muted);
@@ -791,6 +839,10 @@ button.tree-action.danger:hover {
   .connection-status .sync-pill {
     padding-inline: 8px;
     font-size: 0;
+  }
+  .calculator-popover {
+    right: auto;
+    left: 0;
   }
   .theme-options {
     grid-template-columns: 1fr;

@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, expect, it, vi } from "vitest";
 import type { FastifyReply } from "fastify";
 import type { MathSolveEvent } from "@aurora/shared";
 import { mathSolveRequestSchema } from "@aurora/shared";
@@ -9,6 +9,7 @@ const { create, python } = vi.hoisted(() => ({
   create: vi.fn(),
   python: vi.fn(),
 }));
+const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
 vi.mock("../src/ai/client.js", () => ({
   createAiClient: async () => ({
     openai: { responses: { create } },
@@ -21,7 +22,10 @@ vi.mock("../src/ai/python.js", () => ({ runPython: python }));
 beforeEach(() => {
   create.mockReset();
   python.mockReset();
+  errorLog.mockClear();
 });
+
+afterAll(() => errorLog.mockRestore());
 
 function completion(output: unknown[]): AsyncGenerator<unknown> {
   return (async function* () {
@@ -154,22 +158,57 @@ it("continues a reasoning-only completion to get the final answer", async () => 
   });
 });
 
-it("allows simple answers without Python and rejects truncated model responses", async () => {
+it("allows simple answers without Python", async () => {
   create.mockResolvedValueOnce(completion([message("Answer: 4")]));
   expect(await solve()).toContainEqual({
     type: "text-delta",
     delta: "Answer: 4",
   });
   expect(python).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["without a completion event", false],
+  ["with an empty completed output", true],
+])(
+  "uses streamed answer text %s without retrying",
+  async (_label, completed) => {
+    create.mockResolvedValueOnce(
+      (async function* () {
+        yield { type: "response.output_text.delta", delta: "Answer: " };
+        yield { type: "response.output_text.delta", delta: "4" };
+        if (completed)
+          yield { type: "response.completed", response: { output: [] } };
+      })(),
+    );
+
+    expect(await solve()).toContainEqual({
+      type: "text-delta",
+      delta: "Answer: 4",
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("logs stream failures without request contents", async () => {
   create.mockResolvedValueOnce(
     (async function* () {
-      yield { type: "response.output_text.delta", delta: "Partial" };
+      yield { type: "response.created" };
     })(),
   );
-  const events = await solve();
-  expect(events).toEqual([
+
+  expect(await solve()).toEqual([
     { type: "error", message: expect.stringContaining("before completion") },
   ]);
+  expect(errorLog).toHaveBeenCalledWith(
+    "Math solver failed",
+    expect.objectContaining({
+      turn: 1,
+      receivedCompletion: false,
+      streamedTextLength: 0,
+    }),
+  );
+  expect(JSON.stringify(errorLog.mock.calls)).not.toContain("base64");
 });
 
 it("reports Python failures as tool results and bounds repeated execution", async () => {

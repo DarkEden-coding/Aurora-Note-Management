@@ -5,6 +5,7 @@ import { Sidebar } from "../features/library/LibrarySidebar.js";
 import { useLibrary } from "../features/library/LibraryContext.js";
 import { AccountSettings } from "../features/settings/AccountSettings.js";
 import { SyncStatusPanel } from "../features/settings/SyncStatusPanel.js";
+import { Calculator } from "../features/calculator/Calculator.js";
 import { ConflictDialog } from "../sync/ConflictDialog.js";
 import { syncEngine, type SyncStatus } from "../sync/engine.js";
 import { useSyncExternalStore } from "react";
@@ -266,6 +267,7 @@ export function AuthenticatedShell({
               />
             ) : null}
             <SyncPill onClick={() => setDrawer("sync")} />
+            <Calculator />
             {view === "notes" && selectedNote ? (
               <span className="canvas-mode-indicator">
                 {canvasModeLabel(selectedNote.canvasMode)}

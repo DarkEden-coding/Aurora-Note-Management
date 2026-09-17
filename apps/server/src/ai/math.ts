@@ -118,9 +118,12 @@ export async function streamMathSolve(
   };
   let pythonRuns = 0;
   let emptyCompletionRetries = 0;
+  let turn = 0;
+  let receivedCompletion = false;
+  let streamedTextLength = 0;
   try {
     // Three executions plus a final model turn bound cost and failed-script retries.
-    for (let turn = 0; turn < 4; turn += 1) {
+    for (turn = 0; turn < 4; turn += 1) {
       signal.throwIfAborted();
       const stream = await openai.responses.create(
         {
@@ -140,10 +143,17 @@ export async function streamMathSolve(
         { signal },
       );
       let output: ResponseOutputItem[] | undefined;
+      let streamedText = "";
+      receivedCompletion = false;
+      streamedTextLength = 0;
       for await (const event of stream) {
         if (event.type === "response.reasoning_summary_text.delta") {
           send({ type: "reasoning-delta", delta: event.delta });
+        } else if (event.type === "response.output_text.delta") {
+          streamedText += event.delta;
+          streamedTextLength = streamedText.length;
         } else if (event.type === "response.completed") {
+          receivedCompletion = true;
           output = event.response.output;
         } else if (
           event.type === "response.failed" ||
@@ -157,15 +167,17 @@ export async function streamMathSolve(
         }
       }
       signal.throwIfAborted();
-      if (!output)
+      if (!output && !streamedText.trim())
         throw new Error(
           "Math solver stream ended before completion. Please retry.",
         );
       send({ type: "reasoning-done" });
-      const calls = output.filter((item) => item.type === "function_call");
-      // Buffer answer text until we know this turn did not request clarification or computation.
+      const finalOutput = output ?? [];
+      const calls = finalOutput.filter((item) => item.type === "function_call");
+      // Completed output is authoritative for tool calls; streamed text is the
+      // fallback when the SDK/provider omits the final message snapshot.
       if (calls.length === 0) {
-        const text = output
+        const completedText = finalOutput
           .flatMap((item) => (item.type === "message" ? item.content : []))
           .map((part) =>
             part.type === "output_text"
@@ -175,6 +187,7 @@ export async function streamMathSolve(
                 : "",
           )
           .join("\n");
+        const text = completedText.trim() ? completedText : streamedText;
         if (text.trim()) {
           send({ type: "text-delta", delta: text });
           send({ type: "done" });
@@ -184,13 +197,14 @@ export async function streamMathSolve(
         // rather than showing the user an error after the model did the work.
         if (emptyCompletionRetries < 1) {
           emptyCompletionRetries += 1;
-          for (const item of output) {
+          for (const item of finalOutput) {
             if (item.type === "reasoning" || item.type === "message")
               input.push(item);
           }
           input.push({
             role: "user",
-            content: "Give the final solution now. Do not provide reasoning only.",
+            content:
+              "Give the final solution now. Do not provide reasoning only.",
           });
           continue;
         }
@@ -235,7 +249,7 @@ export async function streamMathSolve(
       signal.throwIfAborted();
       send({ type: "python-result", ...result });
       // Replay complete output, including encrypted reasoning, for store:false OAuth clients.
-      for (const item of output) {
+      for (const item of finalOutput) {
         if (
           item.type === "reasoning" ||
           item.type === "message" ||
@@ -254,10 +268,19 @@ export async function streamMathSolve(
       "Math solver exceeded its calculation steps. Please retry.",
     );
   } catch (error) {
-    send({
-      type: "error",
-      message: error instanceof Error ? error.message : "Math solver failed",
-    });
+    const message =
+      error instanceof Error ? error.message : "Math solver failed";
+    if (!signal.aborted) {
+      console.error("Math solver failed", {
+        message,
+        turn: Math.min(turn + 1, 4),
+        pythonRuns,
+        emptyCompletionRetries,
+        receivedCompletion,
+        streamedTextLength,
+      });
+    }
+    send({ type: "error", message });
   } finally {
     reply.raw.end();
   }
