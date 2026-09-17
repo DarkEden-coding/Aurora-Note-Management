@@ -117,6 +117,7 @@ export async function streamMathSolve(
     if (!signal.aborted) reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
   };
   let pythonRuns = 0;
+  let emptyCompletionRetries = 0;
   try {
     // Three executions plus a final model turn bound cost and failed-script retries.
     for (let turn = 0; turn < 4; turn += 1) {
@@ -174,11 +175,26 @@ export async function streamMathSolve(
                 : "",
           )
           .join("\n");
-        if (!text.trim())
-          throw new Error("Math solver returned no solution. Please retry.");
-        send({ type: "text-delta", delta: text });
-        send({ type: "done" });
-        return;
+        if (text.trim()) {
+          send({ type: "text-delta", delta: text });
+          send({ type: "done" });
+          return;
+        }
+        // A reasoning-only completion occasionally occurs. Continue from it once
+        // rather than showing the user an error after the model did the work.
+        if (emptyCompletionRetries < 1) {
+          emptyCompletionRetries += 1;
+          for (const item of output) {
+            if (item.type === "reasoning" || item.type === "message")
+              input.push(item);
+          }
+          input.push({
+            role: "user",
+            content: "Give the final solution now. Do not provide reasoning only.",
+          });
+          continue;
+        }
+        throw new Error("Math solver returned no solution. Please retry.");
       }
       if (calls.length !== 1)
         throw new Error(

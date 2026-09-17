@@ -132,6 +132,28 @@ it("uses clarified values, runs Python, and passes its result and encrypted reas
   expect(request.include).toEqual(["reasoning.encrypted_content"]);
 });
 
+it("continues a reasoning-only completion to get the final answer", async () => {
+  const reasoning = {
+    type: "reasoning",
+    id: "r1",
+    encrypted_content: "opaque",
+    summary: [],
+  };
+  create.mockResolvedValueOnce(completion([reasoning]));
+  create.mockResolvedValueOnce(completion([message("Answer: $\u221a2$")]));
+
+  expect(await solve()).toContainEqual({
+    type: "text-delta",
+    delta: "Answer: $\u221a2$",
+  });
+  expect(create).toHaveBeenCalledTimes(2);
+  expect(create.mock.calls[1]![0].input).toContainEqual(reasoning);
+  expect(create.mock.calls[1]![0].input).toContainEqual({
+    role: "user",
+    content: "Give the final solution now. Do not provide reasoning only.",
+  });
+});
+
 it("allows simple answers without Python and rejects truncated model responses", async () => {
   create.mockResolvedValueOnce(completion([message("Answer: 4")]));
   expect(await solve()).toContainEqual({

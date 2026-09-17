@@ -430,8 +430,11 @@ export function CanvasWorkspace({
       mathAbortRef.current = controller;
       const run = ++mathRunRef.current;
       setMathBusy(true);
+      setMathReasoning("");
+      setMathReasoningOpen(true);
       setMathSolution(null);
       setMathQuestions([]);
+      setMathPython(null);
       void (async (): Promise<void> => {
         try {
           for await (const event of streamMathSolution(
