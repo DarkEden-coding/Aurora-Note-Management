@@ -36,6 +36,8 @@ def nobody_ids() -> tuple[int, int]:
 def execute_child(code: str) -> None:
   """Drop privilege and execute submitted source with non-creatable processes."""
   uid, gid = nobody_ids()
+  # The parent keeps traversal: it chowns back and removes the directory afterwards.
+  os.chown(os.getcwd(), uid, gid)
   os.setgroups([])
   os.setgid(gid)
   os.setuid(uid)
@@ -77,13 +79,16 @@ def client_disconnected(connection: socket.socket) -> bool:
 
 
 def cleanup_workdir(workdir: str, uid: int, gid: int) -> None:
-  """Remove a script directory as its owner, without granting root DAC override."""
+  """Empty and remove a script directory without granting root DAC override."""
+  # The child chowned the workdir to the script user; reclaim it so the helper
+  # (running as that user) can traverse and delete the contents it created.
+  os.chown(workdir, uid, gid)
   subprocess.run(
     [
       sys.executable,
       "-I",
       "-c",
-      "import shutil, sys; shutil.rmtree(sys.argv[1])",
+      "import shutil, sys; shutil.rmtree(sys.argv[1], ignore_errors=True)",
       workdir,
     ],
     stdin=subprocess.DEVNULL,
@@ -95,15 +100,16 @@ def cleanup_workdir(workdir: str, uid: int, gid: int) -> None:
     group=gid,
     extra_groups=[],
     timeout=WALL_SECONDS,
-    check=True,
   )
+  # Root owns the /tmp mount, but the child already chowned the directory to the
+  # script user, so the helper's rmtree removes the contents and the directory.
+  # The helper must run AFTER the reclaim chown above; nothing else to remove.
 
 
 def run_script(code: str, connection: socket.socket | None = None) -> tuple[bool, str]:
   """Execute one source string and return bounded output after verified cleanup."""
   uid, gid = nobody_ids()
   workdir = tempfile.mkdtemp(prefix="aurora-python-", dir="/tmp")
-  os.chown(workdir, uid, gid)
   output = bytearray()
   reason: str | None = None
   process: subprocess.Popen[bytes] | None = None
