@@ -2469,13 +2469,17 @@ export function CanvasWorkspace({
                                 solveMath(mathImage, clarifications);
                               }}
                             >
-                              <p>Clarify uncertain numbers or symbols.</p>
+                              <p className="canvas-math-question-intro">
+                                Clarify uncertain numbers or symbols.
+                              </p>
                               {mathQuestions.map((question) => (
                                 <label
                                   key={question.id}
                                   className="canvas-math-question"
                                 >
-                                  <span>{question.question}</span>
+                                  <MarkdownText>
+                                    {question.question}
+                                  </MarkdownText>
                                   <input
                                     value={mathAnswers[question.id] ?? ""}
                                     maxLength={200}
