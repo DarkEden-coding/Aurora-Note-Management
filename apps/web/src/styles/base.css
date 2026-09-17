@@ -530,16 +530,32 @@ button.tree-action.danger:hover {
 }
 
 .calculator-popover {
-  position: absolute;
+  position: fixed;
   z-index: 45;
-  top: calc(100% + 8px);
-  right: 0;
   width: 224px;
   padding: 10px;
   border: var(--panel-border);
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow-outset);
+}
+
+.calculator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -4px -4px 6px;
+  padding: 2px 4px 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.calculator-header:active {
+  cursor: grabbing;
 }
 
 .calculator-display {
@@ -839,10 +855,6 @@ button.tree-action.danger:hover {
   .connection-status .sync-pill {
     padding-inline: 8px;
     font-size: 0;
-  }
-  .calculator-popover {
-    right: auto;
-    left: 0;
   }
   .theme-options {
     grid-template-columns: 1fr;
