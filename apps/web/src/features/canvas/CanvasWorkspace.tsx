@@ -16,6 +16,8 @@ import {
   type CanvasMode,
   type CanvasObject,
   type DrawingPalette,
+  type MathQuestion,
+  type MathSolveRequest,
   type SyncOperation,
   type Viewport,
 } from "@aurora/shared";
@@ -339,7 +341,19 @@ export function CanvasWorkspace({
   const [mathReasoning, setMathReasoning] = useState("");
   const [mathReasoningOpen, setMathReasoningOpen] = useState(true);
   const [mathSolution, setMathSolution] = useState<string | null>(null);
+  const [mathQuestions, setMathQuestions] = useState<MathQuestion[]>([]);
+  const [mathAnswers, setMathAnswers] = useState<Record<string, string>>({});
+  const [mathClarifications, setMathClarifications] = useState<
+    NonNullable<MathSolveRequest["clarifications"]>
+  >([]);
+  const [mathPython, setMathPython] = useState<{
+    code: string;
+    output?: string;
+    success?: boolean;
+  } | null>(null);
   const [mathBusy, setMathBusy] = useState(false);
+  const mathAbortRef = useRef<AbortController | null>(null);
+  const mathRunRef = useRef(0);
   const mathDragRef = useRef<{
     pointerId: number;
     start: Point;
@@ -383,6 +397,102 @@ export function CanvasWorkspace({
     velocity: Point;
   } | null>(null);
   const lastStylusTimeRef = useRef(Number.NEGATIVE_INFINITY);
+
+  /** Cancels the active solver stream and invalidates its late updates. */
+  const cancelMath = useCallback((): void => {
+    mathRunRef.current += 1;
+    mathAbortRef.current?.abort();
+    mathAbortRef.current = null;
+    setMathBusy(false);
+  }, []);
+
+  /** Clears a captured problem before starting a fresh math selection. */
+  const resetMath = useCallback((): void => {
+    cancelMath();
+    setMathImage(null);
+    setMathReasoning("");
+    setMathReasoningOpen(true);
+    setMathSolution(null);
+    setMathQuestions([]);
+    setMathAnswers({});
+    setMathClarifications([]);
+    setMathPython(null);
+  }, [cancelMath]);
+
+  /** Runs one solver round, retaining the image and all prior answers. */
+  const solveMath = useCallback(
+    (
+      image: string,
+      clarifications: NonNullable<MathSolveRequest["clarifications"]>,
+    ): void => {
+      mathAbortRef.current?.abort();
+      const controller = new AbortController();
+      mathAbortRef.current = controller;
+      const run = ++mathRunRef.current;
+      setMathBusy(true);
+      setMathSolution(null);
+      setMathQuestions([]);
+      void (async (): Promise<void> => {
+        try {
+          for await (const event of streamMathSolution(
+            { image, clarifications },
+            controller.signal,
+          )) {
+            if (run !== mathRunRef.current) return;
+            if (event.type === "reasoning-delta") {
+              setMathReasoning((current) => current + event.delta);
+              setMathReasoningOpen(true);
+            } else if (event.type === "reasoning-done") {
+              setMathReasoningOpen(false);
+            } else if (event.type === "text-delta") {
+              setMathReasoningOpen(false);
+              setMathSolution((current) => (current ?? "") + event.delta);
+            } else if (event.type === "questions") {
+              setMathQuestions(event.questions);
+              setMathAnswers(
+                Object.fromEntries(
+                  event.questions.map((question) => [
+                    question.id,
+                    question.suggestedAnswer,
+                  ]),
+                ),
+              );
+            } else if (event.type === "python-start") {
+              setMathPython({ code: event.code });
+            } else if (event.type === "python-result") {
+              setMathPython((current) =>
+                current === null
+                  ? { code: "", output: event.output, success: event.success }
+                  : {
+                      ...current,
+                      output: event.output,
+                      success: event.success,
+                    },
+              );
+            }
+          }
+        } catch (error: unknown) {
+          if (controller.signal.aborted || run !== mathRunRef.current) return;
+          setMathReasoningOpen(false);
+          setMathSolution(
+            error instanceof Error ? error.message : "Math solver failed",
+          );
+        } finally {
+          if (run === mathRunRef.current) {
+            mathAbortRef.current = null;
+            setMathBusy(false);
+          }
+        }
+      })();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    resetMath();
+    setMathSelection(null);
+    return cancelMath;
+  }, [noteId, resetMath, cancelMath]);
 
   // Controlled mode: the parent's array is the source of truth.
   useEffect(() => {
@@ -1113,10 +1223,7 @@ export function CanvasWorkspace({
       if (tool !== "select" && isInsideEditable(e.target)) return;
 
       if (tool === "math") {
-        setMathImage(null);
-        setMathReasoning("");
-        setMathReasoningOpen(true);
-        setMathSolution(null);
+        resetMath();
         setMathSelection({ x: screen.x, y: screen.y, width: 0, height: 0 });
         setActiveGesture({ kind: "math", start: screen, current: screen });
         try {
@@ -1252,6 +1359,7 @@ export function CanvasWorkspace({
       setActiveGesture,
       selection,
       stopMomentum,
+      resetMath,
     ],
   );
 
@@ -1470,12 +1578,14 @@ export function CanvasWorkspace({
           width: region.width / activeViewport.zoom,
           height: region.height / activeViewport.zoom,
         };
+        const captureRun = ++mathRunRef.current;
         void captureMathRegion(
           objectsRef.current,
           captureRegion,
           background ?? DEFAULT_BACKGROUND,
         )
           .then((image) => {
+            if (captureRun !== mathRunRef.current) return;
             setMathImage(image);
             setMathSelection(
               expandResultRegion(
@@ -1484,28 +1594,17 @@ export function CanvasWorkspace({
                 viewportElement.clientHeight,
               ),
             );
-            return image;
-          })
-          .then(async (image) => {
-            for await (const event of streamMathSolution(image)) {
-              if (event.type === "reasoning-delta") {
-                setMathReasoning((current) => current + event.delta);
-                setMathReasoningOpen(true);
-              } else if (event.type === "reasoning-done") {
-                setMathReasoningOpen(false);
-              } else if (event.type === "text-delta") {
-                setMathReasoningOpen(false);
-                setMathSolution((current) => (current ?? "") + event.delta);
-              }
-            }
+            solveMath(image, []);
+            setTool("select");
           })
           .catch((error: unknown) => {
+            if (captureRun !== mathRunRef.current) return;
             setMathReasoningOpen(false);
             setMathSolution(
-              error instanceof Error ? error.message : "Math solver failed",
+              error instanceof Error
+                ? error.message
+                : "Could not capture math problem",
             );
-          })
-          .finally(() => {
             setMathBusy(false);
             setTool("select");
           });
@@ -1607,6 +1706,7 @@ export function CanvasWorkspace({
       recordHistory,
       selection,
       setActiveGesture,
+      solveMath,
       startMomentum,
     ],
   );
@@ -2185,7 +2285,7 @@ export function CanvasWorkspace({
         ) : null}
         {mathSelection !== null ? (
           <div
-            className={`canvas-math-selection${mathBusy || mathSolution !== null ? " canvas-math-result panel" : ""}`}
+            className={`canvas-math-selection${mathBusy || mathSolution !== null || mathQuestions.length > 0 ? " canvas-math-result panel" : ""}`}
             style={{
               left: mathSelection.x,
               top: mathSelection.y,
@@ -2193,17 +2293,29 @@ export function CanvasWorkspace({
               height: mathSelection.height,
             }}
             role={
-              mathBusy ? "status" : mathSolution !== null ? "dialog" : undefined
+              mathBusy
+                ? "status"
+                : mathSolution !== null || mathQuestions.length > 0
+                  ? "dialog"
+                  : undefined
             }
-            aria-label={mathSolution !== null ? "Math solution" : undefined}
+            aria-label={
+              mathQuestions.length > 0
+                ? "Math clarification"
+                : mathSolution !== null
+                  ? "Math solution"
+                  : undefined
+            }
             aria-hidden={
-              !mathBusy && mathSolution === null ? "true" : undefined
+              !mathBusy && mathSolution === null && mathQuestions.length === 0
+                ? "true"
+                : undefined
             }
             onPointerDown={(event) => event.stopPropagation()}
             onPointerMove={(event) => event.stopPropagation()}
             onPointerUp={(event) => event.stopPropagation()}
           >
-            {mathBusy || mathSolution !== null ? (
+            {mathBusy || mathSolution !== null || mathQuestions.length > 0 ? (
               <>
                 <div
                   className="canvas-math-header"
@@ -2262,9 +2374,7 @@ export function CanvasWorkspace({
                     aria-label="Close math solution"
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => {
-                      setMathImage(null);
-                      setMathReasoning("");
-                      setMathSolution(null);
+                      resetMath();
                       setMathSelection(null);
                     }}
                   >
@@ -2283,6 +2393,8 @@ export function CanvasWorkspace({
                     <div className="canvas-math-answer">
                       {mathBusy &&
                       mathReasoning.length === 0 &&
+                      mathPython === null &&
+                      mathQuestions.length === 0 &&
                       !mathSolution ? (
                         <LoaderCircle
                           className="canvas-math-spinner"
@@ -2305,6 +2417,94 @@ export function CanvasWorkspace({
                                 <MarkdownText>{mathReasoning}</MarkdownText>
                               )}
                             </details>
+                          ) : null}
+                          {mathPython !== null ? (
+                            <details className="canvas-math-python">
+                              <summary>
+                                Python{" "}
+                                {mathPython.output === undefined
+                                  ? "running…"
+                                  : mathPython.success
+                                    ? "completed"
+                                    : "failed"}
+                              </summary>
+                              <pre>{mathPython.code}</pre>
+                              {mathPython.output !== undefined ? (
+                                <pre>{mathPython.output}</pre>
+                              ) : null}
+                            </details>
+                          ) : null}
+                          {mathQuestions.length > 0 ? (
+                            <form
+                              className="canvas-math-questions"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                if (mathBusy) return;
+                                const answers = mathQuestions.map(
+                                  (question) => ({
+                                    question: question.question,
+                                    answer: (
+                                      mathAnswers[question.id] ?? ""
+                                    ).trim(),
+                                  }),
+                                );
+                                if (
+                                  answers.some(
+                                    ({ answer }) => answer.length === 0,
+                                  ) ||
+                                  mathClarifications.length + answers.length >
+                                    24 ||
+                                  mathImage === null
+                                )
+                                  return;
+                                const clarifications = [
+                                  ...mathClarifications,
+                                  ...answers,
+                                ];
+                                setMathClarifications(clarifications);
+                                setMathQuestions([]);
+                                solveMath(mathImage, clarifications);
+                              }}
+                            >
+                              <p>Clarify uncertain numbers or symbols.</p>
+                              {mathQuestions.map((question) => (
+                                <label
+                                  key={question.id}
+                                  className="canvas-math-question"
+                                >
+                                  <span>{question.question}</span>
+                                  <input
+                                    value={mathAnswers[question.id] ?? ""}
+                                    maxLength={200}
+                                    required
+                                    onChange={(event) =>
+                                      setMathAnswers((current) => ({
+                                        ...current,
+                                        [question.id]: event.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(event) =>
+                                      event.stopPropagation()
+                                    }
+                                  />
+                                </label>
+                              ))}
+                              <button
+                                type="submit"
+                                disabled={
+                                  mathBusy ||
+                                  mathClarifications.length +
+                                    mathQuestions.length >
+                                    24 ||
+                                  mathQuestions.some(
+                                    (question) =>
+                                      !(mathAnswers[question.id] ?? "").trim(),
+                                  )
+                                }
+                              >
+                                Continue solving
+                              </button>
+                            </form>
                           ) : null}
                           {mathSolution !== null ? (
                             mathBusy ? (

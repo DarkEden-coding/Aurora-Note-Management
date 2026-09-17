@@ -26,6 +26,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      python:
+        condition: service_started
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-aurora}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aurora}
@@ -44,8 +46,34 @@ services:
       - "${AURORA_PORT:-8080}:8787"
     volumes:
       - aurora-uploads:/data/uploads
+      - aurora-python-run:/run/aurora-python
+    restart: unless-stopped
+
+  # Root owns the 0600 socket; scripts and their bounded cleanup run as nobody.
+  # Keep DAC_OVERRIDE dropped: cleanup does not rely on root traversing script files.
+  python:
+    build: ./sandbox
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    volumes:
+      - aurora-python-run:/run/aurora-python
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - KILL
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    cpus: "0.50"
+    mem_limit: 192m
+    pids_limit: 32
     restart: unless-stopped
 
 volumes:
   aurora-db:
   aurora-uploads:
+  aurora-python-run:

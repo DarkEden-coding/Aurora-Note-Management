@@ -1,4 +1,10 @@
-import type { Background, CanvasObject } from "@aurora/shared";
+import {
+  mathQuestionSchema,
+  type Background,
+  type CanvasObject,
+  type MathSolveEvent,
+  type MathSolveRequest,
+} from "@aurora/shared";
 import { renderNoteRegion } from "../chat/noteSnapshot";
 import type { Point } from "./viewport";
 
@@ -72,30 +78,25 @@ export async function captureMathRegion(
   return renderNoteRegion(objects, { ...region, background });
 }
 
-export type MathSolveEvent =
-  | { type: "reasoning-delta"; delta: string }
-  | { type: "reasoning-done" }
-  | { type: "text-delta"; delta: string }
-  | { type: "done" };
-
-/** Streams a captured problem through the authenticated Luna math solver. */
+/** Streams validated solver events and fails rather than presenting a truncated answer. */
 export async function* streamMathSolution(
-  image: string,
+  request: MathSolveRequest,
+  signal?: AbortSignal,
 ): AsyncGenerator<MathSolveEvent> {
   const response = await fetch("/api/ai/math/solve", {
     method: "POST",
     credentials: "same-origin",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ image }),
+    body: JSON.stringify(request),
+    ...(signal === undefined ? {} : { signal }),
   });
   if (!response.ok || !response.body) {
     const body = (await response.json().catch(() => null)) as {
       error?: { message?: unknown };
     } | null;
-    const message = body?.error?.message;
     throw new Error(
-      typeof message === "string"
-        ? message
+      typeof body?.error?.message === "string"
+        ? body.error.message
         : `Math solver failed (${response.status})`,
     );
   }
@@ -103,21 +104,72 @@ export async function* streamMathSolution(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      const line = chunk
-        .split("\n")
-        .find((entry) => entry.startsWith("data: "));
-      if (!line) continue;
-      const event = JSON.parse(line.slice(6)) as
-        MathSolveEvent | { type: "error"; message: string };
-      if (event.type === "error") throw new Error(event.message);
-      yield event;
+  let completed = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        const line = chunk
+          .split("\n")
+          .find((entry) => entry.startsWith("data: "));
+        if (!line) continue;
+        let event: unknown;
+        try {
+          event = JSON.parse(line.slice(6));
+        } catch {
+          throw new Error("Math solver sent an invalid response");
+        }
+        if (typeof event !== "object" || event === null || !("type" in event))
+          throw new Error("Math solver sent an invalid response");
+        const message = (event as { message?: unknown }).message;
+        if (event.type === "error" && typeof message === "string")
+          throw new Error(message);
+        if (event.type === "questions") {
+          const questions = (event as { questions?: unknown }).questions;
+          const parsed = mathQuestionSchema.array().safeParse(questions);
+          if (!parsed.success)
+            throw new Error("Math solver sent invalid clarification questions");
+          yield { type: "questions", questions: parsed.data };
+          continue;
+        }
+        if (
+          (event.type === "reasoning-delta" || event.type === "text-delta") &&
+          typeof (event as { delta?: unknown }).delta === "string"
+        ) {
+          yield event as MathSolveEvent;
+          continue;
+        }
+        if (
+          event.type === "reasoning-done" ||
+          event.type === "python-start" ||
+          event.type === "python-result" ||
+          event.type === "done"
+        ) {
+          if (
+            event.type === "python-start" &&
+            typeof (event as { code?: unknown }).code !== "string"
+          )
+            throw new Error("Math solver sent an invalid response");
+          if (
+            event.type === "python-result" &&
+            (typeof (event as { output?: unknown }).output !== "string" ||
+              typeof (event as { success?: unknown }).success !== "boolean")
+          )
+            throw new Error("Math solver sent an invalid response");
+          if (event.type === "done") completed = true;
+          yield event as MathSolveEvent;
+          continue;
+        }
+        throw new Error("Math solver sent an invalid response");
+      }
     }
+    if (buffer.trim()) throw new Error("Math solver response was truncated");
+    if (!completed) throw new Error("Math solver response was truncated");
+  } finally {
+    reader.releaseLock();
   }
 }

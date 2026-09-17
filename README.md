@@ -34,7 +34,28 @@ docker compose up --build -d
 
 One image serves both the API and the built web app (`AURORA_WEB_DIST`), with
 uploads on the `aurora-uploads` volume and data on `aurora-db`. Migrations run
-at container start. For non-localhost hosts, terminate TLS in a reverse proxy
+at container start. Compose also starts a separate, stdlib-only Python runner;
+rebuild it with `docker compose up --build -d python` (or rebuild everything
+with the command above). The app reaches it only through the root-owned `0600`
+Unix socket on the `aurora-python-run` volume—there is no Docker socket,
+runner app-data volume, secret mount, or runner network.
+
+The runner accepts a local `POST /run` JSON request (`{"code":"..."}`) and
+returns `{"success":boolean,"output":string}`. It accepts at most 16,000
+source characters, roughly 16 KB combined output, and a 100 KB JSON response
+envelope, runs one request at a time, and kills the script process group on
+cancellation, timeout, or finish. Scripts run as `nobody` with no supplemental
+groups, a read-only filesystem, a bounded `/tmp`, and CPU/memory/process/file
+limits. The process limit is zero: scripts cannot create subprocesses or
+threads. This is isolation, not a Python-language sandbox: only stdlib Python
+is installed, and untrusted code must stay in this container. To run the
+runner's framework-free checks:
+
+```sh
+docker compose run --rm python python3 /opt/aurora-python/check.py
+```
+
+For non-localhost hosts, terminate TLS in a reverse proxy
 (for example Caddy/nginx) that forwards `/`, `/api`, and `/sync/ws` to the app
 service, and set `AURORA_ORIGIN`/`AURORA_RP_ID` accordingly — passkeys require a
 secure context.

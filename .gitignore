@@ -7,3 +7,6 @@ coverage/
 !.env.example
 .data/
 *.log
+
+# Python bytecode caches
+__pycache__/

@@ -1,7 +1,12 @@
 // HTTP routes for ChatGPT device login, chat CRUD, note context, and streamed turns.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { chatModelSchema, chatReasoningSchema, idSchema } from "@aurora/shared";
+import {
+  chatModelSchema,
+  chatReasoningSchema,
+  idSchema,
+  mathSolveRequestSchema,
+} from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
 import { DomainError } from "../errors.js";
 import { requireSessionPreHandler } from "../auth/sessions.js";
@@ -26,7 +31,7 @@ import {
   readNoteText,
 } from "./noteText.js";
 import { streamTurn } from "./turn.js";
-import { createAiClient } from "./client.js";
+import { streamMathSolve } from "./math.js";
 
 const idParam = z.object({ id: idSchema });
 const projectParam = z.object({ projectId: idSchema });
@@ -47,12 +52,6 @@ const grepQuery = z.object({ q: z.string().min(1).max(200) });
 const pollBody = z.object({
   deviceAuthId: z.string().min(1).max(200),
   userCode: z.string().min(1).max(64),
-});
-const mathSolveBody = z.object({
-  image: z
-    .string()
-    .max(8_000_000)
-    .regex(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/),
 });
 const turnBody = z.object({
   messages: z
@@ -182,70 +181,16 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
     "/api/ai/math/solve",
     { preHandler, bodyLimit: 8_388_608 },
     async (request, reply) => {
-      const { image } = mathSolveBody.parse(request.body);
-      const { openai, store } = await createAiClient(
+      const body = mathSolveRequestSchema.parse(request.body);
+      const controller = new AbortController();
+      reply.raw.once("close", () => controller.abort());
+      await streamMathSolve(
         env,
         request.ownerId!,
-        "gpt-5.6-luna",
+        body,
+        reply,
+        controller.signal,
       );
-      const stream = await openai.responses.create({
-        model: "gpt-5.6-luna",
-        store,
-        stream: true,
-        reasoning: { effort: "high", summary: "auto" },
-        instructions:
-          "Read and solve or simplify the mathematical content in the image. A valid problem may be only a numerical expression with no variables, question text, or equals sign. First transcribe the expression exactly, paying special attention to plus versus minus signs, fraction-bar scope, exponents, multiplication, and parentheses. Verify that transcription against the image before calculating, then independently check the arithmetic. Return Markdown with LaTeX math using $...$ inline or $$...$$ on its own line. Begin by rewriting the original visible question or expression on a line starting exactly 'Question:'. Then show concise, numbered steps and finish with a line starting exactly 'Answer:'. Only report missing content when no mathematical expression is visible or the visible notation is genuinely incomplete; never require a variable or equation.",
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: "Solve the selected problem." },
-              { type: "input_image", image_url: image, detail: "high" },
-            ],
-          },
-        ],
-      });
-
-      reply.hijack();
-      reply.raw.writeHead(200, {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      });
-      const send = (event: Record<string, unknown>): void => {
-        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
-      };
-      let solution = "";
-      let reasoningDone = false;
-      try {
-        for await (const event of stream) {
-          if (event.type === "response.reasoning_summary_text.delta") {
-            send({ type: "reasoning-delta", delta: event.delta });
-          }
-          if (event.type === "response.output_text.delta") {
-            if (!reasoningDone) {
-              send({ type: "reasoning-done" });
-              reasoningDone = true;
-            }
-            solution += event.delta;
-            send({ type: "text-delta", delta: event.delta });
-          }
-        }
-        if (!solution.trim()) {
-          send({ type: "error", message: "Math solver returned no solution" });
-        } else {
-          send({ type: "done" });
-        }
-      } catch (error) {
-        send({
-          type: "error",
-          message:
-            error instanceof Error ? error.message : "Math solver failed",
-        });
-      } finally {
-        reply.raw.end();
-      }
     },
   );
 
