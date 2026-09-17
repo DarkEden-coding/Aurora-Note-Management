@@ -190,6 +190,28 @@ it.each([
   },
 );
 
+it("handles tool calls emitted only as completed output items", async () => {
+  const questions = [
+    { id: "a", question: "Is this 3 or 8?", suggestedAnswer: "8" },
+  ];
+  create.mockResolvedValueOnce(
+    (async function* () {
+      yield {
+        type: "response.output_item.done",
+        item: tool("ask_questions", { questions }),
+      };
+      yield { type: "response.completed", response: { output: [] } };
+    })(),
+  );
+
+  expect(await solve()).toEqual([
+    { type: "reasoning-done" },
+    { type: "questions", questions },
+    { type: "done" },
+  ]);
+  expect(create).toHaveBeenCalledTimes(1);
+});
+
 it("logs stream failures without request contents", async () => {
   create.mockResolvedValueOnce(
     (async function* () {

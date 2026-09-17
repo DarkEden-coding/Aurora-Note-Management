@@ -121,6 +121,8 @@ export async function streamMathSolve(
   let turn = 0;
   let receivedCompletion = false;
   let streamedTextLength = 0;
+  let completedOutputItemTypes: string[] = [];
+  let streamedOutputItemTypes: string[] = [];
   try {
     // Three executions plus a final model turn bound cost and failed-script retries.
     for (turn = 0; turn < 4; turn += 1) {
@@ -143,18 +145,31 @@ export async function streamMathSolve(
         { signal },
       );
       let output: ResponseOutputItem[] | undefined;
+      const streamedOutputItems: ResponseOutputItem[] = [];
       let streamedText = "";
       receivedCompletion = false;
       streamedTextLength = 0;
+      completedOutputItemTypes = [];
+      streamedOutputItemTypes = [];
       for await (const event of stream) {
         if (event.type === "response.reasoning_summary_text.delta") {
           send({ type: "reasoning-delta", delta: event.delta });
         } else if (event.type === "response.output_text.delta") {
           streamedText += event.delta;
           streamedTextLength = streamedText.length;
+        } else if (event.type === "response.output_item.done") {
+          if (
+            event.item.type === "function_call" ||
+            event.item.type === "message" ||
+            event.item.type === "reasoning"
+          ) {
+            streamedOutputItems.push(event.item);
+            streamedOutputItemTypes.push(event.item.type);
+          }
         } else if (event.type === "response.completed") {
           receivedCompletion = true;
           output = event.response.output;
+          completedOutputItemTypes = output.map((item) => item.type);
         } else if (
           event.type === "response.failed" ||
           event.type === "response.incomplete"
@@ -167,12 +182,24 @@ export async function streamMathSolve(
         }
       }
       signal.throwIfAborted();
-      if (!output && !streamedText.trim())
+      if (!output && !streamedOutputItems.length && !streamedText.trim())
         throw new Error(
           "Math solver stream ended before completion. Please retry.",
         );
       send({ type: "reasoning-done" });
-      const finalOutput = output ?? [];
+      const finalOutput: ResponseOutputItem[] = [];
+      for (const item of [...(output ?? []), ...streamedOutputItems]) {
+        if (
+          !finalOutput.some(
+            (existing) =>
+              existing.id !== undefined &&
+              item.id !== undefined &&
+              existing.id === item.id,
+          )
+        ) {
+          finalOutput.push(item);
+        }
+      }
       const calls = finalOutput.filter((item) => item.type === "function_call");
       // Completed output is authoritative for tool calls; streamed text is the
       // fallback when the SDK/provider omits the final message snapshot.
@@ -278,6 +305,8 @@ export async function streamMathSolve(
         emptyCompletionRetries,
         receivedCompletion,
         streamedTextLength,
+        completedOutputItemTypes,
+        streamedOutputItemTypes,
       });
     }
     send({ type: "error", message });
