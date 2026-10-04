@@ -55,6 +55,7 @@ export function useViewport(
 
   const zoomAt = useCallback(
     (anchorScreen: Point, nextZoom: number) => {
+      if (panLocks.x) return;
       setViewport((prev) => {
         const next = zoomViewportAround(
           prev,

@@ -63,9 +63,9 @@ The `/api/export` endpoint is an NDJSON metadata export, not a restorable backup
 
 ## Rendering and performance
 
-The canvas combines an SVG scene for strokes and shapes with positioned HTML for text and media. A simple bounding-box scan is acceptable in the local cache at the target ceiling of 1,000 objects per note. The server uses indexed bounds for regional reads. Rich-text editors mount only for visible or actively edited blocks. Images and PDF pages decode lazily. Pointer movement updates local visuals immediately and persists coalesced operations rather than sending every event.
+The canvas combines an SVG scene for strokes and shapes with positioned HTML for text and media. The local cache uses a simple bounding-box scan with no per-note object cap. The server uses indexed bounds for regional reads. Rich-text editors mount only for visible or actively edited blocks. Images and PDF pages decode lazily. Pointer movement updates local visuals immediately and persists coalesced operations rather than sending every event.
 
-The practical target is 1,000 objects per note, 1,000 notes total, 25 MB per upload, and visible remote edits within 500 ms on a healthy network.
+The practical target is 1,000 notes total, 25 MB per upload, and visible remote edits within 500 ms on a healthy network.
 
 ## Conflict rule
 

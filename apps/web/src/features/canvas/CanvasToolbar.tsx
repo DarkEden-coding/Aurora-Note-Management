@@ -31,8 +31,6 @@ export type CanvasTool =
 export interface CanvasToolbarProps {
   tool: CanvasTool;
   zoom: number;
-  objectCount: number;
-  maxObjectCount: number;
   canUndo: boolean;
   canRedo: boolean;
   onToolChange: (tool: CanvasTool) => void;
@@ -67,8 +65,6 @@ const TOOLS: ToolButton[] = [
 export function CanvasToolbar({
   tool,
   zoom,
-  objectCount,
-  maxObjectCount,
   canUndo,
   canRedo,
   onToolChange,
@@ -123,9 +119,6 @@ export function CanvasToolbar({
       </div>
       <div className="canvas-statusbar" data-testid="canvas-status">
         <span>{Math.round(zoom * 100)}%</span>
-        <span>
-          {objectCount}/{maxObjectCount} objects
-        </span>
       </div>
     </>
   );

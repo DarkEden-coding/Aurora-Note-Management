@@ -1,4 +1,4 @@
-// Regional read emulation for the local cache: axis-aligned viewport plus overscan culling over canvas objects. Linear scan is fine at the 1,000-object ceiling.
+// Regional read emulation for the local cache: axis-aligned viewport plus overscan culling over canvas objects. Uses a linear scan of the local cache.
 import type { Bounds, CanvasObject } from "@aurora/shared";
 import { boundsIntersect, expandBounds } from "./viewport";
 

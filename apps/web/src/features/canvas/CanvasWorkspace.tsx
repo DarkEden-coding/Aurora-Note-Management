@@ -81,7 +81,6 @@ import {
 } from "./operations";
 import {
   DEMO_OWNER_ID,
-  MAX_OBJECTS_PER_NOTE,
   PAGE_GAP,
   PAGE_HEIGHT,
   canvasScrollBounds,
@@ -778,11 +777,10 @@ export function CanvasWorkspace({
   const importImages = useCallback(
     async (files: File[], at: Point): Promise<void> => {
       const images = files.filter((file) => file.type.startsWith("image/"));
-      const available = MAX_OBJECTS_PER_NOTE - objectsRef.current.length;
-      if (images.length === 0 || available <= 0) return;
+      if (images.length === 0) return;
       setImportError(null);
       try {
-        for (const [index, file] of images.slice(0, available).entries()) {
+        for (const [index, file] of images.entries()) {
           const dimensions = await readImageSize(file);
           const fileId = await uploadFile(file);
           const size = fitImageSize(dimensions.width, dimensions.height);
@@ -818,20 +816,18 @@ export function CanvasWorkspace({
           file.type === "application/pdf" ||
           file.name.toLowerCase().endsWith(".pdf"),
       );
-      let available = MAX_OBJECTS_PER_NOTE - objectsRef.current.length;
-      if (pdfs.length === 0 || available <= 0) return;
+      if (pdfs.length === 0) return;
       setImportError(null);
       try {
         const { loadPdfFile } = await import("../pdf/usePdfDocument");
         let y = at.y;
         for (const file of pdfs) {
-          if (available <= 0) break;
           const pdf = await loadPdfFile(file);
           try {
             const fileId = await uploadFile(file);
             for (
               let pageNumber = 1;
-              pageNumber <= pdf.numPages && available > 0;
+              pageNumber <= pdf.numPages;
               pageNumber += 1
             ) {
               const page = await pdf.getPage(pageNumber);
@@ -858,7 +854,6 @@ export function CanvasWorkspace({
               });
               appendObject({ ...base, locked: true });
               y += height + 32;
-              available -= 1;
             }
           } finally {
             await pdf.cleanup();
@@ -907,7 +902,6 @@ export function CanvasWorkspace({
       raw: Bounds,
       endpoints?: { start: Point; end: Point },
     ): void => {
-      if (objectsRef.current.length >= MAX_OBJECTS_PER_NOTE) return;
       const bounds = clampBoundsToMode(raw, activeMode);
       const kind =
         createTool === "text"
@@ -1054,11 +1048,7 @@ export function CanvasWorkspace({
     containerRef,
     toCanvas,
     onStrokeComplete: (points) => {
-      if (
-        points.length < 1 ||
-        objectsRef.current.length >= MAX_OBJECTS_PER_NOTE
-      )
-        return;
+      if (points.length < 1) return;
       const rawBounds = pointsToBounds(points, STROKE_TOOL_WIDTH * 2);
       const bounds = clampBoundsToMode(rawBounds, activeMode);
       const storedPoints = translateStrokePoints(
@@ -2628,8 +2618,6 @@ export function CanvasWorkspace({
       <CanvasToolbar
         tool={tool}
         zoom={zoom}
-        objectCount={displayObjects.length}
-        maxObjectCount={MAX_OBJECTS_PER_NOTE}
         canUndo={history.undo.length > 0}
         canRedo={history.redo.length > 0}
         onToolChange={changeTool}

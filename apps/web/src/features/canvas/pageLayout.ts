@@ -8,8 +8,6 @@ export const PAGE_HEIGHT = 1056; // 11in at 96dpi
 export const PAGE_GAP = 24;
 const OPEN_AXIS_EXTENT = 100_000;
 
-export const MAX_OBJECTS_PER_NOTE = 1000;
-
 export const DEMO_OWNER_ID = "00000000-0000-4000-8000-000000000001";
 
 /** Frame of a zero-based page in paged mode (vertical stack anchored at the world origin). */
