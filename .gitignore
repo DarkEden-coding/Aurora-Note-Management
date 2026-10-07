@@ -10,3 +10,6 @@ coverage/
 
 # Python bytecode caches
 __pycache__/
+
+# Local-only notes
+*.local.md
