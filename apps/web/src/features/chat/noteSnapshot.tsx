@@ -7,6 +7,7 @@ import type {
   RegionalObjectQueryResponse,
 } from "@aurora/shared";
 import { apiPost } from "../../lib/http.js";
+import { sortByZIndex } from "../canvas/culling.js";
 import { HtmlObject, SceneObject } from "../canvas/ObjectRenderer.js";
 import {
   PAGE_GAP,
@@ -21,6 +22,9 @@ import "../canvas/canvasStyles.css";
 const MAX_WIDTH = 1600;
 const TILE_HEIGHT = 1600;
 const PDF_RENDER_TIMEOUT = 30_000;
+const PRINT_CLEANUP_TIMEOUT = 60_000;
+const PRINT_STYLES =
+  "html,body{margin:0;background:#fff}.pdf-print-page{width:8.5in;height:11in;overflow:hidden;break-after:page;print-color-adjust:exact}.pdf-print-page:last-child{break-after:auto}.pdf-print-page .chat-note-snapshot{width:8.5in!important;height:11in!important}@page{size:8.5in 11in;margin:0}";
 
 const NOOP = {
   onRichTextChange: () => undefined,
@@ -263,20 +267,12 @@ export async function renderPdfPages(
 function PrintablePages({
   objects,
   regions,
-  onPrint,
 }: {
   objects: CanvasObject[];
   regions: ExportPage[];
-  onPrint: () => void;
 }) {
   return (
     <>
-      <div className="pdf-print-controls">
-        <span>{regions.length} pages ready</span>
-        <button type="button" onClick={onPrint}>
-          Print or save PDF
-        </button>
-      </div>
       {regions.map((region, index) => (
         <div className="pdf-print-page" key={index}>
           <NoteSnapshotScene
@@ -296,79 +292,134 @@ function PrintablePages({
   );
 }
 
-/** Mounts vector note pages directly into the print window without rasterizing them. */
+/** Mounts vector note pages directly into the print document without rasterizing them. */
 export async function mountPrintablePages(
   targetDocument: Document,
   objects: CanvasObject[],
   regions: ExportPage[],
 ): Promise<() => void> {
   const root = createRoot(targetDocument.body);
-  root.render(
-    <PrintablePages
-      objects={objects}
-      regions={regions}
-      onPrint={() => targetDocument.defaultView?.print()}
-    />,
-  );
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  await waitForPdfCanvases(
-    targetDocument.body,
-    objects.filter(
-      (object) =>
-        object.kind === "pdf-page-reference" &&
-        object.payload.importedDocument === true,
-    ).length,
-  );
-  await withTimeout(
-    Promise.allSettled(
-      [...targetDocument.images].map((image) => image.decode()),
-    ).then(() => undefined),
-    "Loading images for PDF export timed out",
-    5_000,
-  );
+  try {
+    root.render(<PrintablePages objects={objects} regions={regions} />);
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    await waitForPdfCanvases(
+      targetDocument.body,
+      objects.filter(
+        (object) =>
+          object.kind === "pdf-page-reference" &&
+          object.payload.importedDocument === true,
+      ).length,
+    );
+    await withTimeout(
+      Promise.allSettled(
+        [...targetDocument.images].map((image) => image.decode()),
+      ).then(() => undefined),
+      "Loading images for PDF export timed out",
+      5_000,
+    );
+  } catch (cause) {
+    root.unmount();
+    throw cause;
+  }
   return () => root.unmount();
 }
 
-/** Opens a print-ready copy of a note so the browser can save it as PDF. */
+/** Copies the app's stylesheets into the print document and waits for linked sheets to load. */
+async function copyStylesheets(targetDocument: Document): Promise<void> {
+  const pending: Promise<void>[] = [];
+  for (const node of document.head.querySelectorAll(
+    'link[rel="stylesheet"], style',
+  )) {
+    // The copy belongs to the iframe's realm, so test the original node's type.
+    const copy = targetDocument.importNode(node, true);
+    if (node instanceof HTMLLinkElement) {
+      pending.push(
+        new Promise<void>((resolve) => {
+          copy.addEventListener("load", () => resolve(), { once: true });
+          copy.addEventListener("error", () => resolve(), { once: true });
+        }),
+      );
+    }
+    targetDocument.head.appendChild(copy);
+  }
+  await withTimeout(
+    Promise.all(pending).then(() => undefined),
+    "Loading styles for PDF export timed out",
+  );
+}
+
+/** Opens the browser print dialog for a note from a hidden iframe so it can be saved as PDF. */
 export async function exportNoteToPdf(
   noteId: string,
   title: string,
 ): Promise<void> {
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) throw new Error("Allow pop-ups to export this note");
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.tabIndex = -1;
+  iframe.style.cssText =
+    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;";
+  document.body.appendChild(iframe);
 
-  printWindow.document.title = title;
-  for (const stylesheet of document.querySelectorAll(
-    'link[rel="stylesheet"]',
-  )) {
-    printWindow.document.head.appendChild(stylesheet.cloneNode(true));
-  }
-  const style = printWindow.document.createElement("style");
-  style.textContent =
-    "html,body{margin:0;background:#fff}.pdf-print-controls{position:fixed;z-index:100;top:12px;right:12px;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:#fff;background:#20242c;box-shadow:0 4px 16px #0008}.pdf-print-controls button{padding:8px 12px;border:0;border-radius:6px;cursor:pointer}.pdf-print-page{width:8.5in;height:11in;overflow:hidden;break-after:page;print-color-adjust:exact}.pdf-print-page:last-child{break-after:auto}.pdf-print-page .chat-note-snapshot{width:8.5in!important;height:11in!important}@media print{.pdf-print-controls{display:none}}@page{size:8.5in 11in;margin:0}";
-  printWindow.document.head.appendChild(style);
-  printWindow.document.body.textContent = "Preparing PDF…";
+  let unmount: (() => void) | null = null;
+  let cleanupTimer = 0;
+  let cleanedUp = false;
+  const cleanup = (): void => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    window.clearTimeout(cleanupTimer);
+    unmount?.();
+    iframe.remove();
+  };
 
   try {
-    const [{ note, pages }, response] = await withTimeout(
-      Promise.all([fetchNote(noteId), loadNoteObjects(noteId)]),
-      "Loading the note for PDF export timed out",
+    const printWindow = iframe.contentWindow;
+    const printDocument = iframe.contentDocument;
+    if (!printWindow || !printDocument) {
+      throw new Error("Could not prepare the note for printing");
+    }
+    printDocument.open();
+    printDocument.write(
+      '<!doctype html><html><head><meta charset="utf-8"><title></title></head><body></body></html>',
     );
+    printDocument.close();
+    printDocument.title = title;
+
+    const [, [{ note, pages }, response]] = await Promise.all([
+      copyStylesheets(printDocument),
+      withTimeout(
+        Promise.all([fetchNote(noteId), loadNoteObjects(noteId)]),
+        "Loading the note for PDF export timed out",
+      ),
+    ]);
     if (response.truncated) {
       throw new Error("This note is too large to export in one PDF");
     }
+    const style = printDocument.createElement("style");
+    style.textContent = PRINT_STYLES;
+    printDocument.head.appendChild(style);
+
     const regions = planPdfPages(
       note.canvasMode,
       note.background,
       response.objects,
       pages,
     );
-    await mountPrintablePages(printWindow.document, response.objects, regions);
+    unmount = await mountPrintablePages(
+      printDocument,
+      response.objects,
+      regions,
+    );
+    printWindow.addEventListener("afterprint", cleanup, { once: true });
+    cleanupTimer = window.setTimeout(cleanup, PRINT_CLEANUP_TIMEOUT);
     printWindow.focus();
     printWindow.print();
   } catch (cause) {
-    printWindow.close();
+    cleanup();
     throw cause;
   }
 }
@@ -491,6 +542,41 @@ function SnapshotBackground({
   );
 }
 
+/** Object kinds the live canvas paints as HTML beneath the SVG scene layer. */
+const UNDERLAY_KINDS: ReadonlySet<CanvasObject["kind"]> = new Set([
+  "image",
+  "pdf-page-reference",
+]);
+/** Object kinds the live canvas paints in its SVG scene layer. */
+const SCENE_KINDS: ReadonlySet<CanvasObject["kind"]> = new Set([
+  "stroke",
+  "rectangle",
+  "ellipse",
+  "line",
+  "arrow",
+  "matrix",
+]);
+
+/**
+ * Splits objects into the live canvas's paint bands: images and PDF pages,
+ * then vector scene objects, then the remaining HTML objects, each in z-order.
+ */
+export function snapshotLayers(objects: CanvasObject[]): {
+  underlay: CanvasObject[];
+  scene: CanvasObject[];
+  overlay: CanvasObject[];
+} {
+  const sorted = sortByZIndex(objects);
+  return {
+    underlay: sorted.filter((object) => UNDERLAY_KINDS.has(object.kind)),
+    scene: sorted.filter((object) => SCENE_KINDS.has(object.kind)),
+    overlay: sorted.filter(
+      (object) =>
+        !UNDERLAY_KINDS.has(object.kind) && !SCENE_KINDS.has(object.kind),
+    ),
+  };
+}
+
 function NoteSnapshotScene({
   objects,
   minX,
@@ -508,16 +594,29 @@ function NoteSnapshotScene({
   scale: number;
   background: Background;
 }) {
-  const html = objects.filter((object) =>
-    [
-      "rich-text",
-      "sticky-note",
-      "image",
-      "attachment",
-      "pdf-page-reference",
-    ].includes(object.kind),
+  const { underlay, scene, overlay } = snapshotLayers(objects);
+  const viewBox = `${minX} ${minY} ${width} ${height}`;
+  const htmlLayer = (layer: CanvasObject[]) => (
+    <div
+      style={{
+        position: "absolute",
+        left: -minX,
+        top: -minY,
+        width,
+        height,
+      }}
+    >
+      {layer.map((object) => (
+        <HtmlObject
+          key={object.id}
+          object={object}
+          interactive={false}
+          selected={false}
+          callbacks={NOOP}
+        />
+      ))}
+    </div>
   );
-  const scene = objects.filter((object) => !html.includes(object));
   return (
     <div
       className="chat-note-snapshot"
@@ -540,7 +639,7 @@ function NoteSnapshotScene({
         <svg
           width={width}
           height={height}
-          viewBox={`${minX} ${minY} ${width} ${height}`}
+          viewBox={viewBox}
           style={{ position: "absolute", inset: 0 }}
         >
           <SnapshotBackground
@@ -550,29 +649,21 @@ function NoteSnapshotScene({
             width={width}
             height={height}
           />
-          {scene.map((object) => (
-            <SceneObject key={object.id} object={object} />
-          ))}
         </svg>
-        <div
-          style={{
-            position: "absolute",
-            left: -minX,
-            top: -minY,
-            width,
-            height,
-          }}
-        >
-          {html.map((object) => (
-            <HtmlObject
-              key={object.id}
-              object={object}
-              interactive={false}
-              selected={false}
-              callbacks={NOOP}
-            />
-          ))}
-        </div>
+        {underlay.length > 0 ? htmlLayer(underlay) : null}
+        {scene.length > 0 ? (
+          <svg
+            width={width}
+            height={height}
+            viewBox={viewBox}
+            style={{ position: "absolute", inset: 0 }}
+          >
+            {scene.map((object) => (
+              <SceneObject key={object.id} object={object} />
+            ))}
+          </svg>
+        ) : null}
+        {overlay.length > 0 ? htmlLayer(overlay) : null}
       </div>
     </div>
   );

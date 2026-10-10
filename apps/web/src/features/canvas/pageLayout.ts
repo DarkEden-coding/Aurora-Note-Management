@@ -218,8 +218,12 @@ export function canvasScrollBounds(
     mode === "fixed-height" ? Math.max(PAGE_WIDTH, objectRight) : PAGE_WIDTH;
   const contentHeight =
     mode === "paged"
-      ? pageFrames(objects, mode, PAGE_WIDTH, PAGE_HEIGHT, pageCount).at(-1)!
-          .y + PAGE_HEIGHT
+      ? // Imported PDF pages stack below the first sheet without adding page frames.
+        Math.max(
+          pageFrames(objects, mode, PAGE_WIDTH, PAGE_HEIGHT, pageCount).at(-1)!
+            .y + PAGE_HEIGHT,
+          objectBottom,
+        )
       : mode === "fixed-width"
         ? Math.max(PAGE_HEIGHT, objectBottom)
         : PAGE_HEIGHT;

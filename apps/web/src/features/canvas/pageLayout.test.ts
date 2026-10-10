@@ -155,6 +155,42 @@ describe("mode clamping", () => {
     expect(canvasScrollBounds([], "infinite", 400, 600)).toBeNull();
   });
 
+  it("scrolls past the last imported PDF page in paged mode at any zoom", () => {
+    // Mirrors PDF import: 720-wide letter pages stacked with a 32px gap, no extra page frames.
+    const pageHeight = 720 * (11 / 8.5);
+    const pdfPages = Array.from({ length: 5 }, (_, index) =>
+      makeCanvasObject({
+        id: `00000000-0000-4000-8000-00000000d00${index}`,
+        ownerId: OWNER_ID,
+        noteId: NOTE_ID,
+        kind: "pdf-page-reference",
+        bounds: {
+          x: 0,
+          y: index * (pageHeight + 32),
+          width: 720,
+          height: pageHeight,
+        },
+        zIndex: index + 1,
+        payload: { importedDocument: true, pageNumber: index + 1 },
+      }),
+    );
+    const lastBottom = 4 * (pageHeight + 32) + pageHeight;
+
+    for (const zoom of [0.25, 1, 3]) {
+      const visibleHeight = 800 / zoom;
+      const bounds = canvasScrollBounds(
+        pdfPages,
+        "paged",
+        1200 / zoom,
+        visibleHeight,
+        1,
+      )!;
+      expect(bounds.contentHeight).toBeCloseTo(lastBottom);
+      expect(bounds.maxY + visibleHeight).toBeGreaterThan(lastBottom);
+      expect(bounds.maxY).toBeCloseTo(lastBottom + visibleHeight * 0.25);
+    }
+  });
+
   it("reports the fixed axis per mode", () => {
     expect(fixedAxis("infinite")).toBe("none");
     expect(fixedAxis("fixed-width")).toBe("x");

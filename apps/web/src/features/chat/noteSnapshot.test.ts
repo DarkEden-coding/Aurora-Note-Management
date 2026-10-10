@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Background, CanvasObject } from "@aurora/shared";
 import { makeCanvasObject } from "../canvas/objects";
 import { PAGE_GAP, PAGE_HEIGHT, PAGE_WIDTH } from "../canvas/pageLayout";
-import { planPdfPages } from "./noteSnapshot";
+import { planPdfPages, snapshotLayers } from "./noteSnapshot";
 
 const BACKGROUND: Background = {
   pattern: "dot-grid",
@@ -69,5 +69,25 @@ describe("PDF page planning", () => {
     expect(planPdfPages("paged", BACKGROUND, [imported], [])).toEqual([
       { ...imported.bounds, background: BACKGROUND },
     ]);
+  });
+});
+
+describe("snapshot layering", () => {
+  it("paints ink above images and text above ink, like the live canvas", () => {
+    const withKind = (
+      kind: CanvasObject["kind"],
+      zIndex: number,
+    ): CanvasObject => ({ ...objectAt(0, 0), kind, zIndex });
+    const ink = withKind("stroke", 1);
+    const text = withKind("rich-text", 2);
+    const image = withKind("image", 3);
+    const pdf = withKind("pdf-page-reference", 0);
+    const shape = withKind("rectangle", 0);
+
+    expect(snapshotLayers([ink, text, image, pdf, shape])).toEqual({
+      underlay: [pdf, image],
+      scene: [shape, ink],
+      overlay: [text],
+    });
   });
 });
