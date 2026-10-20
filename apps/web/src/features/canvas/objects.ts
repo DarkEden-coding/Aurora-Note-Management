@@ -58,13 +58,23 @@ export function setStrokePayload(
   points: StrokePoint[],
   color: string,
   baseWidth: number,
+  highlighter = false,
 ): CanvasObject["payload"] {
   return {
     points: points.map((p) => [p.x, p.y, p.pressure]),
     color,
     baseWidth,
+    ...(highlighter ? { highlighter: true } : {}),
   };
 }
+
+/** Highlighter strokes are translucent, constant-width ink drawn beneath text. */
+export function isHighlighterStroke(o: CanvasObject): boolean {
+  return o.kind === "stroke" && o.payload.highlighter === true;
+}
+
+/** Opacity applied to a whole highlighter stroke so overlapping segments do not darken. */
+export const HIGHLIGHTER_OPACITY = 0.38;
 
 export function getStrokeColor(o: CanvasObject): string {
   return typeof o.payload.color === "string" ? o.payload.color : "#e6e8ec";
@@ -377,11 +387,14 @@ export function hitTestTopmostStroke(
   for (const object of objects) {
     if (object.kind !== "stroke" || object.locked) continue;
     const points = getStrokePoints(object);
+    const reach = isHighlighterStroke(object)
+      ? tolerance + getStrokeBaseWidth(object) / 2
+      : tolerance;
     const hit = points.some((point, index) => {
       const previous = points[index - 1];
       return previous === undefined
-        ? Math.hypot(point.x - p.x, point.y - p.y) <= tolerance
-        : distanceToSegment(p, previous, point) <= tolerance;
+        ? Math.hypot(point.x - p.x, point.y - p.y) <= reach
+        : distanceToSegment(p, previous, point) <= reach;
     });
     if (hit && (best === null || object.zIndex >= best.zIndex)) best = object;
   }

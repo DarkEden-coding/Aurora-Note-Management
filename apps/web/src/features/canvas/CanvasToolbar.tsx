@@ -7,6 +7,7 @@ import {
   Circle,
   Eraser,
   Hand,
+  Highlighter,
   MousePointer2,
   Pen,
   Redo2,
@@ -19,6 +20,7 @@ export type CanvasTool =
   | "select"
   | "pan"
   | "pen"
+  | "highlighter"
   | "eraser"
   | "math"
   | "line"
@@ -48,6 +50,11 @@ const TOOLS: ToolButton[] = [
   { tool: "select", label: "Select (V)", icon: <MousePointer2 size={16} /> },
   { tool: "pan", label: "Pan (H)", icon: <Hand size={16} /> },
   { tool: "pen", label: "Pen (P)", icon: <Pen size={16} /> },
+  {
+    tool: "highlighter",
+    label: "Highlighter (I)",
+    icon: <Highlighter size={16} />,
+  },
   { tool: "eraser", label: "Erase stroke (X)", icon: <Eraser size={16} /> },
   { tool: "math", label: "Solve math region", icon: <Calculator size={16} /> },
   { tool: "text", label: "Text (T)", icon: <Type size={16} /> },

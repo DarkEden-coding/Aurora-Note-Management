@@ -13,6 +13,8 @@ export interface PenCaptureOptions {
   zoom: number;
   color: string;
   baseWidth: number;
+  /** Constant-width translucent ink instead of pressure-sensitive pen ink. */
+  highlighter?: boolean;
   containerRef: React.RefObject<HTMLDivElement | null>;
   onStrokeComplete: (points: StrokePoint[]) => void;
 }
@@ -122,6 +124,7 @@ export function usePenCapture(options: PenCaptureOptions): UsePenCaptureResult {
         current.baseWidth,
         current.zoom,
         window.devicePixelRatio || 1,
+        current.highlighter ?? false,
       );
       append(e.nativeEvent);
       try {

@@ -122,6 +122,58 @@ export interface CanvasWorkspaceProps {
 }
 
 const STROKE_TOOL_WIDTH = 2.5;
+const HIGHLIGHTER_STYLE_KEY = "aurora.highlighter";
+const HIGHLIGHTER_PALETTE: DrawingPalette = [
+  "#facc15",
+  "#4ade80",
+  "#38bdf8",
+  "#f472b6",
+  "#fb923c",
+  "#a78bfa",
+];
+const DEFAULT_HIGHLIGHTER_STYLE: HighlighterStyle = {
+  color: "#facc15",
+  width: 14,
+  palette: HIGHLIGHTER_PALETTE,
+};
+
+interface HighlighterStyle {
+  color: string;
+  width: number;
+  palette: DrawingPalette;
+}
+
+/** Restores the last highlighter color, width, and palette from this browser. */
+function loadHighlighterStyle(): HighlighterStyle {
+  try {
+    const raw = window.localStorage.getItem(HIGHLIGHTER_STYLE_KEY);
+    if (raw === null) return DEFAULT_HIGHLIGHTER_STYLE;
+    const parsed = JSON.parse(raw) as Partial<HighlighterStyle>;
+    return {
+      color:
+        typeof parsed.color === "string"
+          ? parsed.color
+          : DEFAULT_HIGHLIGHTER_STYLE.color,
+      width:
+        typeof parsed.width === "number" && parsed.width > 0
+          ? parsed.width
+          : DEFAULT_HIGHLIGHTER_STYLE.width,
+      palette:
+        Array.isArray(parsed.palette) &&
+        parsed.palette.length > 0 &&
+        parsed.palette.every((color) => typeof color === "string")
+          ? parsed.palette
+          : HIGHLIGHTER_PALETTE,
+    };
+  } catch {
+    return DEFAULT_HIGHLIGHTER_STYLE;
+  }
+}
+
+/** Freehand ink tools share pen capture, palm rejection, and stroke storage. */
+function isInkTool(tool: CanvasTool): tool is "pen" | "highlighter" {
+  return tool === "pen" || tool === "highlighter";
+}
 const VIEWPORT_STATE_PREFIX = "aurora.viewport.";
 const HANDLE_SCREEN_SIZE = 9;
 const HANDLE_HIT_TOLERANCE_SCREEN = 12;
@@ -364,7 +416,7 @@ export function CanvasWorkspace({
   const changeTool = useCallback((nextTool: CanvasTool): void => {
     setTool(nextTool);
     setPlacementPropertiesOpen(
-      nextTool === "pen" || nextTool === "text" || isVectorTool(nextTool),
+      isInkTool(nextTool) || nextTool === "text" || isVectorTool(nextTool),
     );
   }, []);
   const palette = drawingPalette ?? (["#000000"] as DrawingPalette);
@@ -376,6 +428,18 @@ export function CanvasWorkspace({
     lineStyle: "solid",
     cornerRadius: 2,
   }));
+  const [highlighterStyle, setHighlighterStyle] =
+    useState<HighlighterStyle>(loadHighlighterStyle);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        HIGHLIGHTER_STYLE_KEY,
+        JSON.stringify(highlighterStyle),
+      );
+    } catch {
+      // Highlighter defaults are optional when browser storage is unavailable.
+    }
+  }, [highlighterStyle]);
   const [shapePropertiesOpen, setShapePropertiesOpen] = useState(false);
   const shapeEditOriginRef = useRef<CanvasObject | null>(null);
   const [gesture, setGesture] = useState<Gesture | null>(null);
@@ -989,6 +1053,7 @@ export function CanvasWorkspace({
       v: "select",
       h: "pan",
       p: "pen",
+      i: "highlighter",
       x: "eraser",
       t: "text",
       l: "line",
@@ -1039,17 +1104,26 @@ export function CanvasWorkspace({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [changeTool, deleteSelection, redo, selection, undo]);
 
+  const highlighting = tool === "highlighter";
+  const inkColor = highlighting
+    ? highlighterStyle.color
+    : drawingStyle.strokeColor;
+  const inkWidth = highlighting ? highlighterStyle.width : STROKE_TOOL_WIDTH;
   const pen = usePenCapture({
-    isActive: tool === "pen",
+    isActive: isInkTool(tool),
     noteId,
     zoom: viewport.zoom,
-    color: drawingStyle.strokeColor,
-    baseWidth: STROKE_TOOL_WIDTH,
+    color: inkColor,
+    baseWidth: inkWidth,
+    highlighter: highlighting,
     containerRef,
     toCanvas,
     onStrokeComplete: (points) => {
       if (points.length < 1) return;
-      const rawBounds = pointsToBounds(points, STROKE_TOOL_WIDTH * 2);
+      const rawBounds = pointsToBounds(
+        points,
+        highlighting ? inkWidth : inkWidth * 2,
+      );
       const bounds = clampBoundsToMode(rawBounds, activeMode);
       const storedPoints = translateStrokePoints(
         points,
@@ -1065,8 +1139,9 @@ export function CanvasWorkspace({
         zIndex: nextZIndex(objectsRef.current),
         payload: setStrokePayload(
           storedPoints,
-          drawingStyle.strokeColor,
-          STROKE_TOOL_WIDTH,
+          inkColor,
+          inkWidth,
+          highlighting,
         ),
       });
       appendObject(object);
@@ -1184,7 +1259,7 @@ export function CanvasWorkspace({
       }
 
       if (
-        tool === "pen" &&
+        isInkTool(tool) &&
         (e.pointerType === "pen" ||
           (e.pointerType === "mouse" && e.button === 0))
       ) {
@@ -1426,7 +1501,7 @@ export function CanvasWorkspace({
         return;
       }
 
-      if (tool === "pen") return;
+      if (isInkTool(tool)) return;
       const current = gestureRef.current;
       if (current === null) return;
 
@@ -1909,9 +1984,19 @@ export function CanvasWorkspace({
   }, [activeMode, noteId, viewport]);
   const inView = queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN);
   const visibleIds = new Set(inView.map((object) => object.id));
+  // PDF pages mount a full screen ahead in every direction so they render before scrolling reaches them.
+  const nearbyPdfPages = queryVisibleObjects(
+    displayObjects.filter(
+      (object) =>
+        object.kind === "pdf-page-reference" && !visibleIds.has(object.id),
+    ),
+    view,
+    Math.max(DEFAULT_OVERSCAN, view.width, view.height),
+  );
   // Keep selected editors mounted when scrolling so their selection and undo survive.
   const visible = sortByZIndex([
     ...inView,
+    ...nearbyPdfPages,
     ...displayObjects.filter(
       (object) =>
         object.kind === "rich-text" &&
@@ -1936,7 +2021,7 @@ export function CanvasWorkspace({
       ? "panning"
       : tool === "pan"
         ? "pan"
-        : tool === "pen"
+        : isInkTool(tool)
           ? "pen"
           : tool === "eraser"
             ? "eraser"
@@ -1998,7 +2083,7 @@ export function CanvasWorkspace({
   }
 
   const placementTool =
-    tool === "pen" || tool === "text" || isVectorTool(tool) ? tool : null;
+    isInkTool(tool) || tool === "text" || isVectorTool(tool) ? tool : null;
   const currentPageIndex = Math.max(
     0,
     Math.min(
@@ -2625,16 +2710,43 @@ export function CanvasWorkspace({
         onRedo={redo}
       />
       {placementTool !== null && placementPropertiesOpen ? (
-        <DrawingPlacementPanel
-          tool={placementTool}
-          style={drawingStyle}
-          palette={palette}
-          onPaletteChange={(next) => onDrawingPaletteChange?.(next)}
-          onPreview={(patch) =>
-            setDrawingStyle((current) => ({ ...current, ...patch }))
-          }
-          onCommit={() => undefined}
-        />
+        placementTool === "highlighter" ? (
+          <DrawingPlacementPanel
+            tool="highlighter"
+            style={{
+              ...drawingStyle,
+              strokeColor: highlighterStyle.color,
+              strokeWidth: highlighterStyle.width,
+            }}
+            palette={highlighterStyle.palette}
+            onPaletteChange={(next) =>
+              setHighlighterStyle((current) => ({ ...current, palette: next }))
+            }
+            onPreview={(patch) =>
+              setHighlighterStyle((current) => ({
+                ...current,
+                ...(patch.strokeColor !== undefined
+                  ? { color: patch.strokeColor }
+                  : {}),
+                ...(patch.strokeWidth !== undefined
+                  ? { width: patch.strokeWidth }
+                  : {}),
+              }))
+            }
+            onCommit={() => undefined}
+          />
+        ) : (
+          <DrawingPlacementPanel
+            tool={placementTool}
+            style={drawingStyle}
+            palette={palette}
+            onPaletteChange={(next) => onDrawingPaletteChange?.(next)}
+            onPreview={(patch) =>
+              setDrawingStyle((current) => ({ ...current, ...patch }))
+            }
+            onCommit={() => undefined}
+          />
+        )
       ) : null}
       {scrollBounds ? (
         <CanvasScrollbars

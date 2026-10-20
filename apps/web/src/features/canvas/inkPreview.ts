@@ -1,4 +1,4 @@
-import type { StrokePoint } from "./objects";
+import { HIGHLIGHTER_OPACITY, type StrokePoint } from "./objects";
 
 /** Incremental screen-space ink; each sample paints only its newest segment. */
 export class InkPreview {
@@ -6,6 +6,7 @@ export class InkPreview {
   private previous: StrokePoint | null = null;
   private zoom = 1;
   private width = 2.5;
+  private highlighter = false;
 
   begin(
     canvas: HTMLCanvasElement,
@@ -15,6 +16,7 @@ export class InkPreview {
     baseWidth: number,
     zoom: number,
     dpr: number,
+    highlighter = false,
   ): void {
     const ratio = Math.min(2, Math.max(1, dpr));
     canvas.width = Math.ceil(width * ratio);
@@ -23,6 +25,9 @@ export class InkPreview {
     this.previous = null;
     this.zoom = zoom;
     this.width = baseWidth;
+    this.highlighter = highlighter;
+    // Highlighter ink is painted opaque and faded as a layer, matching the committed stroke.
+    canvas.style.opacity = highlighter ? String(HIGHLIGHTER_OPACITY) : "";
     if (!this.context) return;
     this.context.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.context.strokeStyle = color;
@@ -31,13 +36,18 @@ export class InkPreview {
     this.context.lineJoin = "round";
   }
 
+  private lineWidth(pressure: number): number {
+    return this.highlighter
+      ? this.width * this.zoom
+      : Math.max(0.5, this.width * (0.3 + pressure)) * this.zoom;
+  }
+
   append(point: StrokePoint): void {
     const ctx = this.context;
     if (!ctx) return;
     const previous = this.previous;
     if (previous) {
-      ctx.lineWidth =
-        Math.max(0.5, this.width * (0.3 + previous.pressure)) * this.zoom;
+      ctx.lineWidth = this.lineWidth(previous.pressure);
       ctx.beginPath();
       ctx.moveTo(previous.x, previous.y);
       ctx.lineTo(point.x, point.y);
@@ -47,7 +57,7 @@ export class InkPreview {
       ctx.arc(
         point.x,
         point.y,
-        (Math.max(0.5, this.width * (0.3 + point.pressure)) * this.zoom) / 2,
+        this.lineWidth(point.pressure) / 2,
         0,
         Math.PI * 2,
       );

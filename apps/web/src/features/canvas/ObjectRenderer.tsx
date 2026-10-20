@@ -34,6 +34,8 @@ import {
   getStrokeBaseWidth,
   getStrokeColor,
   getStrokePoints,
+  HIGHLIGHTER_OPACITY,
+  isHighlighterStroke,
   getPdfPageReference,
   type StrokePoint,
 } from "./objects";
@@ -77,12 +79,53 @@ export function PressureStrokePath({
   );
 }
 
+/** Highlighter ink: one constant-width path, made translucent as a group so self-overlaps stay even. */
+export function HighlighterStrokePath({
+  points,
+  color,
+  width,
+}: {
+  points: StrokePoint[];
+  color: string;
+  width: number;
+}): ReactNode {
+  const d =
+    points.length === 1
+      ? `M${points[0]!.x} ${points[0]!.y}l0.01 0`
+      : points
+          .map(
+            (point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`,
+          )
+          .join("");
+  return (
+    <path
+      className="canvas-highlighter-stroke"
+      d={d}
+      stroke={color}
+      strokeWidth={width}
+      strokeOpacity={HIGHLIGHTER_OPACITY}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      fill="none"
+    />
+  );
+}
+
 /** Renders one scene-layer object (strokes and vector shapes) as an SVG fragment. */
 export function SceneObject({ object }: { object: CanvasObject }): ReactNode {
   switch (object.kind) {
     case "stroke": {
       const points = getStrokePoints(object);
       if (points.length === 0) return null;
+      if (isHighlighterStroke(object)) {
+        return (
+          <HighlighterStrokePath
+            points={points}
+            color={getStrokeColor(object)}
+            width={getStrokeBaseWidth(object)}
+          />
+        );
+      }
       return (
         <PressureStrokePath
           points={points}

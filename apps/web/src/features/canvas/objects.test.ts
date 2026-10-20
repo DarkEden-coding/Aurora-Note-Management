@@ -20,6 +20,7 @@ import {
   hitTestLineObject,
   hitTestTopmost,
   hitTestTopmostStroke,
+  isHighlighterStroke,
   lineGeometryFromDrag,
   makeCanvasObject,
   makeImagePayload,
@@ -248,6 +249,20 @@ describe("hit-testing", () => {
     const stroke = makeStroke();
     expect(hitTestTopmostStroke([stroke], { x: 10, y: 6.5 }, 1)).toBe(stroke);
     expect(hitTestTopmostStroke([stroke], { x: 10, y: 15 }, 1)).toBeNull();
+  });
+
+  it("marks highlighter strokes and hits anywhere across their width", () => {
+    const stroke = makeStroke();
+    expect(isHighlighterStroke(stroke)).toBe(false);
+    const highlight = {
+      ...stroke,
+      payload: setStrokePayload(getStrokePoints(stroke), "#facc15", 14, true),
+    };
+    expect(isHighlighterStroke(highlight)).toBe(true);
+    expect(hitTestTopmostStroke([highlight], { x: 10, y: 12 }, 1)).toBe(
+      highlight,
+    );
+    expect(hitTestTopmostStroke([stroke], { x: 10, y: 12 }, 1)).toBeNull();
   });
 });
 

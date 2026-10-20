@@ -16,8 +16,10 @@ export interface DrawingStyle {
   cornerRadius: number;
 }
 
+export type PlacementTool = "pen" | "highlighter" | "text" | VectorTool;
+
 interface DrawingStyleControlsProps {
-  kind: "pen" | "text" | VectorTool;
+  kind: PlacementTool;
   style: DrawingStyle;
   palette: DrawingPalette;
   onPaletteChange: (palette: DrawingPalette) => void | Promise<void>;
@@ -119,7 +121,30 @@ export function DrawingStyleControls({
         </label>
       ) : null}
 
-      {kind !== "pen" && kind !== "text" ? (
+      {kind === "highlighter" ? (
+        <label className="drawing-property-field">
+          Width
+          <span>
+            <input
+              type="range"
+              min="4"
+              max="40"
+              step="1"
+              aria-label="Highlighter width"
+              value={style.strokeWidth}
+              onChange={(event) =>
+                onPreview({ strokeWidth: Number(event.target.value) })
+              }
+              onPointerUp={onCommit}
+              onPointerCancel={onCommit}
+              onBlur={onCommit}
+            />
+            <output>{style.strokeWidth}px</output>
+          </span>
+        </label>
+      ) : null}
+
+      {kind !== "pen" && kind !== "highlighter" && kind !== "text" ? (
         <>
           <label className="drawing-property-field">
             Line type
@@ -201,7 +226,7 @@ export function DrawingPlacementPanel({
   tool,
   ...props
 }: Omit<DrawingStyleControlsProps, "kind"> & {
-  tool: "pen" | "text" | VectorTool;
+  tool: PlacementTool;
 }): ReactNode {
   return (
     <aside
@@ -210,7 +235,14 @@ export function DrawingPlacementPanel({
       aria-label="Drawing properties"
     >
       <strong className="drawing-properties-title">
-        {tool === "pen" ? "Pen" : tool === "text" ? "Text" : "Shape"} properties
+        {tool === "pen"
+          ? "Pen"
+          : tool === "highlighter"
+            ? "Highlighter"
+            : tool === "text"
+              ? "Text"
+              : "Shape"}{" "}
+        properties
       </strong>
       <DrawingStyleControls kind={tool} {...props} />
     </aside>
