@@ -1,12 +1,14 @@
 // PDF page renderer: paints one document page to a canvas at display resolution. Renders come from a shared page cache, so a page shown once repaints instantly on remount, and the following pages are prefetched in the background.
 import {
   type ReactNode,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { usePdfDocument } from "./usePdfDocument";
+import { PdfPixelRatioContext } from "./pixelRatio";
 import {
   getRenderedPage,
   pageCacheKey,
@@ -67,7 +69,7 @@ export function PdfPageView({
   const [renderedKey, setRenderedKey] = useState<string | null>(null);
   const [renderError, setRenderError] = useState(false);
 
-  const dpr = devicePixelRatio();
+  const dpr = useContext(PdfPixelRatioContext) ?? devicePixelRatio();
   const key =
     src !== null ? pageCacheKey(src, pageNumber, targetWidth, dpr) : null;
   const inRange = pdf !== null && pageNumber >= 0 && pageNumber < pdf.numPages;

@@ -16,6 +16,7 @@ import {
   pagedPageIndexAtY,
 } from "../canvas/pageLayout.js";
 import { boundsIntersect } from "../canvas/viewport.js";
+import { PdfPixelRatioContext } from "../pdf/pixelRatio.js";
 import { fetchNote, type PageJson } from "../library/api.js";
 import "../canvas/canvasStyles.css";
 
@@ -23,6 +24,8 @@ const MAX_WIDTH = 1600;
 const TILE_HEIGHT = 1600;
 const PDF_RENDER_TIMEOUT = 30_000;
 const PRINT_CLEANUP_TIMEOUT = 60_000;
+/** Device pixels per printed CSS pixel for PDF pages (~192 dpi), independent of the screen. */
+const PRINT_PIXEL_RATIO = 2;
 const PRINT_STYLES =
   "html,body{margin:0;background:#fff}.pdf-print-page{width:8.5in;height:11in;overflow:hidden;break-after:page;print-color-adjust:exact}.pdf-print-page:last-child{break-after:auto}.pdf-print-page .chat-note-snapshot{width:8.5in!important;height:11in!important}@page{size:8.5in 11in;margin:0}";
 
@@ -273,21 +276,30 @@ function PrintablePages({
 }) {
   return (
     <>
-      {regions.map((region, index) => (
-        <div className="pdf-print-page" key={index}>
-          <NoteSnapshotScene
-            objects={objects.filter((object) =>
-              boundsIntersect(object.bounds, region),
-            )}
-            minX={region.x}
-            minY={region.y}
-            width={region.width}
-            height={region.height}
-            scale={1}
-            background={region.background}
-          />
-        </div>
-      ))}
+      {regions.map((region, index) => {
+        // Imported PDF pages are sized in points (612×792 for Letter); fit each to the sheet.
+        const scale = Math.min(
+          PAGE_WIDTH / region.width,
+          PAGE_HEIGHT / region.height,
+        );
+        return (
+          <div className="pdf-print-page" key={index}>
+            <PdfPixelRatioContext.Provider value={scale * PRINT_PIXEL_RATIO}>
+              <NoteSnapshotScene
+                objects={objects.filter((object) =>
+                  boundsIntersect(object.bounds, region),
+                )}
+                minX={region.x}
+                minY={region.y}
+                width={region.width}
+                height={region.height}
+                scale={scale}
+                background={region.background}
+              />
+            </PdfPixelRatioContext.Provider>
+          </div>
+        );
+      })}
     </>
   );
 }
