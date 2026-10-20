@@ -292,6 +292,36 @@ function PrintablePages({
   );
 }
 
+/**
+ * Swaps rendered PDF canvases for images of their pixels. Chrome can print a never-displayed
+ * canvas by replaying its drawing commands, which loses pdf.js's page fonts and prints every
+ * glyph as a box. Returns the object URLs to revoke once printing is done.
+ */
+async function freezePdfCanvases(host: HTMLElement): Promise<string[]> {
+  const canvases = [
+    ...host.querySelectorAll<HTMLCanvasElement>(
+      'canvas[data-pdf-rendered="true"]',
+    ),
+  ];
+  return Promise.all(
+    canvases.map(async (canvas) => {
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/png"),
+      );
+      if (blob === null) throw new Error("Could not capture a PDF page");
+      const url = URL.createObjectURL(blob);
+      const image = canvas.ownerDocument.createElement("img");
+      image.className = canvas.className;
+      image.alt = "";
+      image.src = url;
+      // The canvas stays mounted (hidden) so React still owns the nodes it rendered.
+      canvas.style.display = "none";
+      canvas.after(image);
+      return url;
+    }),
+  );
+}
+
 /** Mounts vector note pages directly into the print document without rasterizing them. */
 export async function mountPrintablePages(
   targetDocument: Document,
@@ -299,6 +329,11 @@ export async function mountPrintablePages(
   regions: ExportPage[],
 ): Promise<() => void> {
   const root = createRoot(targetDocument.body);
+  let imageUrls: string[] = [];
+  const unmount = (): void => {
+    root.unmount();
+    for (const url of imageUrls) URL.revokeObjectURL(url);
+  };
   try {
     root.render(<PrintablePages objects={objects} regions={regions} />);
     await new Promise<void>((resolve) =>
@@ -315,6 +350,7 @@ export async function mountPrintablePages(
           object.payload.importedDocument === true,
       ).length,
     );
+    imageUrls = await freezePdfCanvases(targetDocument.body);
     await withTimeout(
       Promise.allSettled(
         [...targetDocument.images].map((image) => image.decode()),
@@ -323,10 +359,10 @@ export async function mountPrintablePages(
       5_000,
     );
   } catch (cause) {
-    root.unmount();
+    unmount();
     throw cause;
   }
-  return () => root.unmount();
+  return unmount;
 }
 
 /** Copies the app's stylesheets into the print document and waits for linked sheets to load. */
