@@ -140,6 +140,17 @@ describe("mode clamping", () => {
     expect(tall.contentHeight).toBe(1900);
     expect(tall.maxY).toBe(2050);
 
+    // Imported PDF pages extend past the persisted page count.
+    const imported = canvasScrollBounds(
+      [objectAt({ x: 0, y: 8240, width: 612, height: 792 })],
+      "paged",
+      view.width,
+      view.height,
+      1,
+    )!;
+    expect(imported.contentHeight).toBe(9032);
+    expect(imported.maxY).toBe(9182);
+
     const wide = canvasScrollBounds(
       [objectAt({ x: 1400, y: 10, width: 100, height: 20 })],
       "fixed-height",
