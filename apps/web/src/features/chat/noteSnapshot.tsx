@@ -1,4 +1,4 @@
-// Offscreen read-only note rendering for AI screenshots and browser PDF export.
+// Offscreen read-only note rendering for AI screenshots and PDF download export.
 import { createRoot } from "react-dom/client";
 import type {
   Background,
@@ -8,6 +8,7 @@ import type {
 } from "@aurora/shared";
 import { apiPost } from "../../lib/http.js";
 import { HtmlObject, SceneObject } from "../canvas/ObjectRenderer.js";
+import { getPdfPageReference } from "../canvas/objects.js";
 import {
   PAGE_GAP,
   PAGE_HEIGHT,
@@ -16,6 +17,7 @@ import {
 } from "../canvas/pageLayout.js";
 import { boundsIntersect } from "../canvas/viewport.js";
 import { fetchNote, type PageJson } from "../library/api.js";
+import type { PDFDocument } from "pdf-lib";
 import "../canvas/canvasStyles.css";
 
 const MAX_WIDTH = 1600;
@@ -33,6 +35,20 @@ export interface ExportPage {
   width: number;
   height: number;
   background: Background;
+  /** Original PDF page shown in this region, embedded as vector content on export. */
+  importedPdf?: { url: string; pageNumber: number };
+}
+
+/** PDF points per CSS pixel (72 / 96). */
+const POINTS_PER_PIXEL = 0.75;
+/** Device pixels per CSS pixel for rasterized export content. */
+const EXPORT_PIXEL_RATIO = 2;
+
+function isImportedPdfPage(object: CanvasObject): boolean {
+  return (
+    object.kind === "pdf-page-reference" &&
+    object.payload.importedDocument === true
+  );
 }
 
 /** Returns fixed print regions for every supported canvas mode. */
@@ -43,14 +59,19 @@ export function planPdfPages(
   pages: PageJson[],
 ): ExportPage[] {
   const importedPages = objects
-    .filter(
-      (object) =>
-        object.kind === "pdf-page-reference" &&
-        object.payload.importedDocument === true,
-    )
+    .filter(isImportedPdfPage)
     .sort((a, b) => a.bounds.y - b.bounds.y);
   if (importedPages.length > 0) {
-    return importedPages.map((object) => ({ ...object.bounds, background }));
+    return importedPages.map((object) => {
+      const ref = getPdfPageReference(object);
+      return {
+        ...object.bounds,
+        background,
+        ...(ref?.pdfUrl
+          ? { importedPdf: { url: ref.pdfUrl, pageNumber: ref.pageNumber } }
+          : {}),
+      };
+    });
   }
 
   if (mode === "paged") {
@@ -185,10 +206,44 @@ async function waitForPdfCanvases(
   });
 }
 
-/** Renders one bounded canvas region to a PNG. */
+/** Draws the scene's SVG layers straight onto a canvas; valid when the scene has no HTML objects. */
+async function rasterizeSvgLayers(
+  scene: HTMLElement,
+  pixelRatio: number,
+): Promise<string> {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(scene.offsetWidth * pixelRatio);
+  canvas.height = Math.ceil(scene.offsetHeight * pixelRatio);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not create an export canvas");
+  for (const svg of scene.querySelectorAll("svg")) {
+    const copy = svg.cloneNode(true) as SVGSVGElement;
+    copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    copy.setAttribute("width", String(canvas.width));
+    copy.setAttribute("height", String(canvas.height));
+    copy.removeAttribute("style");
+    const url = URL.createObjectURL(
+      new Blob([new XMLSerializer().serializeToString(copy)], {
+        type: "image/svg+xml",
+      }),
+    );
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      context.drawImage(image, 0, 0);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  return canvas.toDataURL("image/png");
+}
+
+/** Renders one bounded canvas region to a PNG; `transparent` omits the note background. */
 export async function renderNoteRegion(
   objects: CanvasObject[],
   region: ExportPage,
+  { pixelRatio = 1, transparent = false } = {},
 ): Promise<string> {
   const host = document.createElement("div");
   host.style.cssText =
@@ -207,7 +262,7 @@ export async function renderNoteRegion(
         width={region.width}
         height={region.height}
         scale={Math.min(1, MAX_WIDTH / region.width)}
-        background={region.background}
+        background={transparent ? null : region.background}
       />,
     );
     await new Promise<void>((resolve) =>
@@ -218,23 +273,33 @@ export async function renderNoteRegion(
     );
     await waitForPdfCanvases(
       host,
-      visibleObjects.filter(
-        (object) =>
-          object.kind === "pdf-page-reference" &&
-          object.payload.importedDocument === true,
-      ).length,
+      visibleObjects.filter(isImportedPdfPage).length,
+    );
+    await withTimeout(
+      Promise.allSettled(
+        [...host.querySelectorAll("img")].map((image) => image.decode()),
+      ),
+      "Loading images for the note snapshot timed out",
     );
     const scene = host.querySelector(
       ".chat-note-snapshot",
     ) as HTMLElement | null;
     if (!scene) throw new Error("Note export failed to mount");
+    if (
+      visibleObjects.every(
+        (object) =>
+          !UNDERLAY_KINDS.has(object.kind) && !OVERLAY_KINDS.has(object.kind),
+      )
+    ) {
+      return await rasterizeSvgLayers(scene, pixelRatio);
+    }
     const { default: html2canvas } = await import("html2canvas");
     const canvas = await withTimeout(
       html2canvas(scene, {
         backgroundColor: null,
         imageTimeout: 5_000,
         logging: false,
-        scale: 1,
+        scale: pixelRatio,
         useCORS: true,
       }),
       "PDF page rendering timed out",
@@ -246,131 +311,105 @@ export async function renderNoteRegion(
   }
 }
 
-/** Rasterizes planned note regions in print order. */
-export async function renderPdfPages(
-  objects: CanvasObject[],
-  regions: ExportPage[],
-  onPageStart?: (page: number, total: number) => void,
-): Promise<string[]> {
-  const sources: string[] = [];
-  for (const [index, region] of regions.entries()) {
-    onPageStart?.(index + 1, regions.length);
-    sources.push(await renderNoteRegion(objects, region));
-  }
-  return sources;
+/** Loads a source PDF once per export. */
+function sourcePdfLoader(): (url: string) => Promise<PDFDocument> {
+  const cache = new Map<string, Promise<PDFDocument>>();
+  return (url) => {
+    let source = cache.get(url);
+    if (!source) {
+      source = (async () => {
+        const response = await fetch(url, { credentials: "same-origin" });
+        if (!response.ok) throw new Error("Could not load the imported PDF");
+        const { PDFDocument } = await import("pdf-lib");
+        return PDFDocument.load(await response.arrayBuffer(), {
+          ignoreEncryption: true,
+        });
+      })();
+      cache.set(url, source);
+    }
+    return source;
+  };
 }
 
-function PrintablePages({
-  objects,
-  regions,
-  onPrint,
-}: {
-  objects: CanvasObject[];
-  regions: ExportPage[];
-  onPrint: () => void;
-}) {
-  return (
-    <>
-      <div className="pdf-print-controls">
-        <span>{regions.length} pages ready</span>
-        <button type="button" onClick={onPrint}>
-          Print or save PDF
-        </button>
-      </div>
-      {regions.map((region, index) => (
-        <div className="pdf-print-page" key={index}>
-          <NoteSnapshotScene
-            objects={objects.filter((object) =>
-              boundsIntersect(object.bounds, region),
-            )}
-            minX={region.x}
-            minY={region.y}
-            width={region.width}
-            height={region.height}
-            scale={1}
-            background={region.background}
-          />
-        </div>
-      ))}
-    </>
-  );
+/** Saves a blob through a temporary download link. */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-/** Mounts vector note pages directly into the print window without rasterizing them. */
-export async function mountPrintablePages(
-  targetDocument: Document,
-  objects: CanvasObject[],
-  regions: ExportPage[],
-): Promise<() => void> {
-  const root = createRoot(targetDocument.body);
-  root.render(
-    <PrintablePages
-      objects={objects}
-      regions={regions}
-      onPrint={() => targetDocument.defaultView?.print()}
-    />,
-  );
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  await waitForPdfCanvases(
-    targetDocument.body,
-    objects.filter(
-      (object) =>
-        object.kind === "pdf-page-reference" &&
-        object.payload.importedDocument === true,
-    ).length,
-  );
-  await withTimeout(
-    Promise.allSettled(
-      [...targetDocument.images].map((image) => image.decode()),
-    ).then(() => undefined),
-    "Loading images for PDF export timed out",
-    5_000,
-  );
-  return () => root.unmount();
+function pdfFilename(title: string): string {
+  const base = title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").trim();
+  return `${base || "Untitled"}.pdf`;
 }
 
-/** Opens a print-ready copy of a note so the browser can save it as PDF. */
+/** Builds a PDF of the note and downloads it. Imported PDF pages stay vector; notes on top are rasterized. */
 export async function exportNoteToPdf(
   noteId: string,
   title: string,
 ): Promise<void> {
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) throw new Error("Allow pop-ups to export this note");
-
-  printWindow.document.title = title;
-  for (const stylesheet of document.querySelectorAll(
-    'link[rel="stylesheet"]',
-  )) {
-    printWindow.document.head.appendChild(stylesheet.cloneNode(true));
+  const [{ note, pages }, response] = await withTimeout(
+    Promise.all([fetchNote(noteId), loadNoteObjects(noteId)]),
+    "Loading the note for PDF export timed out",
+  );
+  if (response.truncated) {
+    throw new Error("This note is too large to export in one PDF");
   }
-  const style = printWindow.document.createElement("style");
-  style.textContent =
-    "html,body{margin:0;background:#fff}.pdf-print-controls{position:fixed;z-index:100;top:12px;right:12px;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;color:#fff;background:#20242c;box-shadow:0 4px 16px #0008}.pdf-print-controls button{padding:8px 12px;border:0;border-radius:6px;cursor:pointer}.pdf-print-page{width:8.5in;height:11in;overflow:hidden;break-after:page;print-color-adjust:exact}.pdf-print-page:last-child{break-after:auto}.pdf-print-page .chat-note-snapshot{width:8.5in!important;height:11in!important}@media print{.pdf-print-controls{display:none}}@page{size:8.5in 11in;margin:0}";
-  printWindow.document.head.appendChild(style);
-  printWindow.document.body.textContent = "Preparing PDF…";
+  const regions = planPdfPages(
+    note.canvasMode,
+    note.background,
+    response.objects,
+    pages,
+  );
+  const drawable = response.objects.filter(
+    (object) => !isImportedPdfPage(object),
+  );
+  const { PDFDocument } = await import("pdf-lib");
+  const output = await PDFDocument.create();
+  output.setTitle(title);
+  const loadSource = sourcePdfLoader();
 
-  try {
-    const [{ note, pages }, response] = await withTimeout(
-      Promise.all([fetchNote(noteId), loadNoteObjects(noteId)]),
-      "Loading the note for PDF export timed out",
+  for (const region of regions) {
+    const content = drawable.filter((object) =>
+      boundsIntersect(object.bounds, region),
     );
-    if (response.truncated) {
-      throw new Error("This note is too large to export in one PDF");
+    let page;
+    if (region.importedPdf) {
+      const source = await loadSource(region.importedPdf.url);
+      const [original] = await output.embedPdf(source, [
+        region.importedPdf.pageNumber - 1,
+      ]);
+      page = output.addPage([original!.width, original!.height]);
+      page.drawPage(original!);
+      if (content.length === 0) continue;
+    } else {
+      page = output.addPage([
+        region.width * POINTS_PER_PIXEL,
+        region.height * POINTS_PER_PIXEL,
+      ]);
     }
-    const regions = planPdfPages(
-      note.canvasMode,
-      note.background,
-      response.objects,
-      pages,
-    );
-    await mountPrintablePages(printWindow.document, response.objects, regions);
-    printWindow.focus();
-    printWindow.print();
-  } catch (cause) {
-    printWindow.close();
-    throw cause;
+    const png = await renderNoteRegion(content, region, {
+      pixelRatio: EXPORT_PIXEL_RATIO,
+      transparent: region.importedPdf !== undefined,
+    });
+    page.drawImage(await output.embedPng(png), {
+      x: 0,
+      y: 0,
+      width: page.getWidth(),
+      height: page.getHeight(),
+    });
   }
+
+  const bytes = await output.save();
+  downloadBlob(
+    new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/pdf" }),
+    pdfFilename(title),
+  );
 }
 
 /** Renders one tile used by the AI screenshot tool. */
@@ -491,6 +530,10 @@ function SnapshotBackground({
   );
 }
 
+const UNDERLAY_KINDS = new Set(["image", "pdf-page-reference"]);
+const OVERLAY_KINDS = new Set(["rich-text", "sticky-note", "attachment"]);
+
+/** Read-only scene layered like the workspace: images and PDF pages, then ink and shapes, then text. */
 function NoteSnapshotScene({
   objects,
   minX,
@@ -506,18 +549,35 @@ function NoteSnapshotScene({
   width: number;
   height: number;
   scale: number;
-  background: Background;
+  background: Background | null;
 }) {
-  const html = objects.filter((object) =>
-    [
-      "rich-text",
-      "sticky-note",
-      "image",
-      "attachment",
-      "pdf-page-reference",
-    ].includes(object.kind),
+  const underlay = objects.filter((object) => UNDERLAY_KINDS.has(object.kind));
+  const overlay = objects.filter((object) => OVERLAY_KINDS.has(object.kind));
+  const scene = objects.filter(
+    (object) =>
+      !UNDERLAY_KINDS.has(object.kind) && !OVERLAY_KINDS.has(object.kind),
   );
-  const scene = objects.filter((object) => !html.includes(object));
+  const htmlLayer = (layer: CanvasObject[]) => (
+    <div
+      style={{
+        position: "absolute",
+        left: -minX,
+        top: -minY,
+        width,
+        height,
+      }}
+    >
+      {layer.map((object) => (
+        <HtmlObject
+          key={object.id}
+          object={object}
+          interactive={false}
+          selected={false}
+          callbacks={NOOP}
+        />
+      ))}
+    </div>
+  );
   return (
     <div
       className="chat-note-snapshot"
@@ -534,45 +594,37 @@ function NoteSnapshotScene({
           transform: `scale(${scale})`,
           transformOrigin: "top left",
           position: "relative",
-          backgroundColor: background.color,
+          ...(background ? { backgroundColor: background.color } : {}),
         }}
       >
+        {background ? (
+          <svg
+            width={width}
+            height={height}
+            viewBox={`${minX} ${minY} ${width} ${height}`}
+            style={{ position: "absolute", inset: 0 }}
+          >
+            <SnapshotBackground
+              background={background}
+              minX={minX}
+              minY={minY}
+              width={width}
+              height={height}
+            />
+          </svg>
+        ) : null}
+        {htmlLayer(underlay)}
         <svg
           width={width}
           height={height}
           viewBox={`${minX} ${minY} ${width} ${height}`}
           style={{ position: "absolute", inset: 0 }}
         >
-          <SnapshotBackground
-            background={background}
-            minX={minX}
-            minY={minY}
-            width={width}
-            height={height}
-          />
           {scene.map((object) => (
             <SceneObject key={object.id} object={object} />
           ))}
         </svg>
-        <div
-          style={{
-            position: "absolute",
-            left: -minX,
-            top: -minY,
-            width,
-            height,
-          }}
-        >
-          {html.map((object) => (
-            <HtmlObject
-              key={object.id}
-              object={object}
-              interactive={false}
-              selected={false}
-              callbacks={NOOP}
-            />
-          ))}
-        </div>
+        {htmlLayer(overlay)}
       </div>
     </div>
   );
