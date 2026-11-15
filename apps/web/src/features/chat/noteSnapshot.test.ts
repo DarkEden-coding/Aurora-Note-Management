@@ -70,6 +70,27 @@ describe("PDF page planning", () => {
       { ...imported.bounds, background: BACKGROUND },
     ]);
   });
+
+  it("links imported regions to their source PDF page for vector export", () => {
+    const imported = {
+      ...objectAt(0, 0),
+      kind: "pdf-page-reference" as const,
+      bounds: { x: 0, y: 824, width: 612, height: 792 },
+      payload: {
+        importedDocument: true,
+        fileId: "file-1",
+        sourceNoteId: NOTE_ID,
+        pageNumber: 2,
+      },
+    };
+    expect(planPdfPages("paged", BACKGROUND, [imported], [])).toEqual([
+      {
+        ...imported.bounds,
+        background: BACKGROUND,
+        importedPdf: { url: "/api/files/file-1", pageNumber: 2 },
+      },
+    ]);
+  });
 });
 
 describe("snapshot layering", () => {
