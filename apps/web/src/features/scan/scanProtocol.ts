@@ -1,12 +1,15 @@
 // Messages between the page and the scanner worker.
-import type { PixelImage } from "./detectDocument";
-import type { Quad } from "./quadGeometry";
+import type { Point, Quad } from "./quadGeometry";
 
 export type ScanJob =
   | { type: "warm-up" }
-  | { type: "detect-frame"; frame: PixelImage }
-  | { type: "detect-photo"; photo: Blob }
-  | { type: "flatten"; photo: Blob; quad: Quad };
+  /** Pixels are read in the worker, so the page never waits on a GPU readback. */
+  | { type: "detect"; frame: ImageBitmap; hint?: Point | undefined }
+  /**
+   * `quad` is normalized to a view with `viewAspect` (width/height), such as
+   * the video frame shown at capture; the photo may be a wider still.
+   */
+  | { type: "flatten"; photo: Blob; quad: Quad; viewAspect: number };
 
 export type ScanRequest = ScanJob & { id: number };
 

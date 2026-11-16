@@ -1,19 +1,26 @@
 // Full-screen scan flow: capture a photo, review the detected corners, then hand back the flattened image as a JPEG file.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CameraView } from "./CameraView";
+import {
+  analysisBitmap,
+  canvasToJpeg,
+  captureFromFile,
+  type Capture,
+} from "./capture";
 import { CornerReview } from "./CornerReview";
-import type { Quad } from "./quadGeometry";
-import { detectPhoto, flattenPhoto, warmUpScanner } from "./scanner";
+import type { Point, Quad } from "./quadGeometry";
+import { detectFrame, flattenPhoto, warmUpScanner } from "./scanner";
 import "./scanStyles.css";
 
-type Phase =
-  | { kind: "camera" }
-  | {
-      kind: "review";
-      photo: Blob;
-      url: string;
-      detected: Quad | null | undefined;
-    };
+/** Captured pictures are analyzed at this size. */
+const ANALYSIS_SIDE = 1024;
+
+type Review = Capture & {
+  /** Distinguishes captures, so the review screen starts fresh for each. */
+  id: number;
+  /** Detected corners; undefined while detection runs, null when nothing was found. */
+  detected: Quad | null | undefined;
+};
 
 function scanFileName(now: Date): string {
   const pad = (n: number): string => String(n).padStart(2, "0");
@@ -30,11 +37,12 @@ export function ScanDialog({
   onClose: () => void;
 }): ReactNode {
   const dialog = useRef<HTMLDialogElement | null>(null);
-  const [phase, setPhase] = useState<Phase>({ kind: "camera" });
+  const [review, setReview] = useState<Review | null>(null);
   const [scanner, setScanner] = useState<"loading" | "ready" | "failed">(
     "loading",
   );
   const [busy, setBusy] = useState(false);
+  const captures = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,30 +57,64 @@ export function ScanDialog({
     };
   }, []);
 
-  const reviewUrl = phase.kind === "review" ? phase.url : null;
-  useEffect(() => {
-    if (!reviewUrl) return;
-    return () => URL.revokeObjectURL(reviewUrl);
-  }, [reviewUrl]);
-
-  const review = (photo: Blob): void => {
-    const url = URL.createObjectURL(photo);
-    setError(null);
-    setPhase({ kind: "review", photo, url, detected: undefined });
+  /**
+   * Finds the corners in the reviewed picture, around `hint` when given.
+   * Keeps the earlier corners when nothing turns up.
+   */
+  const detect = (picture: HTMLCanvasElement, hint: Point | null): void => {
+    let previous: Quad | null | undefined;
+    setReview((current) => {
+      if (current?.picture !== picture) return current;
+      previous = current.detected;
+      return { ...current, detected: undefined };
+    });
     const settle = (detected: Quad | null): void =>
-      setPhase((current) =>
-        current.kind === "review" && current.url === url
-          ? { ...current, detected }
+      setReview((current) =>
+        current?.picture === picture
+          ? { ...current, detected: detected ?? previous ?? null }
           : current,
       );
-    detectPhoto(photo).then(settle, () => settle(null));
+    analysisBitmap(picture, ANALYSIS_SIDE)
+      .then((frame) => detectFrame(frame, hint ?? undefined))
+      .then(settle, () => settle(null));
   };
 
-  const insert = async (photo: Blob, quad: Quad): Promise<void> => {
+  const startReview = (capture: Capture): void => {
+    setError(null);
+    // The live outline stands in until detection on the still picture finishes.
+    captures.current += 1;
+    setReview({
+      ...capture,
+      id: captures.current,
+      detected: capture.outline ?? undefined,
+    });
+    const settle = (detected: Quad | null): void =>
+      setReview((current) =>
+        current?.picture === capture.picture
+          ? { ...current, detected: detected ?? current.detected ?? null }
+          : current,
+      );
+    analysisBitmap(capture.picture, ANALYSIS_SIDE)
+      .then((frame) => detectFrame(frame, capture.hint ?? undefined))
+      .then(settle, () => settle(null));
+  };
+
+  const insert = async (capture: Capture, quad: Quad): Promise<void> => {
     setBusy(true);
     setError(null);
+    const viewAspect = capture.picture.width / capture.picture.height;
     try {
-      const jpeg = await flattenPhoto(photo, quad);
+      let jpeg: Blob;
+      try {
+        jpeg = await flattenPhoto(await capture.photo, quad, viewAspect);
+      } catch {
+        // A still that came back turned or unreadable; use the frame on screen.
+        jpeg = await flattenPhoto(
+          await canvasToJpeg(capture.picture),
+          quad,
+          viewAspect,
+        );
+      }
       onScanned(
         new File([jpeg], scanFileName(new Date()), { type: "image/jpeg" }),
       );
@@ -100,22 +142,28 @@ export function ScanDialog({
       // Keep keys away from the canvas shortcuts behind the dialog (Backspace deletes the selection).
       onKeyDown={(event) => event.stopPropagation()}
     >
-      {phase.kind === "camera" ? (
-        <CameraView
-          scannerReady={scanner === "ready"}
-          onPhoto={review}
-          onClose={onClose}
-        />
-      ) : (
+      <CameraView
+        active={review === null}
+        scannerReady={scanner === "ready"}
+        onCapture={startReview}
+        onFile={(file) => {
+          captureFromFile(file).then(startReview, () =>
+            setError("Could not open that photo"),
+          );
+        }}
+        onClose={onClose}
+      />
+      {review ? (
         <CornerReview
-          key={phase.url}
-          photoUrl={phase.url}
-          detected={phase.detected}
+          key={review.id}
+          picture={review.picture}
+          detected={review.detected}
           busy={busy}
-          onRetake={() => setPhase({ kind: "camera" })}
-          onInsert={(quad) => void insert(phase.photo, quad)}
+          onRetake={() => setReview(null)}
+          onFind={(hint) => detect(review.picture, hint)}
+          onInsert={(quad) => void insert(review, quad)}
         />
-      )}
+      ) : null}
       {scanner === "failed" ? (
         <p className="scan-error" role="alert">
           The scanner could not load, so edges cannot be found or flattened.

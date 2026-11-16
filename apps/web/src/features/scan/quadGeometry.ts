@@ -240,3 +240,23 @@ export function rectifiedSize(
     height: Math.max(1, Math.round(size.height)),
   };
 }
+
+/**
+ * Maps normalized corners from a center crop to the full image it was cut
+ * from, for a video frame that shows a narrower view than the camera's still.
+ * Aspects are width/height; the crop spans the full image in one direction.
+ */
+export function uncropQuad(
+  quad: Quad,
+  cropAspect: number,
+  imageAspect: number,
+): Quad {
+  const ratio = cropAspect / imageAspect;
+  // A wider crop spans the full width and part of the height, and vice versa.
+  const sx = ratio > 1 ? 1 : ratio;
+  const sy = ratio > 1 ? 1 / ratio : 1;
+  return quad.map((p) => ({
+    x: 0.5 + (p.x - 0.5) * sx,
+    y: 0.5 + (p.y - 0.5) * sy,
+  })) as Quad;
+}

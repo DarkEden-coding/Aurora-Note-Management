@@ -29,6 +29,10 @@ const DETECT_SIDE = 512;
 const REFINE_SIDE = 1024;
 /** Candidates must cover at least this share of the frame. */
 const MIN_AREA = 0.03;
+/** A quad around the spot the user tapped may be this small. */
+const MIN_HINTED_AREA = 0.005;
+/** Ranks quads around the tapped spot first when choosing which to verify. */
+const HINT_BOOST = 4;
 /** Polygon vertices this close to the frame edge come from the photo border, not the subject. */
 const FRAME_MARGIN = 0.01;
 /** Candidates snapped and checked against edges, best first. */
@@ -95,7 +99,12 @@ function toGray(
 }
 
 /** Quads traced from one binary image, in normalized coordinates. */
-function candidatesFrom(cv: OpenCv, binary: Mat): Candidate[] {
+function candidatesFrom(
+  cv: OpenCv,
+  binary: Mat,
+  hint: Point | undefined,
+): Candidate[] {
+  const smallest = hint ? MIN_HINTED_AREA : MIN_AREA;
   const width = binary.cols;
   const height = binary.rows;
   return withMats((track) => {
@@ -111,7 +120,7 @@ function candidatesFrom(cv: OpenCv, binary: Mat): Candidate[] {
     const found: Candidate[] = [];
     for (let i = 0; i < contours.size(); i += 1) {
       const contour = track(contours.get(i));
-      if (cv.contourArea(contour) < 0.02 * width * height) continue;
+      if (cv.contourArea(contour) < 0.66 * smallest * width * height) continue;
       const hull = track(new cv.Mat());
       const approx = track(new cv.Mat());
       cv.convexHull(contour, hull);
@@ -138,7 +147,8 @@ function candidatesFrom(cv: OpenCv, binary: Mat): Candidate[] {
       const area = polygonArea(quad);
       // The traced shape must mostly fill its quad, or it is not a rectangle.
       const fill = cv.contourArea(hull) / (area * width * height);
-      if (area < MIN_AREA || fill < 0.85) continue;
+      const hinted = hint !== undefined && insideConvex(hint, quad);
+      if (area < (hinted ? MIN_HINTED_AREA : MIN_AREA) || fill < 0.85) continue;
       found.push({ quad, area, score: area * centrality(quad) });
     }
     return found;
@@ -146,7 +156,11 @@ function candidatesFrom(cv: OpenCv, binary: Mat): Candidate[] {
 }
 
 /** Rough quads from a downscaled frame, ordered TL, TR, BR, BL. */
-function roughCandidates(cv: OpenCv, image: PixelImage): Candidate[] {
+function roughCandidates(
+  cv: OpenCv,
+  image: PixelImage,
+  hint: Point | undefined,
+): Candidate[] {
   const candidates = withMats((track) => {
     const gray = toGray(cv, image, DETECT_SIDE, track);
     cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
@@ -158,7 +172,10 @@ function roughCandidates(cv: OpenCv, image: PixelImage): Candidate[] {
     cv.dilate(edges, edges, kernel);
     const bright = track(new cv.Mat());
     cv.threshold(gray, bright, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-    return [...candidatesFrom(cv, edges), ...candidatesFrom(cv, bright)];
+    return [
+      ...candidatesFrom(cv, edges, hint),
+      ...candidatesFrom(cv, bright, hint),
+    ];
   });
   return candidates.map((c) => ({ ...c, quad: orderCorners(c.quad) }));
 }
@@ -227,11 +244,29 @@ function withStackedPanels(
  * to real edges, and dropped unless all four sides follow an edge for most of
  * their length; this rejects shapes traced around people, walls, and windows.
  */
-function pickQuad(gradient: Gradient, candidates: Candidate[]): Quad | null {
+function pickQuad(
+  gradient: Gradient,
+  candidates: Candidate[],
+  hint: Point | undefined,
+): Quad | null {
+  const boost = (quad: readonly Point[]): number =>
+    hint && insideConvex(hint, quad) ? HINT_BOOST : 1;
   const verified: Candidate[] = [];
-  const shortlist = withStackedPanels(gradient, candidates)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_VERIFIED);
+  const shortlist: Candidate[] = [];
+  for (const candidate of withStackedPanels(gradient, candidates).sort(
+    (a, b) => b.score * boost(b.quad) - a.score * boost(a.quad),
+  )) {
+    // Edge and brightness tracing often find the same quad; snap it once.
+    const duplicate = shortlist.some((kept) =>
+      kept.quad.every(
+        (p, i) =>
+          Math.hypot(p.x - candidate.quad[i]!.x, p.y - candidate.quad[i]!.y) <
+          0.01,
+      ),
+    );
+    if (!duplicate) shortlist.push(candidate);
+    if (shortlist.length === MAX_VERIFIED) break;
+  }
   for (const candidate of shortlist) {
     const quad = refineQuad(gradient, candidate.quad as Quad);
     const support = quad.map((a, i) =>
@@ -270,8 +305,12 @@ function pickQuad(gradient: Gradient, candidates: Candidate[]): Quad | null {
         outer.score = Math.min(outer.score, inner.score * 0.99);
     }
   }
-  verified.sort((a, b) => b.score - a.score);
-  return (verified[0]?.quad as Quad | undefined) ?? null;
+  // A quad around the tapped spot wins over everything else, including the
+  // nesting preference: tapping the screen border around a slide picks the screen.
+  const tapped = verified.filter((candidate) => boost(candidate.quad) > 1);
+  const choices = tapped.length > 0 ? tapped : verified;
+  choices.sort((a, b) => b.score - a.score);
+  return (choices[0]?.quad as Quad | undefined) ?? null;
 }
 
 interface Gradient {
@@ -303,46 +342,49 @@ function edgePeaks(
 ): EdgePeak[] {
   const { gx, gy, width, height } = gradient;
   const { d } = lineThrough(a, b);
-  const n = { x: -d.y, y: d.x };
+  const nx = -d.y;
+  const ny = d.x;
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   const reach = Math.ceil(band);
+  const size = 2 * reach + 1;
+  // Strength at each offset across the side; -1 marks samples off the frame.
+  const strength = new Float32Array(size);
   const peaks: EdgePeak[] = [];
   for (let station = 1; station < STATIONS; station += 1) {
     const t = (station / STATIONS) * length;
-    const profile: ({
-      x: number;
-      y: number;
-      offset: number;
-      strength: number;
-    } | null)[] = [];
-    for (let offset = -reach; offset <= reach; offset += 1) {
-      const x = Math.round(a.x + d.x * t + n.x * offset);
-      const y = Math.round(a.y + d.y * t + n.y * offset);
+    const cx = a.x + d.x * t;
+    const cy = a.y + d.y * t;
+    for (let j = 0; j < size; j += 1) {
+      const offset = j - reach;
+      const x = Math.round(cx + nx * offset);
+      const y = Math.round(cy + ny * offset);
       if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) {
-        profile.push(null);
+        strength[j] = -1;
         continue;
       }
       const k = y * width + x;
-      const across = Math.abs(gx[k]! * n.x + gy[k]! * n.y);
+      const across = Math.abs(gx[k]! * nx + gy[k]! * ny);
       const along = Math.abs(gx[k]! * d.x + gy[k]! * d.y);
       // Only edges running parallel to the side count.
-      profile.push({ x, y, offset, strength: across > 2 * along ? across : 0 });
+      strength[j] = across > 2 * along ? across : 0;
     }
-    for (let j = 1; j < profile.length - 1; j += 1) {
-      const here = profile[j];
-      if (!here || here.strength < 30) continue;
-      if ((profile[j - 1]?.strength ?? 0) > here.strength) continue;
-      if ((profile[j + 1]?.strength ?? 0) >= here.strength) continue;
+    for (let j = 1; j < size - 1; j += 1) {
+      const here = strength[j]!;
+      if (here < 30) continue;
+      if (strength[j - 1]! > here || strength[j + 1]! >= here) continue;
+      const offset = j - reach;
       peaks.push({
-        x: here.x,
-        y: here.y,
+        x: Math.round(cx + nx * offset),
+        y: Math.round(cy + ny * offset),
         station,
-        weight: Math.exp(-((here.offset / (band / 2)) ** 2)),
+        weight: Math.exp(-((offset / (band / 2)) ** 2)),
       });
     }
   }
   return peaks;
 }
+
+const RANSAC_ATTEMPTS = 300;
 
 /** RANSAC over edge peaks with a fixed seed, so results are repeatable. */
 function strongestLine(
@@ -354,27 +396,34 @@ function strongestLine(
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
     return state / 2 ** 32;
   };
+  // Best weight per station for the current attempt, so each station counts
+  // once and a cluttered patch cannot outvote a long edge.
+  const byStation = new Float32Array(STATIONS);
   let best: Line | null = null;
   let bestScore = 0;
-  for (let attempt = 0; attempt < 300 && peaks.length >= 2; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < RANSAC_ATTEMPTS && peaks.length >= 2;
+    attempt += 1
+  ) {
     const p = peaks[Math.floor(random() * peaks.length)]!;
     const q = peaks[Math.floor(random() * peaks.length)]!;
     if (Math.abs(p.station - q.station) < 3) continue;
-    const line = lineThrough(p, q);
-    // Count each station once so a cluttered patch cannot outvote a long edge.
-    const byStation = new Map<number, number>();
+    const length = Math.hypot(q.x - p.x, q.y - p.y);
+    const nx = -(q.y - p.y) / length;
+    const ny = (q.x - p.x) / length;
+    byStation.fill(0);
     for (const peak of peaks) {
-      if (distanceToLine(line, peak) <= tolerance)
-        byStation.set(
-          peak.station,
-          Math.max(byStation.get(peak.station) ?? 0, peak.weight),
-        );
+      if (Math.abs((peak.x - p.x) * nx + (peak.y - p.y) * ny) > tolerance)
+        continue;
+      if (peak.weight > byStation[peak.station]!)
+        byStation[peak.station] = peak.weight;
     }
     let score = 0;
-    for (const weight of byStation.values()) score += weight;
+    for (let i = 0; i < STATIONS; i += 1) score += byStation[i]!;
     if (score > bestScore) {
       bestScore = score;
-      best = line;
+      best = lineThrough(p, q);
     }
   }
   if (!best) return null;
@@ -470,10 +519,15 @@ function refineQuad(gradient: Gradient, rough: Quad): Quad {
 }
 
 /** The document's corners in normalized [0, 1] coordinates, ordered TL, TR, BR, BL. */
-export function detectDocument(cv: OpenCv, image: PixelImage): Quad | null {
-  const candidates = roughCandidates(cv, image);
+export function detectDocument(
+  cv: OpenCv,
+  image: PixelImage,
+  /** A spot (normalized) the user tapped; quads around it are preferred. */
+  hint?: Point,
+): Quad | null {
+  const candidates = roughCandidates(cv, image, hint);
   return candidates.length > 0
-    ? pickQuad(gradientOf(cv, image), candidates)
+    ? pickQuad(gradientOf(cv, image), candidates, hint)
     : null;
 }
 

@@ -1,4 +1,4 @@
-// Scanner worker: runs OpenCV off the main thread so the viewfinder stays smooth. It loads OpenCV on first use, detects documents in preview frames and photos, and flattens photos to JPEG.
+// Scanner worker: runs OpenCV off the main thread so the viewfinder stays smooth. It loads OpenCV on first use, detects documents in frames, and flattens photos to JPEG.
 import opencvUrl from "@techstark/opencv-js/dist/opencv.js?url";
 import {
   detectDocument,
@@ -6,11 +6,9 @@ import {
   type PixelImage,
 } from "./detectDocument";
 import { whenOpenCvReady, type OpenCv } from "./opencv";
-import type { Quad } from "./quadGeometry";
+import { uncropQuad, type Quad } from "./quadGeometry";
 import type { ScanRequest, ScanResponse } from "./scanProtocol";
 
-/** Photos are analyzed at this size; the detector downsizes further itself. */
-const ANALYSIS_SIDE = 1024;
 const OUTPUT_MAX_SIDE = 4096;
 const OUTPUT_QUALITY = 0.92;
 
@@ -56,6 +54,17 @@ async function decode(photo: Blob, maxSide: number): Promise<PixelImage> {
   }
 }
 
+function pixelsOf(frame: ImageBitmap): PixelImage {
+  try {
+    const canvas = new OffscreenCanvas(frame.width, frame.height);
+    const context = canvas.getContext("2d", { willReadFrequently: true })!;
+    context.drawImage(frame, 0, 0);
+    return context.getImageData(0, 0, frame.width, frame.height);
+  } finally {
+    frame.close();
+  }
+}
+
 async function toJpeg(image: PixelImage): Promise<Blob> {
   const canvas = new OffscreenCanvas(image.width, image.height);
   canvas
@@ -69,13 +78,15 @@ async function handle(request: ScanRequest): Promise<Quad | Blob | null> {
   switch (request.type) {
     case "warm-up":
       return null;
-    case "detect-frame":
-      return detectDocument(cv, request.frame);
-    case "detect-photo":
-      return detectDocument(cv, await decode(request.photo, ANALYSIS_SIDE));
+    case "detect":
+      return detectDocument(cv, pixelsOf(request.frame), request.hint);
     case "flatten": {
       const photo = await decode(request.photo, Number.POSITIVE_INFINITY);
-      return toJpeg(flattenDocument(cv, photo, request.quad, OUTPUT_MAX_SIDE));
+      const photoAspect = photo.width / photo.height;
+      if (photoAspect > 1 !== request.viewAspect > 1)
+        throw new Error("The photo is turned differently from the preview");
+      const quad = uncropQuad(request.quad, request.viewAspect, photoAspect);
+      return toJpeg(flattenDocument(cv, photo, quad, OUTPUT_MAX_SIDE));
     }
   }
 }

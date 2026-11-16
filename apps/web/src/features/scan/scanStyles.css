@@ -23,6 +23,18 @@
   background: #000;
 }
 
+/* The viewfinder stays mounted under the review screen so the camera keeps running. */
+.scan-screen {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.scan-screen[hidden] {
+  display: none;
+}
+
 .scan-topbar,
 .scan-bottombar {
   display: flex;
@@ -123,6 +135,19 @@
   transform: translate(-50%, -50%);
   pointer-events: none;
   animation: scan-focus 0.9s ease-out forwards;
+}
+
+/* Marks the tapped spot the detector looks around; tap it again to clear. */
+.scan-hint-marker {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 @keyframes scan-focus {
@@ -284,6 +309,7 @@
 
 .scan-loupe {
   position: absolute;
+  overflow: hidden;
   top: 8px;
   border: 3px solid #fff;
   border-radius: 50%;
@@ -291,6 +317,12 @@
   background-repeat: no-repeat;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
   pointer-events: none;
+}
+
+.scan-loupe canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .scan-loupe[data-side="left"] {

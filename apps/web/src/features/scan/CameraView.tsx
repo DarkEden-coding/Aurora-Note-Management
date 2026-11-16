@@ -8,92 +8,140 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { detectFrame } from "./scanner";
-import { QuadOutline } from "./QuadOutline";
+import { analysisBitmap, canvasToJpeg, type Capture } from "./capture";
 import type { Point, Quad } from "./quadGeometry";
+import { detectFrame } from "./scanner";
 import { useCamera } from "./useCamera";
 
 /** Preview frames are analyzed at this size: enough to find edges, cheap to transfer. */
 const FRAME_SIDE = 480;
-const FRAME_INTERVAL_MS = 120;
 /** Frames without a detection before the outline disappears, so one miss does not flicker. */
 const MISSES_BEFORE_HIDE = 3;
+/** Share of the remaining distance the outline moves each display frame. */
+const OUTLINE_EASING = 0.35;
+/** A detection farther than this from the shown outline replaces it outright. */
+const OUTLINE_JUMP = 0.15;
+/** Tapping this close to the current hint clears it. */
+const HINT_CLEAR_DISTANCE = 0.05;
 
-/** Blends toward a nearby detection to steady the outline; jumps to a distant one. */
-function steady(previous: Quad | null, next: Quad): Quad {
-  if (!previous) return next;
-  const far = next.some(
-    (p, i) => Math.hypot(p.x - previous[i]!.x, p.y - previous[i]!.y) > 0.05,
-  );
-  if (far) return next;
-  return next.map((p, i) => ({
-    x: (p.x + previous[i]!.x) / 2,
-    y: (p.y + previous[i]!.y) / 2,
-  })) as Quad;
+function nextVideoFrame(video: HTMLVideoElement): Promise<void> {
+  return new Promise((resolve) => {
+    if ("requestVideoFrameCallback" in video)
+      video.requestVideoFrameCallback(() => resolve());
+    else requestAnimationFrame(() => resolve());
+  });
 }
 
+/**
+ * Detects the document in preview frames, one at a time and back to back, and
+ * eases the outline toward each result on every display frame. The outline is
+ * drawn by writing the SVG directly, so the viewfinder never waits on React or
+ * on detection. Returns whether an outline is showing.
+ */
 function useLiveOutline(
   video: React.RefObject<HTMLVideoElement | null>,
+  polygon: React.RefObject<SVGPolygonElement | null>,
+  shown: React.RefObject<Quad | null>,
+  hint: React.RefObject<Point | null>,
   active: boolean,
-): Quad | null {
-  const [outline, setOutline] = useState<Quad | null>(null);
+): boolean {
+  const [found, setFound] = useState(false);
   useEffect(() => {
     if (!active) return;
     let stopped = false;
+    let target: Quad | null = null;
     let misses = 0;
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d", { willReadFrequently: true })!;
+
     void (async () => {
       while (!stopped) {
         const element = video.current;
-        if (element && element.videoWidth > 0) {
-          const scale = Math.min(
-            1,
-            FRAME_SIDE / Math.max(element.videoWidth, element.videoHeight),
-          );
-          canvas.width = Math.round(element.videoWidth * scale);
-          canvas.height = Math.round(element.videoHeight * scale);
-          context.drawImage(element, 0, 0, canvas.width, canvas.height);
-          const quad = await detectFrame(
-            context.getImageData(0, 0, canvas.width, canvas.height),
-          ).catch(() => null);
-          if (stopped) return;
-          misses = quad ? 0 : misses + 1;
-          setOutline((previous) =>
-            quad
-              ? steady(previous, quad)
-              : misses >= MISSES_BEFORE_HIDE
-                ? null
-                : previous,
-          );
+        if (!element || element.videoWidth === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
         }
-        await new Promise((resolve) => setTimeout(resolve, FRAME_INTERVAL_MS));
+        await nextVideoFrame(element);
+        const quad = await analysisBitmap(element, FRAME_SIDE)
+          .then((frame) => detectFrame(frame, hint.current ?? undefined))
+          .catch(() => null);
+        if (stopped) return;
+        misses = quad ? 0 : misses + 1;
+        if (quad) target = quad;
+        else if (misses >= MISSES_BEFORE_HIDE) target = null;
+        setFound(target !== null);
       }
     })();
+
+    let frame = requestAnimationFrame(function draw() {
+      const current = shown.current;
+      if (!target) shown.current = null;
+      else if (
+        !current ||
+        target.some(
+          (p, i) =>
+            Math.hypot(p.x - current[i]!.x, p.y - current[i]!.y) > OUTLINE_JUMP,
+        )
+      )
+        shown.current = target;
+      else
+        shown.current = current.map((p, i) => ({
+          x: p.x + (target![i]!.x - p.x) * OUTLINE_EASING,
+          y: p.y + (target![i]!.y - p.y) * OUTLINE_EASING,
+        })) as Quad;
+      const element = polygon.current;
+      if (element) {
+        const quad = shown.current;
+        element.style.visibility = quad ? "visible" : "hidden";
+        if (quad)
+          element.setAttribute(
+            "points",
+            quad.map((p) => `${p.x},${p.y}`).join(" "),
+          );
+      }
+      frame = requestAnimationFrame(draw);
+    });
+
     return () => {
       stopped = true;
+      cancelAnimationFrame(frame);
+      shown.current = null;
+      setFound(false);
     };
-  }, [active, video]);
-  return outline;
+  }, [active, video, polygon, shown, hint]);
+  return found;
 }
 
 export function CameraView({
+  active,
   scannerReady,
-  onPhoto,
+  onCapture,
+  onFile,
   onClose,
 }: {
+  /** False while a capture is reviewed; the camera keeps running so a still can finish and retakes start at once. */
+  active: boolean;
   scannerReady: boolean;
-  onPhoto: (photo: Blob) => void;
+  onCapture: (capture: Capture) => void;
+  onFile: (file: File) => void;
   onClose: () => void;
 }): ReactNode {
   const video = useRef<HTMLVideoElement | null>(null);
+  const polygon = useRef<SVGPolygonElement | null>(null);
+  const shown = useRef<Quad | null>(null);
+  const hintRef = useRef<Point | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const camera = useCamera(video);
   const live = camera.state.status === "live";
-  const outline = useLiveOutline(video, live && scannerReady);
+  const [hint, setHint] = useState<Point | null>(null);
+  hintRef.current = hint;
+  const found = useLiveOutline(
+    video,
+    polygon,
+    shown,
+    hintRef,
+    active && live && scannerReady,
+  );
   const [aspect, setAspect] = useState(3 / 4);
   const [focus, setFocus] = useState<Point | null>(null);
-  const [capturing, setCapturing] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const controls =
     camera.state.status === "live" ? camera.state.controls : null;
@@ -104,17 +152,49 @@ export function CameraView({
     return () => clearTimeout(timer);
   }, [focus]);
 
-  const shoot = async (): Promise<void> => {
-    setCapturing(true);
+  // A hidden video can pause; resume it when the viewfinder comes back.
+  useEffect(() => {
+    if (active && video.current?.paused)
+      void video.current.play().catch(() => undefined);
+  }, [active]);
+
+  /** Hands over the frame on screen now; the full-resolution still follows. */
+  const shoot = (): void => {
     setCaptureError(null);
+    let picture: HTMLCanvasElement;
     try {
-      onPhoto(await camera.takePhoto());
+      picture = camera.grabFrame();
     } catch (error) {
       setCaptureError(
         error instanceof Error ? error.message : "Could not take the photo",
       );
-    } finally {
-      setCapturing(false);
+      return;
+    }
+    onCapture({
+      picture,
+      photo: camera.takePhoto().catch(() => canvasToJpeg(picture)),
+      outline: shown.current,
+      hint,
+    });
+  };
+
+  const tap = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = {
+      x: (event.clientX - rect.left) / rect.width,
+      y: (event.clientY - rect.top) / rect.height,
+    };
+    if (
+      hint &&
+      Math.hypot(point.x - hint.x, point.y - hint.y) < HINT_CLEAR_DISTANCE
+    ) {
+      setHint(null);
+      return;
+    }
+    setHint(point);
+    if (controls?.canFocus) {
+      camera.focusAt(point);
+      setFocus(point);
     }
   };
 
@@ -124,12 +204,14 @@ export function CameraView({
       ? captureError
       : !scannerReady
         ? "Loading scanner…"
-        : outline
+        : found
           ? null
-          : "Point at a slide, page, or board";
+          : hint
+            ? "Looking around the tapped spot"
+            : "Point at a slide, page, or board. Tap it to help.";
 
   return (
-    <>
+    <div className="scan-screen" hidden={!active}>
       <div className="scan-topbar">
         <button
           type="button"
@@ -168,16 +250,7 @@ export function CameraView({
           <div
             className="scan-stage"
             style={{ "--scan-aspect": aspect } as React.CSSProperties}
-            onClick={(event) => {
-              if (!controls?.canFocus) return;
-              const rect = event.currentTarget.getBoundingClientRect();
-              const point = {
-                x: (event.clientX - rect.left) / rect.width,
-                y: (event.clientY - rect.top) / rect.height,
-              };
-              camera.focusAt(point);
-              setFocus(point);
-            }}
+            onClick={tap}
           >
             <video
               ref={video}
@@ -190,7 +263,24 @@ export function CameraView({
                   setAspect(videoWidth / videoHeight);
               }}
             />
-            {outline ? <QuadOutline quad={outline} /> : null}
+            <svg
+              className="scan-outline"
+              viewBox="0 0 1 1"
+              preserveAspectRatio="none"
+              aria-hidden
+            >
+              <polygon
+                ref={polygon}
+                style={{ visibility: "hidden" }}
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+            {hint ? (
+              <span
+                className="scan-hint-marker"
+                style={{ left: `${hint.x * 100}%`, top: `${hint.y * 100}%` }}
+              />
+            ) : null}
             {focus ? (
               <span
                 className="scan-focus-ring"
@@ -258,8 +348,8 @@ export function CameraView({
           type="button"
           className="scan-shutter"
           aria-label="Take photo"
-          disabled={!live || capturing}
-          onClick={() => void shoot()}
+          disabled={!live}
+          onClick={shoot}
         />
         <span className="scan-bottombar-spacer" />
         <input
@@ -270,10 +360,10 @@ export function CameraView({
           onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = "";
-            if (file) onPhoto(file);
+            if (file) onFile(file);
           }}
         />
       </div>
-    </>
+    </div>
   );
 }

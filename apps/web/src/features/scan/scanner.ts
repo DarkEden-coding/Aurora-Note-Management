@@ -1,6 +1,5 @@
 // Page-side handle to the scanner worker. The worker starts on first use and stays up for the session, because loading OpenCV takes a second or two.
-import type { PixelImage } from "./detectDocument";
-import type { Quad } from "./quadGeometry";
+import type { Point, Quad } from "./quadGeometry";
 import type { ScanJob, ScanRequest, ScanResponse } from "./scanProtocol";
 
 type Pending = {
@@ -47,21 +46,23 @@ export function warmUpScanner(): Promise<void> {
   return send<null>({ type: "warm-up" }).then(() => undefined);
 }
 
-/** Corners for a live preview frame. The frame's pixels are transferred. */
-export function detectFrame(frame: ImageData): Promise<Quad | null> {
-  const { data, width, height } = frame;
-  const copy: PixelImage = { data, width, height };
-  return send<Quad | null>({ type: "detect-frame", frame: copy }, [
-    data.buffer,
-  ]);
+/** Corners found in a frame (transferred to the worker), preferring quads around `hint`. */
+export function detectFrame(
+  frame: ImageBitmap,
+  hint?: Point,
+): Promise<Quad | null> {
+  return send<Quad | null>({ type: "detect", frame, hint }, [frame]);
 }
 
-/** Corners snapped to the photo's edges, or null when no document stands out. */
-export function detectPhoto(photo: Blob): Promise<Quad | null> {
-  return send<Quad | null>({ type: "detect-photo", photo });
-}
-
-/** The quad cut out of the full-resolution photo and flattened, as a JPEG. */
-export function flattenPhoto(photo: Blob, quad: Quad): Promise<Blob> {
-  return send<Blob>({ type: "flatten", photo, quad });
+/**
+ * The quad cut out of the full-resolution photo and flattened, as a JPEG.
+ * `quad` is normalized to a view with aspect `viewAspect`, which may be a
+ * center crop of the photo.
+ */
+export function flattenPhoto(
+  photo: Blob,
+  quad: Quad,
+  viewAspect: number,
+): Promise<Blob> {
+  return send<Blob>({ type: "flatten", photo, quad, viewAspect });
 }

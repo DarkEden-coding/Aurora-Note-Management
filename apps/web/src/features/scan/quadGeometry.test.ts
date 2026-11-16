@@ -4,6 +4,7 @@ import {
   quadFromPolygon,
   rectangleAspect,
   rectifiedSize,
+  uncropQuad,
 } from "./quadGeometry";
 import { projectRectangle } from "./testScene";
 
@@ -84,5 +85,25 @@ describe("quadFromPolygon", () => {
     const quad = orderCorners(quadFromPolygon(clipped)!);
     expect(quad[0].x).toBeCloseTo(0);
     expect(quad[0].y).toBeCloseTo(0);
+  });
+});
+
+describe("uncropQuad", () => {
+  it("maps a 16:9 frame's corners into the 4:3 still it was cropped from", () => {
+    // The frame spans the still's full width and the middle 75% of its height.
+    const [tl, , br] = uncropQuad(
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 },
+      ],
+      16 / 9,
+      4 / 3,
+    );
+    expect(tl.x).toBeCloseTo(0);
+    expect(tl.y).toBeCloseTo(0.125);
+    expect(br.x).toBeCloseTo(1);
+    expect(br.y).toBeCloseTo(0.875);
   });
 });

@@ -101,10 +101,16 @@ export function useCamera(video: RefObject<HTMLVideoElement | null>): {
   setExposure: (value: number) => void;
   toggleTorch: () => void;
   focusAt: (point: Point) => void;
+  grabFrame: () => HTMLCanvasElement;
   takePhoto: () => Promise<Blob>;
 } {
   const [state, setState] = useState<CameraState>({ status: "starting" });
   const trackRef = useRef<MediaStreamTrack | null>(null);
+  /** Still capture prepared when the stream starts, so the shutter does not wait on setup. */
+  const stillRef = useRef<{
+    capture: ImageCaptureLike;
+    size: Promise<{ imageWidth?: number; imageHeight?: number }>;
+  } | null>(null);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -115,13 +121,36 @@ export function useCamera(video: RefObject<HTMLVideoElement | null>): {
           audio: false,
           video: {
             facingMode: { ideal: "environment" },
+            // 4:3 matches the sensor, so the preview shows what the still captures.
             width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            height: { ideal: 1440 },
+            aspectRatio: { ideal: 4 / 3 },
           },
         });
         if (cancelled) return;
         const track = stream.getVideoTracks()[0]!;
         trackRef.current = track;
+        if (typeof ImageCapture !== "undefined") {
+          try {
+            const capture = new ImageCapture(track);
+            stillRef.current = {
+              capture,
+              size: capture
+                .getPhotoCapabilities()
+                .then((photo) => ({
+                  ...(photo.imageWidth
+                    ? { imageWidth: photo.imageWidth.max }
+                    : {}),
+                  ...(photo.imageHeight
+                    ? { imageHeight: photo.imageHeight.max }
+                    : {}),
+                }))
+                .catch(() => ({})),
+            };
+          } catch {
+            stillRef.current = null;
+          }
+        }
         const capabilities = (track.getCapabilities?.() ??
           {}) as CameraCapabilities;
         if (capabilities.focusMode?.includes("continuous"))
@@ -147,6 +176,7 @@ export function useCamera(video: RefObject<HTMLVideoElement | null>): {
     return () => {
       cancelled = true;
       trackRef.current = null;
+      stillRef.current = null;
       for (const track of stream?.getTracks() ?? []) track.stop();
     };
   }, [video]);
@@ -203,40 +233,36 @@ export function useCamera(video: RefObject<HTMLVideoElement | null>): {
     [apply],
   );
 
-  const takePhoto = useCallback(async (): Promise<Blob> => {
-    const track = trackRef.current;
-    if (!track) throw new Error("The camera is not running");
-    // ImageCapture returns a full-sensor still rather than a video frame where
-    // the browser supports it (Chrome); other browsers grab the current frame.
-    if (typeof ImageCapture !== "undefined") {
-      try {
-        const capture = new ImageCapture(track);
-        const photo = await capture.getPhotoCapabilities();
-        return await capture.takePhoto({
-          ...(photo.imageWidth ? { imageWidth: photo.imageWidth.max } : {}),
-          ...(photo.imageHeight ? { imageHeight: photo.imageHeight.max } : {}),
-        });
-      } catch {
-        // Some desktop webcams reject still capture; use the frame below.
-      }
-    }
+  /** The frame on screen right now, copied at once so the shutter feels instant. */
+  const grabFrame = useCallback((): HTMLCanvasElement => {
     const element = video.current;
-    if (!element) throw new Error("The camera is not running");
+    if (!element || element.videoWidth === 0)
+      throw new Error("The camera is not running");
     const canvas = document.createElement("canvas");
     canvas.width = element.videoWidth;
     canvas.height = element.videoHeight;
     canvas.getContext("2d")!.drawImage(element, 0, 0);
-    return new Promise((resolve, reject) =>
-      canvas.toBlob(
-        (blob) =>
-          blob
-            ? resolve(blob)
-            : reject(new Error("Could not capture the photo")),
-        "image/jpeg",
-        0.95,
-      ),
-    );
+    return canvas;
   }, [video]);
 
-  return { state, setZoom, setExposure, toggleTorch, focusAt, takePhoto };
+  /**
+   * A full-resolution still where the browser supports it (Chrome); rejects
+   * otherwise, and callers fall back to the grabbed frame. It may take a
+   * second, so start it right after grabbing the frame.
+   */
+  const takePhoto = useCallback(async (): Promise<Blob> => {
+    const still = stillRef.current;
+    if (!still) throw new Error("Still capture is not supported");
+    return still.capture.takePhoto(await still.size);
+  }, []);
+
+  return {
+    state,
+    setZoom,
+    setExposure,
+    toggleTorch,
+    focusAt,
+    grabFrame,
+    takePhoto,
+  };
 }

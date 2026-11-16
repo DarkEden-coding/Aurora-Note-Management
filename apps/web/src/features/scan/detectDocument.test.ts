@@ -21,7 +21,11 @@ const frame = { width: 900, height: 1200 };
 const camera = { yaw: 0.45, pitch: -0.25, distance: 14, focal: 1100, frame };
 
 /** A dim lecture hall: a gray projector screen holding a bright 4:3 slide, a blackboard below, and a clicker toolbar over the slide's top-left corner. */
-function lectureScene(): { image: ReturnType<typeof blankImage>; slide: Quad } {
+function lectureScene(): {
+  image: ReturnType<typeof blankImage>;
+  slide: Quad;
+  screen: Quad;
+} {
   const image = blankImage(frame.width, frame.height, 70);
   const screen = projectRectangle({ ...camera, width: 5, height: 4 });
   const slide = projectRectangle({ ...camera, width: 4, height: 3 });
@@ -55,7 +59,7 @@ function lectureScene(): { image: ReturnType<typeof blankImage>; slide: Quad } {
     pointInQuad(slide, -0.12, 0.07),
   ];
   fillPolygon(image, toolbar, 200);
-  return { image, slide };
+  return { image, slide, screen };
 }
 
 function maxCornerError(found: Quad, expected: Quad): number {
@@ -75,6 +79,17 @@ describe("detectDocument", () => {
     const found = detectDocument(cv, image);
     expect(found).not.toBeNull();
     expect(maxCornerError(found!, slide)).toBeLessThan(4);
+  });
+
+  it("picks the screen around the slide when the user taps its border", () => {
+    const { image, screen } = lectureScene();
+    const border = pointInQuad(screen, 0.5, 0.97);
+    const found = detectDocument(cv, image, {
+      x: border.x / frame.width,
+      y: border.y / frame.height,
+    });
+    expect(found).not.toBeNull();
+    expect(maxCornerError(found!, screen)).toBeLessThan(6);
   });
 
   it("finds a whole chalkboard made of two stacked panels", () => {
