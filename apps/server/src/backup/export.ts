@@ -2,9 +2,8 @@
 // This is intentionally not called a backup: uploaded bytes and an importer are not included.
 import { Readable } from "node:stream";
 import type { FastifyInstance } from "fastify";
-import type { AuroraEnv } from "../env.js";
 import { getPool } from "../db/pool.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 import { mapCanvasObject, type CanvasObjectRow } from "../canvas/objects.js";
 import {
   mapNote,
@@ -271,11 +270,8 @@ export function metadataExportStream(ownerId: string): Readable {
   return Readable.from(buildMetadataExport(ownerId));
 }
 
-export function registerExportRoutes(
-  app: FastifyInstance,
-  env: AuroraEnv,
-): void {
-  const preHandler = requireSessionPreHandler(env);
+export function registerExportRoutes(app: FastifyInstance): void {
+  const preHandler = ownerPreHandler();
 
   app.get("/api/export", { preHandler }, async (request, reply) => {
     const stream = metadataExportStream(request.ownerId!);

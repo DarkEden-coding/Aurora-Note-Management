@@ -1,31 +1,26 @@
-// This module tracks Aurora's browser session state: it asks the server on boot (the cookie is the only authority) and exposes the authenticated/unauthenticated decision plus logout to the shell.
+// This module loads Aurora's owner account on boot. There is no login: reaching the server over Tailscale is the access check, so the only failure is an unreachable server.
 import { useEffect, useRef, useState } from "react";
 import type { DrawingPalette } from "@aurora/shared";
-import { api, apiPatch, apiPost } from "../../lib/http.js";
+import { api, apiPatch } from "../../lib/http.js";
 
-export type SessionState = "checking" | "authenticated" | "unauthenticated";
+export type AccountState = "loading" | "ready" | "unreachable";
 
-interface SessionResponse {
-  authenticated: boolean;
+interface AccountResponse {
   ownerId: string;
-  sessionId: string;
-  enrolled: boolean;
   theme: "neomorphic" | "glass" | "minimal";
   drawingPalette: DrawingPalette;
 }
 
-export function useSession(): {
-  state: SessionState;
+export function useAccount(): {
+  state: AccountState;
   ownerId: string | null;
-  userLabel: string | null;
   drawingPalette: DrawingPalette;
   /** Optimistically persists the account palette, rejecting with a user-safe error on failure. */
   updateDrawingPalette: (drawingPalette: DrawingPalette) => Promise<void>;
   refresh: () => Promise<void>;
 } {
-  const [state, setState] = useState<SessionState>("checking");
+  const [state, setState] = useState<AccountState>("loading");
   const [ownerId, setOwnerId] = useState<string | null>(null);
-  const [userLabel, setUserLabel] = useState<string | null>(null);
   const [drawingPalette, setDrawingPalette] = useState<DrawingPalette>([
     "#000000",
   ]);
@@ -36,29 +31,20 @@ export function useSession(): {
 
   const refresh = async () => {
     try {
-      const session = await api<SessionResponse>("/api/auth/session");
-      setState(session.authenticated ? "authenticated" : "unauthenticated");
-      setOwnerId(session.ownerId);
-      setUserLabel(session.enrolled ? "Passkey owner" : null);
-      paletteRef.current = session.drawingPalette;
-      setDrawingPalette(session.drawingPalette);
+      const account = await api<AccountResponse>("/api/account");
+      setState("ready");
+      setOwnerId(account.ownerId);
+      paletteRef.current = account.drawingPalette;
+      setDrawingPalette(account.drawingPalette);
       // Theme convergence: devices without a local choice adopt the account theme.
-      if (
-        session.authenticated &&
-        !localStorage.getItem("aurora.theme") &&
-        session.theme
-      ) {
+      if (!localStorage.getItem("aurora.theme") && account.theme) {
         window.dispatchEvent(
-          new CustomEvent("aurora:server-theme", { detail: session.theme }),
+          new CustomEvent("aurora:server-theme", { detail: account.theme }),
         );
       }
     } catch {
-      // Server unreachable: stay unauthenticated rather than trusting local state.
-      setState("unauthenticated");
-      setOwnerId(null);
-      setUserLabel(null);
-      paletteRef.current = ["#000000"];
-      setDrawingPalette(["#000000"]);
+      // Usually Tailscale is disconnected; the shell offers a retry.
+      setState("unreachable");
     }
   };
 
@@ -101,13 +87,8 @@ export function useSession(): {
   return {
     state,
     ownerId,
-    userLabel,
     drawingPalette,
     updateDrawingPalette,
     refresh,
   };
-}
-
-export async function logout(): Promise<void> {
-  await apiPost("/api/auth/logout", {});
 }

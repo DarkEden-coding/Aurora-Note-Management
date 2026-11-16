@@ -16,20 +16,6 @@ export async function cleanupExpiredTrash(
   return result.rows.length;
 }
 
-export async function cleanupSessions(retentionDays: number): Promise<number> {
-  const result = await query<{ id: string }>(
-    `DELETE FROM sessions
-     WHERE expires_at < now()
-        OR revoked_at < now() - ($1 || ' days')::interval
-     RETURNING id`,
-    [String(retentionDays)],
-  );
-  await query(
-    "DELETE FROM auth_challenges WHERE expires_at < now() OR consumed_at IS NOT NULL",
-  );
-  return result.rows.length;
-}
-
 export async function cleanupOperations(
   retentionDays: number,
 ): Promise<number> {
@@ -215,7 +201,6 @@ export async function cleanupUnreferencedFiles(
 
 export type CleanupReport = {
   trashRemoved: number;
-  sessionsRemoved: number;
   operationsRemoved: number;
   snapshotsRemoved: number;
   filesRemoved: number;
@@ -225,9 +210,6 @@ export type CleanupReport = {
 export async function runCleanup(env: AuroraEnv): Promise<CleanupReport> {
   const trashRemoved = await cleanupExpiredTrash(
     env.AURORA_TRASH_RETENTION_DAYS,
-  );
-  const sessionsRemoved = await cleanupSessions(
-    env.AURORA_SESSION_RETENTION_DAYS,
   );
   const operationsRemoved = await cleanupOperations(
     env.AURORA_OPERATION_RETENTION_DAYS,
@@ -240,7 +222,6 @@ export async function runCleanup(env: AuroraEnv): Promise<CleanupReport> {
   );
   return {
     trashRemoved,
-    sessionsRemoved,
     operationsRemoved,
     snapshotsRemoved,
     filesRemoved: removed.length,
@@ -253,7 +234,7 @@ export async function main(): Promise<void> {
   const { loadEnv } = await import("../env.js");
   const report = await runCleanup(loadEnv());
   console.log(
-    `Aurora cleanup: trash=${report.trashRemoved} sessions=${report.sessionsRemoved} operations=${report.operationsRemoved} snapshots=${report.snapshotsRemoved} files=${report.filesRemoved} bytes=${report.bytesRemoved}`,
+    `Aurora cleanup: trash=${report.trashRemoved} operations=${report.operationsRemoved} snapshots=${report.snapshotsRemoved} files=${report.filesRemoved} bytes=${report.bytesRemoved}`,
   );
 }
 

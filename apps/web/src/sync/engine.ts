@@ -2,6 +2,8 @@
 // and outbox flush loop, routes server broadcasts (objects-changed / note-changed)
 // into the local cache using the shared ServerEvent contract, notifies feature
 // listeners about remote changes, and stays a single shared instance across the app.
+// Sync runs only while Aurora is visible: hiding the page flushes pending edits once,
+// then closes the socket and stops the flush timer so a backgrounded tablet can sleep.
 import type { CanvasObject, ServerEvent, SyncConflict } from "@aurora/shared";
 import { api } from "../lib/http.js";
 import { ReconnectingWebSocket, type SocketState } from "../lib/websocket.js";
@@ -35,6 +37,7 @@ class SyncEngine {
   private flushing = false;
   private flushAgain = false;
   private hasConnected = false;
+  private paused = false;
   private lastHydration: {
     noteId: string;
     viewport: { x: number; y: number; width: number; height: number };
@@ -113,15 +116,37 @@ class SyncEngine {
         onMessage: (data) => void this.handleServerEvent(data as ServerEvent),
       },
     );
-    this.socket.connect();
-
-    this.flushTimer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
     window.addEventListener("online", this.handleOnline);
     window.addEventListener("offline", this.handleOffline);
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    void this.refreshCounts();
+    if (document.visibilityState === "visible") {
+      this.resume();
+    } else {
+      this.paused = true;
+    }
+  }
+
+  /** Reconnect and resume flushing; the reconnect re-hydrates what changed while paused. */
+  private resume(): void {
+    this.paused = false;
+    this.socket?.connect();
+    if (this.flushTimer === null) {
+      this.flushTimer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
+    }
     this.requestFlush(0);
     void this.loadConflicts();
-    void this.refreshCounts();
+  }
+
+  /** Send queued edits once, then stop all background network activity. */
+  private pause(): void {
+    this.paused = true;
+    if (this.flushTimer !== null) clearInterval(this.flushTimer);
+    this.flushTimer = null;
+    if (this.scheduledFlush !== null) clearTimeout(this.scheduledFlush);
+    this.scheduledFlush = null;
+    void this.flush();
+    this.socket?.close();
   }
 
   stop(): void {
@@ -133,6 +158,7 @@ class SyncEngine {
     this.scheduledFlush = null;
     this.flushAgain = false;
     this.hasConnected = false;
+    this.paused = false;
     window.removeEventListener("online", this.handleOnline);
     window.removeEventListener("offline", this.handleOffline);
     document.removeEventListener(
@@ -143,6 +169,7 @@ class SyncEngine {
 
   private handleOnline = (): void => {
     this.setStatus({ online: true });
+    if (this.paused) return;
     this.socket?.reconnect();
     this.requestFlush(0);
     void this.loadConflicts();
@@ -153,8 +180,11 @@ class SyncEngine {
   };
 
   private handleVisibilityChange = (): void => {
-    if (document.visibilityState !== "visible" || !navigator.onLine) return;
-    this.socket?.reconnect();
+    if (document.visibilityState === "visible") {
+      if (this.paused) this.resume();
+    } else if (!this.paused) {
+      this.pause();
+    }
   };
 
   private async handleServerEvent(event: ServerEvent): Promise<void> {
@@ -267,6 +297,7 @@ class SyncEngine {
 
   /** Flush soon after durable enqueue, coalescing bursts into one HTTP batch. */
   requestFlush = (delayMs = FLUSH_DEBOUNCE_MS): void => {
+    if (this.paused) return;
     if (this.flushing) {
       this.flushAgain = true;
       return;

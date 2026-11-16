@@ -11,6 +11,8 @@ import {
 
 const mocks = vi.hoisted(() => ({
   flushOutbox: vi.fn(async () => ({ sent: 0, remaining: 0, changes: [] })),
+  socketConnect: vi.fn(),
+  socketClose: vi.fn(),
   socketHandlers: null as {
     onState: (state: string) => void;
     onMessage: (data: unknown) => void;
@@ -35,12 +37,14 @@ vi.mock("../lib/websocket.js", () => ({
     }
 
     connect(): void {
+      mocks.socketConnect();
       this.handlers.onState("connecting");
     }
 
     reconnect(): void {}
 
     close(): void {
+      mocks.socketClose();
       this.handlers.onState("closed");
     }
   },
@@ -59,6 +63,12 @@ vi.mock("./outbox.js", () => ({
 }));
 
 let syncEngine: (typeof import("./engine.js"))["syncEngine"];
+let visibilityListener: (() => void) | null = null;
+
+function setVisibility(state: "visible" | "hidden"): void {
+  (document as { visibilityState: string }).visibilityState = state;
+  visibilityListener?.();
+}
 
 beforeAll(async () => {
   vi.stubGlobal("navigator", { onLine: true });
@@ -69,7 +79,9 @@ beforeAll(async () => {
   });
   vi.stubGlobal("document", {
     visibilityState: "visible",
-    addEventListener: vi.fn(),
+    addEventListener: vi.fn(
+      (_type: string, listener: () => void) => (visibilityListener = listener),
+    ),
     removeEventListener: vi.fn(),
   });
   ({ syncEngine } = await import("./engine.js"));
@@ -81,9 +93,12 @@ beforeEach(async () => {
   syncEngine.start();
   await vi.advanceTimersByTimeAsync(0);
   mocks.flushOutbox.mockClear();
+  mocks.socketConnect.mockClear();
+  mocks.socketClose.mockClear();
 });
 
 afterEach(() => {
+  (document as { visibilityState: string }).visibilityState = "visible";
   syncEngine.stop();
   vi.useRealTimers();
 });
@@ -134,6 +149,33 @@ describe("requestFlush", () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(0);
 
+    expect(mocks.flushOutbox).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("background pause", () => {
+  it("sends pending edits once, then goes quiet while hidden", async () => {
+    setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.flushOutbox).toHaveBeenCalledTimes(1);
+    expect(mocks.socketClose).toHaveBeenCalledOnce();
+
+    syncEngine.requestFlush(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mocks.flushOutbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconnects and syncs when Aurora is shown again", async () => {
+    setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(0);
+    mocks.flushOutbox.mockClear();
+
+    setVisibility("visible");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.socketConnect).toHaveBeenCalledOnce();
+    expect(mocks.flushOutbox).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(mocks.flushOutbox).toHaveBeenCalledTimes(2);
   });
 });

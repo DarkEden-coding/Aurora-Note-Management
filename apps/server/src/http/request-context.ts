@@ -1,14 +1,12 @@
-// Fastify request context augmentation: ownerId and sessionId are set by the session preHandler.
-import "@fastify/cookie";
+// Fastify request context augmentation: ownerId is set by the owner preHandler.
 import "@fastify/websocket";
 
 declare module "fastify" {
   interface FastifyRequest {
     ownerId?: string;
-    sessionId?: string;
   }
 }
 
-// @fastify/cookie and @fastify/websocket decorate FastifyRequest; imports above keep their type
-// augmentations loaded for every module in this package that touches sessions or sockets.
+// @fastify/websocket decorates FastifyRequest; the import above keeps its type augmentation
+// loaded for every module in this package that touches sockets.
 export {};

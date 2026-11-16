@@ -58,4 +58,23 @@ describe("ReconnectingWebSocket", () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
     socket.close();
   });
+
+  it("ignores a late close event from a socket closed before reconnecting", async () => {
+    const socket = new ReconnectingWebSocket("wss://aurora.test/sync/ws", {
+      onMessage: vi.fn(),
+      onState: vi.fn(),
+    });
+    socket.connect();
+    const old = FakeWebSocket.instances[0]!;
+    // Real browsers deliver the close event asynchronously, after close() returns.
+    old.close = () => undefined;
+
+    socket.close();
+    socket.connect();
+    old.onclose?.();
+    await vi.runAllTimersAsync();
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    socket.close();
+  });
 });

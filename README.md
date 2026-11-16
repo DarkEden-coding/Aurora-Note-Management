@@ -21,14 +21,18 @@ cp apps/server/env.example apps/server/.env   # then edit DATABASE_URL etc.
 npm run dev
 ```
 
-The web dev server (5173) proxies `/api` and `/sync/ws` to the server (8787), so the browser stays same-origin for cookies and WebAuthn.
+The web dev server (5173) proxies `/api` and `/sync/ws` to the server (8787), so the browser stays same-origin. Set `AURORA_ORIGIN=http://localhost:5173` in development.
 
-First run: the server applies migrations automatically at startup and prints a one-time setup token. Enter it in the web UI to create a passkey; afterwards sign in with the passkey.
+First run: the server applies migrations automatically at startup and creates the owner row.
+
+## Access
+
+Aurora has no login. Anyone who can reach the server acts as the owner, so access control is the network: publish the app on loopback and expose it with Tailscale Serve (tailnet only, never Funnel). The server also rejects requests whose `Origin` header is not `AURORA_ORIGIN`, so other websites cannot use your browser to read or write notes.
 
 ## Production (Docker Compose)
 
 ```sh
-cp .env.example .env    # set POSTGRES_PASSWORD, AURORA_COOKIE_SECRET, AURORA_ORIGIN
+cp .env.example .env    # set POSTGRES_PASSWORD and AURORA_ORIGIN
 docker compose up --build -d
 ```
 
@@ -55,10 +59,10 @@ runner's framework-free checks:
 docker compose run --rm python python3 /opt/aurora-python/check.py
 ```
 
-For non-localhost hosts, terminate TLS in a reverse proxy
-(for example Caddy/nginx) that forwards `/`, `/api`, and `/sync/ws` to the app
-service, and set `AURORA_ORIGIN`/`AURORA_RP_ID` accordingly — passkeys require a
-secure context.
+For access from other devices, expose the loopback port with Tailscale Serve,
+for example `tailscale serve --bg --https=8443 http://127.0.0.1:8080`, and set
+`AURORA_ORIGIN` to the resulting `https://<host>.<tailnet>.ts.net:8443` origin.
+Do not use Tailscale Funnel or a public reverse proxy: Aurora has no login.
 
 ### Retention and exports
 

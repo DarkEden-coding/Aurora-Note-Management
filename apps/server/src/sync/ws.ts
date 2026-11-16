@@ -1,9 +1,8 @@
 // Owner-scoped WebSocket hub: authenticates handshakes, tracks connections per owner, and broadcasts canvas events.
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "@fastify/websocket";
 import type { ServerEvent } from "@aurora/shared";
-import type { AuroraEnv } from "../env.js";
-import { requireSession } from "../auth/sessions.js";
+import { resolveOwnerId } from "../account/owner.js";
 
 export type OwnerBroadcastEvent = ServerEvent;
 
@@ -41,44 +40,39 @@ export function broadcastToOwner(
   }
 }
 
-// Handshake authentication happens against the signed session cookie; unauthenticated
-// upgrades are closed with a 4401 before any owner subscription is registered.
-export function registerWsRoutes(app: FastifyInstance, env: AuroraEnv): void {
-  app.get(
-    "/sync/ws",
-    { websocket: true },
-    async (socket: WebSocket, request: FastifyRequest) => {
-      let ownerId: string;
-      try {
-        const session = await requireSession(env, request);
-        ownerId = session.userId;
-      } catch {
-        socket.close(4401, "unauthorized");
+// Cross-site upgrades are rejected by the origin guard before this handler runs; every
+// connection that reaches it subscribes to the single owner's broadcasts.
+export function registerWsRoutes(app: FastifyInstance): void {
+  app.get("/sync/ws", { websocket: true }, async (socket: WebSocket) => {
+    let ownerId: string;
+    try {
+      ownerId = await resolveOwnerId();
+    } catch {
+      socket.close(1011, "owner unavailable");
+      return;
+    }
+    addConnection(ownerId, socket);
+    let alive = true;
+    const heartbeat = setInterval(() => {
+      if (!alive) {
+        socket.terminate();
         return;
       }
-      addConnection(ownerId, socket);
-      let alive = true;
-      const heartbeat = setInterval(() => {
-        if (!alive) {
-          socket.terminate();
-          return;
-        }
-        alive = false;
-        socket.ping();
-      }, HEARTBEAT_INTERVAL_MS);
-      heartbeat.unref();
-      socket.on("pong", () => {
-        alive = true;
-      });
-      const cleanup = (): void => {
-        clearInterval(heartbeat);
-        removeConnection(ownerId, socket);
-      };
-      socket.on("close", cleanup);
-      socket.on("error", () => {
-        cleanup();
-        socket.terminate();
-      });
-    },
-  );
+      alive = false;
+      socket.ping();
+    }, HEARTBEAT_INTERVAL_MS);
+    heartbeat.unref();
+    socket.on("pong", () => {
+      alive = true;
+    });
+    const cleanup = (): void => {
+      clearInterval(heartbeat);
+      removeConnection(ownerId, socket);
+    };
+    socket.on("close", cleanup);
+    socket.on("error", () => {
+      cleanup();
+      socket.terminate();
+    });
+  });
 }

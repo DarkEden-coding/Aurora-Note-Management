@@ -141,7 +141,9 @@ export async function ingestOperation(
           throw invalid("Operation and embedded object IDs must match");
         }
         if (incoming.ownerId !== ownerId) {
-          throw forbidden("Canvas object owner does not match the session");
+          throw forbidden(
+            "Canvas object owner does not match the request owner",
+          );
         }
         if (incoming.pageId) {
           const page = await client.query<{ id: string }>(

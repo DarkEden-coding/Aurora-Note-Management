@@ -40,8 +40,12 @@ export class ReconnectingWebSocket {
     this.closedByUser = true;
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    this.socket?.close();
-    this.socket = null;
+    if (this.socket) {
+      // Detach first: a late close event must not clear a socket opened by a later connect().
+      this.socket.onclose = null;
+      this.socket.close();
+      this.socket = null;
+    }
     this.handlers.onState("closed");
   }
 

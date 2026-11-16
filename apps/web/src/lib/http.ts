@@ -1,5 +1,5 @@
-// This module is the single HTTP client for Aurora's browser: every private request relies on the server's session cookie, and failed private responses surface as errors the shell routes to login.
-// Server route families (all session-authenticated): /api/auth/*, /api/library,
+// This module is the single HTTP client for Aurora's browser: requests are same-origin, and failed responses surface as ApiError.
+// Server route families (tailnet-only, no login): /api/account, /api/library,
 // /api/projects, /api/folders, /api/notes, /api/notes/:id/objects/query,
 // /api/sync/operations, /api/sync/conflicts, /api/files, /api/search,
 // /api/backup, /api/snapshots, /api/ai. The WebSocket endpoint is /sync/ws.

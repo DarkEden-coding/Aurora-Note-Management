@@ -2,19 +2,15 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { regionalObjectQuerySchema } from "@aurora/shared";
-import type { AuroraEnv } from "../env.js";
 import { invalid } from "../errors.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 import { ensureNoteReadable, queryRegionalObjects } from "./objects.js";
 
 const noteIdParamSchema = z.object({ noteId: z.string().uuid() });
 const queryBodySchema = regionalObjectQuerySchema.omit({ noteId: true });
 
-export function registerCanvasRoutes(
-  app: FastifyInstance,
-  env: AuroraEnv,
-): void {
-  const preHandler = requireSessionPreHandler(env);
+export function registerCanvasRoutes(app: FastifyInstance): void {
+  const preHandler = ownerPreHandler();
 
   app.post(
     "/api/notes/:noteId/objects/query",

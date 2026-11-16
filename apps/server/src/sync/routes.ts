@@ -2,10 +2,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { syncOperationSchema, type CanvasObject } from "@aurora/shared";
-import type { AuroraEnv } from "../env.js";
 import { invalid, notFound } from "../errors.js";
 import { query, withTransaction } from "../db/pool.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 import { broadcastToOwner } from "./ws.js";
 import {
   deleteObject,
@@ -36,8 +35,8 @@ type ConflictListRow = {
   created_at: Date;
 };
 
-export function registerSyncRoutes(app: FastifyInstance, env: AuroraEnv): void {
-  const preHandler = requireSessionPreHandler(env);
+export function registerSyncRoutes(app: FastifyInstance): void {
+  const preHandler = ownerPreHandler();
 
   app.post("/api/sync/operations", { preHandler }, async (request) => {
     const { operations } = ingestBodySchema.parse(request.body);

@@ -1,9 +1,8 @@
 // PostgreSQL full-text search over the owner's note titles, filenames, and text canvas payloads.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { AuroraEnv } from "../env.js";
 import { query } from "../db/pool.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 
 const searchQuerySchema = z.object({
   q: z.string().min(1).max(200),
@@ -101,11 +100,8 @@ export async function searchOwnerData(
   };
 }
 
-export function registerSearchRoutes(
-  app: FastifyInstance,
-  env: AuroraEnv,
-): void {
-  const preHandler = requireSessionPreHandler(env);
+export function registerSearchRoutes(app: FastifyInstance): void {
+  const preHandler = ownerPreHandler();
 
   app.get("/api/search", { preHandler }, async (request) => {
     const { q, limit } = searchQuerySchema.parse(request.query);

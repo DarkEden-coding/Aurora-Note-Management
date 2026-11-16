@@ -1,4 +1,4 @@
-// This module composes Aurora's authenticated shell: sidebar, topbar with sync indicator, the main editor, and the settings/sync/conflict drawers. It holds composition only and owns no feature logic.
+// This module composes Aurora's workspace shell: sidebar, topbar with sync indicator, the main editor, and the settings/sync/conflict drawers. It holds composition only and owns no feature logic.
 import { useEffect, useState } from "react";
 import { RefreshCw, Settings, Wifi, WifiOff } from "lucide-react";
 import { Sidebar } from "../features/library/LibrarySidebar.js";
@@ -169,18 +169,14 @@ function SyncPill({ onClick }: { onClick: () => void }) {
   );
 }
 
-export function AuthenticatedShell({
+export function WorkspaceShell({
   ownerId,
-  userLabel,
   drawingPalette,
   onDrawingPaletteChange,
-  onLoggedOut,
 }: {
   ownerId: string;
-  userLabel: string | null;
   drawingPalette: DrawingPalette;
   onDrawingPaletteChange: (drawingPalette: DrawingPalette) => Promise<void>;
-  onLoggedOut: () => void;
 }) {
   const library = useLibrary();
   const [collapsed, setCollapsed] = useState(
@@ -319,11 +315,7 @@ export function AuthenticatedShell({
 
       {drawer === "settings" ? (
         <div className="drawer-overlay" onClick={() => setDrawer("none")}>
-          <AccountSettings
-            userLabel={userLabel}
-            onLoggedOut={onLoggedOut}
-            onClose={() => setDrawer("none")}
-          />
+          <AccountSettings onClose={() => setDrawer("none")} />
         </div>
       ) : null}
 

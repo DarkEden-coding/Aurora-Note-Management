@@ -30,10 +30,6 @@ export const conflict = (message: string): DomainError =>
 export const invalid = (message: string): DomainError =>
   new DomainError(422, "invalid", message);
 
-export const unauthorized = (
-  message = "A valid session is required",
-): DomainError => new DomainError(401, "unauthorized", message);
-
 export const payloadTooLarge = (message: string): DomainError =>
   new DomainError(413, "payload_too_large", message);
 

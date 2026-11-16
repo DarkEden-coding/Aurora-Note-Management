@@ -45,8 +45,8 @@ describe("SQL concurrency and ownership guards", () => {
     );
   });
 
-  it("locks bootstrap creation and the complete migration run", () => {
-    expect(source("../src/auth/bootstrap.ts")).toContain(
+  it("locks owner creation and the complete migration run", () => {
+    expect(source("../src/account/owner.ts")).toContain(
       "pg_advisory_xact_lock",
     );
     const migrations = source("../src/db/migrate.ts");

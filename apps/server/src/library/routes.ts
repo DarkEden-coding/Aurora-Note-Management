@@ -2,8 +2,7 @@
 // Library transport payloads are server-local zod schemas until promoted into @aurora/shared contracts.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { AuroraEnv } from "../env.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 import {
   backgroundSchema,
   noteKindSchema,
@@ -94,11 +93,8 @@ function broadcastLibraryChange(ownerId: string): void {
   });
 }
 
-export function registerLibraryRoutes(
-  app: FastifyInstance,
-  env: AuroraEnv,
-): void {
-  const preHandler = requireSessionPreHandler(env);
+export function registerLibraryRoutes(app: FastifyInstance): void {
+  const preHandler = ownerPreHandler();
 
   // Aggregate tree hydration endpoint (shared libraryTreeSchema contract).
   app.get("/api/library", { preHandler }, async (request) => {

@@ -678,14 +678,14 @@ button.tree-action.danger:hover {
   font-size: 16px;
 }
 
-.auth-screen {
+.status-screen {
   height: 100%;
   display: grid;
   place-items: center;
   padding: 20px;
 }
 
-.auth-card {
+.status-card {
   width: min(420px, 94vw);
   padding: 26px;
   display: flex;
@@ -693,12 +693,12 @@ button.tree-action.danger:hover {
   gap: 12px;
 }
 
-.auth-card h1 {
+.status-card h1 {
   margin: 0;
   font-size: 20px;
 }
 
-.auth-card p {
+.status-card p {
   margin: 0;
   color: var(--text-muted);
   line-height: 1.5;

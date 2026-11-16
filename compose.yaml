@@ -31,19 +31,15 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-aurora}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aurora}
-      AURORA_COOKIE_SECRET: ${AURORA_COOKIE_SECRET:?set AURORA_COOKIE_SECRET in .env (32+ random bytes)}
-      AURORA_RP_ID: ${AURORA_RP_ID:-localhost}
-      AURORA_RP_NAME: ${AURORA_RP_NAME:-Aurora}
-      # Must be the browser-visible origin; passkeys are bound to it.
+      # Must be the browser-visible origin; requests from any other site are rejected.
       AURORA_ORIGIN: ${AURORA_ORIGIN:-http://localhost:8080}
-      # Optional: pre-provision the one-time enrollment token instead of the
-      # generated one printed to the container log on first start.
-      AURORA_SETUP_TOKEN: ${AURORA_SETUP_TOKEN:-}
       # Optional platform-key fallback; ChatGPT device login stores tokens in Postgres.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AURORA_AI_MODEL: ${AURORA_AI_MODEL:-gpt-5.5}
+    # Aurora has no login. Publish on loopback only and reach it through
+    # Tailscale Serve (tailnet only), never Funnel or a LAN-facing port.
     ports:
-      - "${AURORA_PORT:-8080}:8787"
+      - "127.0.0.1:${AURORA_PORT:-8080}:8787"
     volumes:
       - aurora-uploads:/data/uploads
       - aurora-python-run:/run/aurora-python

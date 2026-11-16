@@ -1,16 +1,16 @@
-// Composes the Fastify instance: config, security plugins, session decorator, domain routes, and error mapping.
+// Composes the Fastify instance: config, security plugins, origin guard, domain routes, and error mapping.
 // This instance must always run without a live database while type checking; runtime DB use happens in route handlers only.
 import fs from "node:fs";
 import path from "node:path";
 import Fastify from "fastify";
-import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import type { AuroraEnv } from "./env.js";
 import { registerErrorHandler } from "./errors.js";
-import { registerAuthRoutes } from "./auth/routes.js";
+import { registerAccountRoutes } from "./account/routes.js";
+import { registerOriginGuard } from "./http/origin-guard.js";
 import { registerLibraryRoutes } from "./library/routes.js";
 import { registerCanvasRoutes } from "./canvas/routes.js";
 import { registerSyncRoutes } from "./sync/routes.js";
@@ -46,9 +46,8 @@ export async function buildServer(
     trustProxy: true,
     bodyLimit: 8_388_608,
   });
-  app.auroraEnv = env;
 
-  await app.register(cookie, { secret: env.AURORA_COOKIE_SECRET });
+  registerOriginGuard(app, env);
   await app.register(helmet, {
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "same-origin" },
@@ -85,15 +84,15 @@ export async function buildServer(
 
   app.get("/healthz", async () => ({ ok: true, service: "aurora-server" }));
 
-  registerAuthRoutes(app, env);
-  registerLibraryRoutes(app, env);
-  registerCanvasRoutes(app, env);
-  registerSyncRoutes(app, env);
-  registerWsRoutes(app, env);
+  registerAccountRoutes(app);
+  registerLibraryRoutes(app);
+  registerCanvasRoutes(app);
+  registerSyncRoutes(app);
+  registerWsRoutes(app);
   registerFileRoutes(app, env);
-  registerSearchRoutes(app, env);
-  registerSnapshotRoutes(app, env);
-  registerExportRoutes(app, env);
+  registerSearchRoutes(app);
+  registerSnapshotRoutes(app);
+  registerExportRoutes(app);
   registerAiRoutes(app, env);
 
   return app;

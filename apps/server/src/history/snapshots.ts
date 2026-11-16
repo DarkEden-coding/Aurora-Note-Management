@@ -2,10 +2,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { CanvasObject } from "@aurora/shared";
-import type { AuroraEnv } from "../env.js";
 import { invalid, notFound } from "../errors.js";
 import { query, withTransaction } from "../db/pool.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 import { broadcastToOwner } from "../sync/ws.js";
 import {
   mapCanvasObject,
@@ -309,11 +308,8 @@ const createSnapshotBodySchema = z.object({
 const idParamSchema = z.object({ id: z.string().uuid() });
 const snapshotIdParamSchema = z.object({ snapshotId: z.string().uuid() });
 
-export function registerSnapshotRoutes(
-  app: FastifyInstance,
-  env: AuroraEnv,
-): void {
-  const preHandler = requireSessionPreHandler(env);
+export function registerSnapshotRoutes(app: FastifyInstance): void {
+  const preHandler = ownerPreHandler();
 
   app.post("/api/notes/:id/snapshots", { preHandler }, async (request) => {
     const { id } = idParamSchema.parse(request.params);

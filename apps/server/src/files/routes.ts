@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyError } from "fastify";
 import { z } from "zod";
 import type { AuroraEnv } from "../env.js";
 import { invalid, payloadTooLarge } from "../errors.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 import {
   createDownloadStream,
   listFiles,
@@ -29,7 +29,7 @@ export function downloadDisposition(mimeType: string): "inline" | "attachment" {
 }
 
 export function registerFileRoutes(app: FastifyInstance, env: AuroraEnv): void {
-  const preHandler = requireSessionPreHandler(env);
+  const preHandler = ownerPreHandler();
 
   app.post(
     "/api/files",

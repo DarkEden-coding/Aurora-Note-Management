@@ -9,7 +9,7 @@ import {
 } from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
 import { DomainError } from "../errors.js";
-import { requireSessionPreHandler } from "../auth/sessions.js";
+import { ownerPreHandler } from "../account/owner.js";
 import {
   deleteCredentials,
   extractEmail,
@@ -82,7 +82,7 @@ const turnBody = z.object({
 });
 
 export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
-  const preHandler = requireSessionPreHandler(env);
+  const preHandler = ownerPreHandler();
 
   app.get("/api/ai/auth/status", { preHandler }, async (request) => {
     const creds = await loadCredentials(request.ownerId!);
