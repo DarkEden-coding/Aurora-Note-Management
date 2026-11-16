@@ -26,7 +26,7 @@ import {
   fetchNote,
 } from "../library/api";
 import { syncEngine } from "../../sync/engine";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { CanvasScrollbars } from "./CanvasScrollbars";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
@@ -87,10 +87,22 @@ import {
   resizeBoundsInMode,
 } from "./pageLayout";
 import { shouldRejectTouch } from "./pointerInput";
+import { SelectionActions } from "./SelectionActions";
+import {
+  boxPolygon,
+  cloneObjects,
+  objectsInRegion,
+  unionBounds,
+} from "./selectionRegion";
 import { usePenCapture } from "./usePenCapture";
 import { useSelection } from "./useSelection";
 import { useViewport } from "./useViewport";
-import { screenToCanvas, type Point } from "./viewport";
+import {
+  boundsContainPoint,
+  boundsIntersect,
+  screenToCanvas,
+  type Point,
+} from "./viewport";
 
 export interface CanvasWorkspaceProps {
   /** Authenticated owner for newly created persisted objects; omit only in demos. */
@@ -191,6 +203,14 @@ type Gesture =
       start: Point;
       current: Point;
       snapTo45: boolean;
+    }
+  | {
+      kind: "marquee";
+      shape: "box" | "lasso";
+      /** Canvas points: the two box corners, or the lasso path. */
+      points: Point[];
+      /** Selection kept when the region is added with Shift. */
+      base: string[];
     };
 
 type CreateTool =
@@ -209,6 +229,21 @@ type HistoryState = {
 const EMPTY_HISTORY: HistoryState = { undo: [], redo: [] };
 const HISTORY_LIMIT = 50;
 const ERASER_HIT_TOLERANCE_SCREEN = 10;
+/** Canvas distance between a pasted or duplicated copy and its source. */
+const PASTE_OFFSET = 24;
+/** Screen distance a selection drag must travel before it selects a region. */
+const MARQUEE_MIN_SCREEN = 4;
+/** Screen gap between the selection and its action bar. */
+const SELECTION_ACTIONS_GAP = 14;
+/** Room the action bar needs above a selection before it flips below. */
+const SELECTION_ACTIONS_MIN_TOP = 120;
+
+/** Copied canvas objects, shared by every note in this tab. */
+let canvasClipboard: {
+  objects: CanvasObject[];
+  sourceNoteId: string;
+  pastes: number;
+} | null = null;
 
 /** Reads an image file's intrinsic dimensions without retaining its object URL. */
 async function readImageSize(
@@ -914,10 +949,217 @@ export function CanvasWorkspace({
     selection.clear();
   }, [noteId, recordHistory, selection]);
 
+  const [hasClipboard, setHasClipboard] = useState(
+    () => canvasClipboard !== null,
+  );
+
+  /** Selected objects that selection actions may change; locked objects stay put. */
+  const editableSelection = useCallback(
+    (): CanvasObject[] =>
+      objectsRef.current.filter(
+        (object) => selection.selectedIds.has(object.id) && !object.locked,
+      ),
+    [selection],
+  );
+
+  /** Adds objects as one undoable step and selects them. */
+  const insertObjects = useCallback(
+    (inserted: CanvasObject[]): void => {
+      if (inserted.length === 0) return;
+      const next = [...objectsRef.current, ...inserted];
+      objectsRef.current = next;
+      setMirror(next);
+      for (const object of inserted) commitUpsert(object);
+      recordHistory({ before: [], after: inserted });
+      selection.setSelection(inserted.map((object) => object.id));
+    },
+    [commitUpsert, recordHistory, selection],
+  );
+
+  /** Replaces existing objects as one undoable step. */
+  const updateObjects = useCallback(
+    (changes: { before: CanvasObject; after: CanvasObject }[]): void => {
+      if (changes.length === 0) return;
+      const now = new Date().toISOString();
+      const after = new Map(
+        changes.map(({ after: object }) => [
+          object.id,
+          { ...object, updatedAt: now },
+        ]),
+      );
+      const next = objectsRef.current.map(
+        (object) => after.get(object.id) ?? object,
+      );
+      objectsRef.current = next;
+      setMirror(next);
+      for (const object of after.values()) commitUpsert(object);
+      recordHistory({
+        before: changes.map(({ before }) => before),
+        after: [...after.values()],
+      });
+    },
+    [commitUpsert, recordHistory],
+  );
+
+  const copySelection = useCallback((): boolean => {
+    const copied = editableSelection();
+    if (copied.length === 0) return false;
+    canvasClipboard = {
+      objects: structuredClone(copied),
+      sourceNoteId: noteId,
+      pastes: 0,
+    };
+    setHasClipboard(true);
+    return true;
+  }, [editableSelection, noteId]);
+
+  const cutSelection = useCallback((): boolean => {
+    if (!copySelection()) return false;
+    deleteSelection();
+    return true;
+  }, [copySelection, deleteSelection]);
+
+  const cloneTarget = useCallback(
+    (offset: Point) => ({
+      ownerId: ownerId ?? objectsRef.current[0]?.ownerId ?? DEMO_OWNER_ID,
+      noteId,
+      offset,
+      baseZIndex: nextZIndex(objectsRef.current),
+    }),
+    [noteId, ownerId],
+  );
+
+  const duplicateSelection = useCallback((): void => {
+    const source = editableSelection();
+    insertObjects(
+      cloneObjects(source, cloneTarget({ x: PASTE_OFFSET, y: PASTE_OFFSET })),
+    );
+  }, [cloneTarget, editableSelection, insertObjects]);
+
+  /** Pastes beside the source in the same note when visible, else at the view center. */
+  const pasteClipboard = useCallback((): void => {
+    const clipboard = canvasClipboard;
+    const source = clipboard ? unionBounds(clipboard.objects) : null;
+    if (clipboard === null || source === null) return;
+    const activeViewport = viewportRef.current;
+    const visible = {
+      x: activeViewport.x,
+      y: activeViewport.y,
+      width: containerSize.width / activeViewport.zoom,
+      height: containerSize.height / activeViewport.zoom,
+    };
+    clipboard.pastes += 1;
+    const step =
+      clipboard.sourceNoteId === noteId ? PASTE_OFFSET * clipboard.pastes : 0;
+    const placed = { ...source, x: source.x + step, y: source.y + step };
+    const offset = boundsIntersect(placed, visible)
+      ? { x: step, y: step }
+      : {
+          x: visible.x + visible.width / 2 - (source.x + source.width / 2),
+          y: visible.y + visible.height / 2 - (source.y + source.height / 2),
+        };
+    insertObjects(
+      cloneObjects(clipboard.objects, cloneTarget(offset)).map((object) => ({
+        ...object,
+        bounds: clampBoundsToMode(object.bounds, activeMode),
+      })),
+    );
+  }, [
+    activeMode,
+    cloneTarget,
+    containerSize.height,
+    containerSize.width,
+    insertObjects,
+    noteId,
+  ]);
+
+  const reorderSelection = useCallback(
+    (direction: "front" | "back"): void => {
+      const chosen = [...editableSelection()].sort(
+        (a, b) => a.zIndex - b.zIndex,
+      );
+      if (chosen.length === 0) return;
+      const others = objectsRef.current.filter(
+        (object) => !chosen.some((picked) => picked.id === object.id),
+      );
+      const start =
+        direction === "front"
+          ? nextZIndex(others)
+          : Math.min(0, ...others.map((object) => object.zIndex)) -
+            chosen.length;
+      updateObjects(
+        chosen.map((before, index) => ({
+          before,
+          after: { ...before, zIndex: start + index },
+        })),
+      );
+    },
+    [editableSelection, updateObjects],
+  );
+
+  const nudgeSelection = useCallback(
+    (dx: number, dy: number): boolean => {
+      const chosen = editableSelection();
+      if (chosen.length === 0) return false;
+      updateObjects(
+        chosen.map((before) => ({
+          before,
+          after: moveObjectToBounds(
+            before,
+            translateBoundsInMode(before.bounds, dx, dy, activeMode),
+          ),
+        })),
+      );
+      return true;
+    },
+    [activeMode, editableSelection, updateObjects],
+  );
+
+  // Clipboard events: copy and cut the selection; paste copied objects unless images are pasted.
+  useEffect(() => {
+    const hasTextSelection = (): boolean =>
+      (window.getSelection()?.toString() ?? "") !== "";
+    const onCopyOrCut = (event: ClipboardEvent): void => {
+      if (isInsideEditable(event.target) || hasTextSelection()) return;
+      const done = event.type === "cut" ? cutSelection() : copySelection();
+      if (!done) return;
+      event.preventDefault();
+      // Replace the system clipboard so a stale image is not pasted instead.
+      event.clipboardData?.setData("text/plain", "Aurora canvas objects");
+    };
+    const onPaste = (event: ClipboardEvent): void => {
+      if (isInsideEditable(event.target) || canvasClipboard === null) return;
+      const files = [...(event.clipboardData?.files ?? [])];
+      if (files.some((file) => file.type.startsWith("image/"))) return;
+      event.preventDefault();
+      pasteClipboard();
+    };
+    window.addEventListener("copy", onCopyOrCut);
+    window.addEventListener("cut", onCopyOrCut);
+    window.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("copy", onCopyOrCut);
+      window.removeEventListener("cut", onCopyOrCut);
+      window.removeEventListener("paste", onPaste);
+    };
+  }, [copySelection, cutSelection, pasteClipboard]);
+
+  /** Button copy: the browser blocks clipboard events here, so clear stale text best-effort. */
+  const copyFromButton = useCallback(
+    (cut: boolean): void => {
+      if (!(cut ? cutSelection() : copySelection())) return;
+      void navigator.clipboard
+        ?.writeText("Aurora canvas objects")
+        .catch(() => undefined);
+    },
+    [copySelection, cutSelection],
+  );
+
   // Keyboard: tool shortcuts, selection delete, and escape.
   useEffect(() => {
     const shortcuts: Record<string, CanvasTool> = {
       v: "select",
+      s: "lasso",
       h: "pan",
       p: "pen",
       i: "highlighter",
@@ -960,7 +1202,35 @@ export function CanvasWorkspace({
         return;
       }
       if (e.key === "Escape") {
+        if (gestureRef.current?.kind === "marquee") setActiveGesture(null);
         selection.clear();
+        return;
+      }
+      const command = e.ctrlKey || e.metaKey;
+      if (command && !e.altKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        selection.setSelection(
+          objectsRef.current
+            .filter((object) => !object.locked)
+            .map((object) => object.id),
+        );
+        return;
+      }
+      if (command && !e.altKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelection();
+        return;
+      }
+      const nudge = {
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+      }[e.key];
+      if (nudge !== undefined && !command && !e.altKey) {
+        const step = e.shiftKey ? 10 : 1;
+        if (nudgeSelection(nudge[0]! * step, nudge[1]! * step))
+          e.preventDefault();
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -969,7 +1239,16 @@ export function CanvasWorkspace({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [changeTool, deleteSelection, redo, selection, undo]);
+  }, [
+    changeTool,
+    deleteSelection,
+    duplicateSelection,
+    nudgeSelection,
+    redo,
+    selection,
+    setActiveGesture,
+    undo,
+  ]);
 
   const highlighting = tool === "highlighter";
   const inkColor = highlighting
@@ -1157,6 +1436,55 @@ export function CanvasWorkspace({
 
       if (tool !== "select" && isInsideEditable(e.target)) return;
 
+      const capturePointer = (): void => {
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch {
+          // Pointer capture is best-effort.
+        }
+      };
+      /** Drags the whole selection when the press lands inside its bounds. */
+      const startSelectionMove = (): boolean => {
+        const selected = objectsRef.current.filter(
+          (object) => selection.selectedIds.has(object.id) && !object.locked,
+        );
+        const bounds = unionBounds(selected);
+        if (bounds === null || !boundsContainPoint(bounds, canvasPoint))
+          return false;
+        e.preventDefault();
+        capturePointer();
+        setActiveGesture({
+          kind: "move",
+          ids: selected.map((object) => object.id),
+          start: canvasPoint,
+          origins: new Map(
+            selected.map((object) => [object.id, object.bounds]),
+          ),
+        });
+        return true;
+      };
+      const startMarquee = (
+        shape: "box" | "lasso",
+        additive: boolean,
+      ): void => {
+        e.preventDefault();
+        capturePointer();
+        const base = additive ? [...selection.selectedIds] : [];
+        if (!additive) selection.clear();
+        setActiveGesture({
+          kind: "marquee",
+          shape,
+          points: [canvasPoint],
+          base,
+        });
+      };
+
+      if (tool === "lasso") {
+        if (!e.shiftKey && startSelectionMove()) return;
+        startMarquee("lasso", e.shiftKey);
+        return;
+      }
+
       if (tool === "eraser") {
         const removed = new Map<string, CanvasObject>();
         setActiveGesture({ kind: "erase", last: canvasPoint, removed });
@@ -1172,7 +1500,12 @@ export function CanvasWorkspace({
       if (tool === "select") {
         const primary =
           objectsRef.current.find((o) => o.id === primaryId) ?? null;
-        if (primary !== null && !primary.locked && primary.kind !== "stroke") {
+        if (
+          primary !== null &&
+          !primary.locked &&
+          primary.kind !== "stroke" &&
+          selection.selectedIds.size === 1
+        ) {
           const handle = handleAtPoint(
             primary.bounds,
             canvasPoint,
@@ -1221,7 +1554,8 @@ export function CanvasWorkspace({
             canvasPoint,
           );
         if (hit === null) {
-          selection.select(null, e.shiftKey);
+          if (!e.shiftKey && startSelectionMove()) return;
+          startMarquee("box", e.shiftKey);
           return;
         }
         const alreadySelected = selection.selectedIds.has(hit.id);
@@ -1371,6 +1705,23 @@ export function CanvasWorkspace({
         current.last = canvasPoint;
         return;
       }
+      if (current.kind === "marquee") {
+        const first = current.points[0]!;
+        const last = current.points.at(-1)!;
+        if (current.shape === "box") {
+          setActiveGesture({ ...current, points: [first, canvasPoint] });
+        } else if (
+          Math.hypot(canvasPoint.x - last.x, canvasPoint.y - last.y) *
+            viewportRef.current.zoom >=
+          2
+        ) {
+          setActiveGesture({
+            ...current,
+            points: [...current.points, canvasPoint],
+          });
+        }
+        return;
+      }
       if (current.kind === "move") {
         const dx = canvasPoint.x - current.start.x;
         const dy = canvasPoint.y - current.start.y;
@@ -1465,6 +1816,28 @@ export function CanvasWorkspace({
       const current = gestureRef.current;
       setActiveGesture(null);
       if (current === null) return;
+
+      if (current.kind === "marquee") {
+        const first = current.points[0]!;
+        const extent =
+          current.points.reduce(
+            (max, point) =>
+              Math.max(max, Math.hypot(point.x - first.x, point.y - first.y)),
+            0,
+          ) * viewportRef.current.zoom;
+        // A click on empty space: the selection was already cleared unless Shift kept it.
+        if (extent < MARQUEE_MIN_SCREEN) return;
+        const polygon =
+          current.shape === "box"
+            ? boxPolygon(first, current.points.at(-1)!)
+            : current.points;
+        const hits = objectsInRegion(objectsRef.current, polygon);
+        selection.setSelection([
+          ...current.base,
+          ...hits.map((object) => object.id),
+        ]);
+        return;
+      }
 
       if (current.kind === "erase") {
         const rect = e.currentTarget.getBoundingClientRect();
@@ -1893,28 +2266,50 @@ export function CanvasWorkspace({
       );
     }
   };
-  const objectControlsPosition =
-    tool === "select" && primaryObject !== null && !primaryObject.locked
-      ? {
-          left: Math.max(
-            8,
-            Math.min(
-              containerSize.width - 32,
-              (primaryObject.bounds.x +
-                primaryObject.bounds.width -
-                viewport.x) *
-                zoom +
-                8,
-            ),
-          ),
-          top: Math.max(
-            82,
-            Math.min(
-              containerSize.height - 40,
-              (primaryObject.bounds.y - viewport.y) * zoom,
-            ),
-          ),
-        }
+  const selectedObjects = displayObjects.filter(
+    (object) => selection.isSelected(object.id) && !object.locked,
+  );
+  const selectionBounds = unionBounds(selectedObjects);
+  let selectionActions: {
+    placement: "up" | "down";
+    position: { left: number; top: number };
+  } | null = null;
+  if (
+    (tool === "select" || tool === "lasso") &&
+    gesture === null &&
+    selectionBounds !== null
+  ) {
+    const center =
+      (selectionBounds.x + selectionBounds.width / 2 - viewport.x) * zoom;
+    const top = (selectionBounds.y - viewport.y) * zoom;
+    const bottom =
+      (selectionBounds.y + selectionBounds.height - viewport.y) * zoom;
+    const placement = top >= SELECTION_ACTIONS_MIN_TOP ? "up" : "down";
+    const halfWidth = Math.min(containerSize.width / 2, 200);
+    selectionActions = {
+      placement,
+      position: {
+        left: Math.max(
+          halfWidth,
+          Math.min(containerSize.width - halfWidth, center),
+        ),
+        top:
+          placement === "up"
+            ? Math.min(top - SELECTION_ACTIONS_GAP, containerSize.height - 12)
+            : Math.max(
+                76,
+                Math.min(
+                  bottom + SELECTION_ACTIONS_GAP,
+                  containerSize.height - 56,
+                ),
+              ),
+      },
+    };
+  }
+  const marquee = gesture?.kind === "marquee" ? gesture : null;
+  const marqueeBox =
+    marquee?.shape === "box"
+      ? dragBoundsFree(marquee.points[0]!, marquee.points.at(-1)!)
       : null;
 
   return (
@@ -2109,9 +2504,41 @@ export function CanvasWorkspace({
                   />
                 );
               })}
+              {selectedObjects.length > 1 && selectionBounds !== null ? (
+                <rect
+                  className="canvas-selection-group"
+                  x={selectionBounds.x - 6 / zoom}
+                  y={selectionBounds.y - 6 / zoom}
+                  width={selectionBounds.width + 12 / zoom}
+                  height={selectionBounds.height + 12 / zoom}
+                  rx={8 / zoom}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ) : null}
+              {marqueeBox !== null ? (
+                <rect
+                  className="canvas-marquee"
+                  x={marqueeBox.x}
+                  y={marqueeBox.y}
+                  width={marqueeBox.width}
+                  height={marqueeBox.height}
+                  rx={3 / zoom}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ) : marquee !== null ? (
+                <polygon
+                  className="canvas-marquee"
+                  data-shape="lasso"
+                  points={marquee.points
+                    .map((point) => `${point.x},${point.y}`)
+                    .join(" ")}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ) : null}
               {primaryObject !== null &&
               !primaryObject.locked &&
               primaryObject.kind !== "stroke" &&
+              selectedObjects.length === 1 &&
               tool === "select"
                 ? handlePositions(primaryObject.bounds).map(
                     ({ handle, point }) => (
@@ -2166,42 +2593,29 @@ export function CanvasWorkspace({
             <Plus size={16} /> Add page below page {currentPageIndex + 1}
           </button>
         ) : null}
-        {objectControlsPosition !== null ? (
-          <div
-            className="shape-properties-anchor"
-            data-canvas-controls="true"
-            data-side={
-              objectControlsPosition.left > containerSize.width / 2
-                ? "left"
-                : "right"
-            }
-            data-vertical={
-              objectControlsPosition.top > containerSize.height / 2
-                ? "up"
-                : "down"
-            }
-            style={objectControlsPosition}
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerMove={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onWheel={(event) => event.stopPropagation()}
+        {selectionActions !== null ? (
+          <SelectionActions
+            count={selectedObjects.length}
+            position={selectionActions.position}
+            placement={selectionActions.placement}
+            onCopy={() => copyFromButton(false)}
+            onCut={() => copyFromButton(true)}
+            onDuplicate={duplicateSelection}
+            onBringToFront={() => reorderSelection("front")}
+            onSendToBack={() => reorderSelection("back")}
+            onDelete={deleteSelection}
           >
-            <button
-              type="button"
-              className="canvas-tablet-delete"
-              aria-label="Delete selected object"
-              title="Delete"
-              onClick={deleteSelection}
-            >
-              <Trash2 size={14} />
-            </button>
-            {selectedDrawingStyle !== null ? (
-              <ShapePropertiesButton
-                open={shapePropertiesOpen}
-                onToggle={() => setShapePropertiesOpen((current) => !current)}
-              />
+            {selectedObjects.length === 1 && selectedDrawingStyle !== null ? (
+              <>
+                <span className="selection-actions-divider" />
+                <ShapePropertiesButton
+                  open={shapePropertiesOpen}
+                  onToggle={() => setShapePropertiesOpen((current) => !current)}
+                />
+              </>
             ) : null}
             {shapePropertiesOpen &&
+            selectedObjects.length === 1 &&
             selectedDrawingStyle !== null &&
             isVectorObject(primaryObject) ? (
               <div
@@ -2209,15 +2623,14 @@ export function CanvasWorkspace({
                 role="group"
                 aria-label="Selected shape properties"
                 style={{
-                  maxHeight:
-                    objectControlsPosition.top > containerSize.height / 2
-                      ? Math.max(180, objectControlsPosition.top - 48)
-                      : Math.max(
-                          180,
-                          containerSize.height -
-                            objectControlsPosition.top -
-                            76,
-                        ),
+                  maxHeight: Math.max(
+                    180,
+                    selectionActions.placement === "up"
+                      ? selectionActions.position.top - 72
+                      : containerSize.height -
+                          selectionActions.position.top -
+                          72,
+                  ),
                 }}
               >
                 <strong className="drawing-properties-title">
@@ -2233,7 +2646,7 @@ export function CanvasWorkspace({
                 />
               </div>
             ) : null}
-          </div>
+          </SelectionActions>
         ) : null}
       </div>
 
@@ -2242,9 +2655,11 @@ export function CanvasWorkspace({
         zoom={zoom}
         canUndo={history.undo.length > 0}
         canRedo={history.redo.length > 0}
+        canPaste={hasClipboard}
         onToolChange={changeTool}
         onUndo={undo}
         onRedo={redo}
+        onPaste={pasteClipboard}
       />
       {placementTool !== null && placementPropertiesOpen ? (
         placementTool === "highlighter" ? (

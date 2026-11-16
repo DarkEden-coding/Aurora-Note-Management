@@ -3,10 +3,12 @@ import { type ReactNode } from "react";
 import {
   ArrowUpRight,
   Brackets,
+  ClipboardPaste,
   Circle,
   Eraser,
   Hand,
   Highlighter,
+  LassoSelect,
   MousePointer2,
   Pen,
   Redo2,
@@ -17,6 +19,7 @@ import {
 } from "lucide-react";
 export type CanvasTool =
   | "select"
+  | "lasso"
   | "pan"
   | "pen"
   | "highlighter"
@@ -33,9 +36,11 @@ export interface CanvasToolbarProps {
   zoom: number;
   canUndo: boolean;
   canRedo: boolean;
+  canPaste: boolean;
   onToolChange: (tool: CanvasTool) => void;
   onUndo: () => void;
   onRedo: () => void;
+  onPaste: () => void;
 }
 
 interface ToolButton {
@@ -46,6 +51,7 @@ interface ToolButton {
 
 const TOOLS: ToolButton[] = [
   { tool: "select", label: "Select (V)", icon: <MousePointer2 size={16} /> },
+  { tool: "lasso", label: "Lasso select (S)", icon: <LassoSelect size={16} /> },
   { tool: "pan", label: "Pan (H)", icon: <Hand size={16} /> },
   { tool: "pen", label: "Pen (P)", icon: <Pen size={16} /> },
   {
@@ -71,9 +77,11 @@ export function CanvasToolbar({
   zoom,
   canUndo,
   canRedo,
+  canPaste,
   onToolChange,
   onUndo,
   onRedo,
+  onPaste,
 }: CanvasToolbarProps): ReactNode {
   return (
     <>
@@ -118,6 +126,17 @@ export function CanvasToolbar({
             onClick={onRedo}
           >
             <Redo2 size={16} />
+          </button>
+          <button
+            type="button"
+            title="Paste (Ctrl+V)"
+            aria-label="Paste"
+            disabled={!canPaste}
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={onPaste}
+          >
+            <ClipboardPaste size={16} />
           </button>
         </div>
       </div>

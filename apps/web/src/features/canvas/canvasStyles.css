@@ -674,36 +674,6 @@
   padding: 4px 7px;
 }
 
-.shape-properties-anchor {
-  position: absolute;
-  z-index: 14;
-  width: 28px;
-  height: 28px;
-}
-
-.canvas-tablet-delete {
-  display: none;
-}
-
-@media (hover: none) and (pointer: coarse) and (min-width: 600px) {
-  .canvas-tablet-delete {
-    position: absolute;
-    right: 34px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: 1px solid #d66;
-    border-radius: 50%;
-    background: var(--surface-raised);
-    color: #e77;
-    box-shadow: var(--shadow-outset);
-    touch-action: manipulation;
-  }
-}
-
 .shape-properties-button {
   display: inline-flex;
   align-items: center;
@@ -725,20 +695,155 @@
   overflow-y: auto;
 }
 
-.shape-properties-anchor[data-vertical="down"] .shape-properties-popover {
-  top: 36px;
+/* Selection: box and lasso marquee, group outline, and the floating action bar. */
+.canvas-scene .canvas-marquee {
+  fill: color-mix(in srgb, var(--aurora-canvas-accent) 10%, transparent);
+  stroke: var(--aurora-canvas-accent);
+  stroke-width: 1.25;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+  animation: canvas-marquee-march 0.6s linear infinite;
 }
 
-.shape-properties-anchor[data-vertical="up"] .shape-properties-popover {
-  bottom: 36px;
+.canvas-scene .canvas-marquee[data-shape="lasso"] {
+  fill-rule: evenodd;
 }
 
-.shape-properties-anchor[data-side="right"] .shape-properties-popover {
-  left: 0;
+@keyframes canvas-marquee-march {
+  to {
+    stroke-dashoffset: -9;
+  }
 }
 
-.shape-properties-anchor[data-side="left"] .shape-properties-popover {
-  right: 0;
+.canvas-scene .canvas-selection-group {
+  fill: none;
+  stroke: color-mix(in srgb, var(--aurora-canvas-accent) 70%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.selection-actions {
+  position: absolute;
+  z-index: 14;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: var(--panel-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(var(--blur));
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: var(--aurora-canvas-ink);
+  white-space: nowrap;
+  touch-action: manipulation;
+  animation: selection-actions-in 120ms ease-out;
+}
+
+.selection-actions[data-vertical="up"] {
+  transform: translate(-50%, -100%);
+}
+
+.selection-actions[data-vertical="down"] {
+  transform: translate(-50%, 0);
+}
+
+@keyframes selection-actions-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.selection-actions-count {
+  padding: 0 8px 0 10px;
+  color: var(--aurora-canvas-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.selection-actions-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--border);
+}
+
+.selection-actions .selection-action,
+.selection-actions .shape-properties-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease;
+}
+
+.selection-actions .selection-action:hover,
+.selection-actions .shape-properties-button:hover {
+  background: var(--surface-raised);
+}
+
+.selection-actions .shape-properties-button {
+  color: var(--aurora-canvas-accent);
+}
+
+.selection-actions .shape-properties-button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--aurora-canvas-accent) 18%, transparent);
+}
+
+.selection-actions .selection-action[data-danger="true"] {
+  color: var(--danger);
+}
+
+.selection-actions .selection-action[data-danger="true"]:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.selection-actions .selection-action:focus-visible,
+.selection-actions .shape-properties-button:focus-visible {
+  outline: 2px solid var(--aurora-canvas-accent);
+  outline-offset: 1px;
+}
+
+.selection-actions .shape-properties-popover {
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: normal;
+}
+
+.selection-actions[data-vertical="up"] .shape-properties-popover {
+  bottom: calc(100% + 8px);
+}
+
+.selection-actions[data-vertical="down"] .shape-properties-popover {
+  top: calc(100% + 8px);
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .selection-actions .selection-action,
+  .selection-actions .shape-properties-button {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+@media (max-width: 520px) {
+  .selection-actions-count {
+    display: none;
+  }
 }
 
 .drawing-color-palette-header {
