@@ -29,6 +29,7 @@ import { syncEngine } from "../../sync/engine";
 import { Plus } from "lucide-react";
 import { CanvasScrollbars } from "./CanvasScrollbars";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
+import { ScanDialog } from "../scan/ScanDialog";
 import {
   DrawingPlacementPanel,
   DrawingStyleControls,
@@ -411,6 +412,7 @@ export function CanvasWorkspace({
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [pageCount, setPageCount] = useState(1);
   const [importError, setImportError] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
   const importedPdfRef = useRef<File | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
@@ -841,6 +843,19 @@ export function CanvasWorkspace({
     void importPdfs([importedPdf], { x: 0, y: 0 });
   }, [importPdfs, importedPdf, onPdfImported]);
 
+  /** Canvas point at the middle of the visible area, where pasted and scanned images land. */
+  const viewCenter = useCallback(
+    (): Point => ({
+      x:
+        viewportRef.current.x +
+        containerSize.width / viewportRef.current.zoom / 2,
+      y:
+        viewportRef.current.y +
+        containerSize.height / viewportRef.current.zoom / 2,
+    }),
+    [containerSize.height, containerSize.width],
+  );
+
   useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
       if (isInsideEditable(event.target)) return;
@@ -848,19 +863,11 @@ export function CanvasWorkspace({
       const hasImages = files.some((file) => file.type.startsWith("image/"));
       if (!hasImages) return;
       event.preventDefault();
-      const at = {
-        x:
-          viewportRef.current.x +
-          containerSize.width / viewportRef.current.zoom / 2,
-        y:
-          viewportRef.current.y +
-          containerSize.height / viewportRef.current.zoom / 2,
-      };
-      void importImages(files, at);
+      void importImages(files, viewCenter());
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [containerSize.height, containerSize.width, importImages]);
+  }, [importImages, viewCenter]);
 
   const createObject = useCallback(
     (
@@ -2660,7 +2667,14 @@ export function CanvasWorkspace({
         onUndo={undo}
         onRedo={redo}
         onPaste={pasteClipboard}
+        onScan={() => setScanOpen(true)}
       />
+      {scanOpen ? (
+        <ScanDialog
+          onScanned={(file) => void importImages([file], viewCenter())}
+          onClose={() => setScanOpen(false)}
+        />
+      ) : null}
       {placementTool !== null && placementPropertiesOpen ? (
         placementTool === "highlighter" ? (
           <DrawingPlacementPanel

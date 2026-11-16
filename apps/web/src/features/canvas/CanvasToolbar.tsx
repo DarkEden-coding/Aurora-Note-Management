@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 import {
   ArrowUpRight,
   Brackets,
+  Camera,
   ClipboardPaste,
   Circle,
   Eraser,
@@ -41,6 +42,7 @@ export interface CanvasToolbarProps {
   onUndo: () => void;
   onRedo: () => void;
   onPaste: () => void;
+  onScan: () => void;
 }
 
 interface ToolButton {
@@ -82,6 +84,7 @@ export function CanvasToolbar({
   onUndo,
   onRedo,
   onPaste,
+  onScan,
 }: CanvasToolbarProps): ReactNode {
   return (
     <>
@@ -137,6 +140,16 @@ export function CanvasToolbar({
             onClick={onPaste}
           >
             <ClipboardPaste size={16} />
+          </button>
+          <button
+            type="button"
+            title="Scan with camera"
+            aria-label="Scan with camera"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={onScan}
+          >
+            <Camera size={16} />
           </button>
         </div>
       </div>
