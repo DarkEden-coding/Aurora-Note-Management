@@ -4,6 +4,7 @@ import {
   quadFromPolygon,
   rectangleAspect,
   rectifiedSize,
+  cropFractions,
   uncropQuad,
 } from "./quadGeometry";
 import { projectRectangle } from "./testScene";
@@ -98,8 +99,7 @@ describe("uncropQuad", () => {
         { x: 1, y: 1 },
         { x: 0, y: 1 },
       ],
-      16 / 9,
-      4 / 3,
+      cropFractions(16 / 9, 4 / 3),
     );
     expect(tl.x).toBeCloseTo(0);
     expect(tl.y).toBeCloseTo(0.125);

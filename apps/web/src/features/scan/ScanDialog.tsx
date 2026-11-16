@@ -9,13 +9,48 @@ import {
 } from "./capture";
 import { CornerReview } from "./CornerReview";
 import type { Point, Quad } from "./quadGeometry";
-import { detectFrame, flattenPhoto, warmUpScanner } from "./scanner";
+import {
+  detectFrame,
+  flattenPhoto,
+  newPhotoKey,
+  preparePhoto,
+  warmUpScanner,
+} from "./scanner";
 import "./scanStyles.css";
 
 /** Captured pictures are analyzed at this size. */
 const ANALYSIS_SIDE = 1024;
 
+/** The photo to flatten, decoded and lined up in the worker under `key`. */
+interface ReadyPhoto {
+  key: number;
+  photo: Blob;
+  width: number;
+  height: number;
+}
+
+/**
+ * Prepares the full-resolution photo in the worker while corners are being
+ * reviewed. Falls back to the picture on screen when the camera gave no still,
+ * or one that does not line up with what was shown.
+ */
+async function readyPhoto(capture: Capture): Promise<ReadyPhoto> {
+  const prepare = async (photo: Blob): Promise<ReadyPhoto> => {
+    const key = newPhotoKey();
+    const size = await preparePhoto(key, photo, capture.picture);
+    return { key, photo, ...size };
+  };
+  try {
+    return await prepare(await capture.photo);
+  } catch {
+    return prepare(await canvasToJpeg(capture.picture));
+  }
+}
+
 type Review = Capture & {
+  ready: Promise<ReadyPhoto>;
+  /** Size of the photo that will be flattened, once it is ready. */
+  resolution: { width: number; height: number; full: boolean } | undefined;
   /** Distinguishes captures, so the review screen starts fresh for each. */
   id: number;
   /** Detected corners; undefined while detection runs, null when nothing was found. */
@@ -83,11 +118,34 @@ export function ScanDialog({
     setError(null);
     // The live outline stands in until detection on the still picture finishes.
     captures.current += 1;
+    const id = captures.current;
+    const ready = readyPhoto(capture);
     setReview({
       ...capture,
-      id: captures.current,
+      id,
+      ready,
+      resolution: undefined,
       detected: capture.outline ?? undefined,
     });
+    ready.then(
+      ({ width, height }) =>
+        setReview((current) =>
+          current?.id === id
+            ? {
+                ...current,
+                resolution: {
+                  width,
+                  height,
+                  // Larger than the frame on screen means a real still arrived.
+                  full:
+                    width * height >
+                    1.2 * capture.picture.width * capture.picture.height,
+                },
+              }
+            : current,
+        ),
+      () => undefined,
+    );
     const settle = (detected: Quad | null): void =>
       setReview((current) =>
         current?.picture === capture.picture
@@ -99,22 +157,12 @@ export function ScanDialog({
       .then(settle, () => settle(null));
   };
 
-  const insert = async (capture: Capture, quad: Quad): Promise<void> => {
+  const insert = async (current: Review, quad: Quad): Promise<void> => {
     setBusy(true);
     setError(null);
-    const viewAspect = capture.picture.width / capture.picture.height;
     try {
-      let jpeg: Blob;
-      try {
-        jpeg = await flattenPhoto(await capture.photo, quad, viewAspect);
-      } catch {
-        // A still that came back turned or unreadable; use the frame on screen.
-        jpeg = await flattenPhoto(
-          await canvasToJpeg(capture.picture),
-          quad,
-          viewAspect,
-        );
-      }
+      const { key, photo } = await current.ready;
+      const jpeg = await flattenPhoto(key, photo, current.picture, quad);
       onScanned(
         new File([jpeg], scanFileName(new Date()), { type: "image/jpeg" }),
       );
@@ -158,6 +206,7 @@ export function ScanDialog({
           key={review.id}
           picture={review.picture}
           detected={review.detected}
+          resolution={review.resolution}
           busy={busy}
           onRetake={() => setReview(null)}
           onFind={(hint) => detect(review.picture, hint)}

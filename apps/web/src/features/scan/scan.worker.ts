@@ -6,8 +6,9 @@ import {
   type PixelImage,
 } from "./detectDocument";
 import { whenOpenCvReady, type OpenCv } from "./opencv";
-import { uncropQuad, type Quad } from "./quadGeometry";
-import type { ScanRequest, ScanResponse } from "./scanProtocol";
+import { alignToView, toGray, type Turns } from "./alignPhoto";
+import { uncropQuad, type CropFractions } from "./quadGeometry";
+import type { ScanRequest, ScanResponse, ScanResult } from "./scanProtocol";
 
 const OUTPUT_MAX_SIDE = 4096;
 const OUTPUT_QUALITY = 0.92;
@@ -37,21 +38,78 @@ function loadOpenCv(): Promise<OpenCv> {
   return opencv;
 }
 
-async function decode(photo: Blob, maxSide: number): Promise<PixelImage> {
+/** Long side of the copies compared when lining the still up with the preview. */
+const ALIGN_SIDE = 256;
+/** Below this match the still shows something else, and the preview frame is used. */
+const MIN_MATCH = 0.6;
+
+/** The bitmap's pixels, turned clockwise by quarter turns and scaled to fit `maxSide`. */
+function drawn(bitmap: ImageBitmap, turns: Turns, maxSide: number): PixelImage {
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const width = Math.round(bitmap.width * scale);
+  const height = Math.round(bitmap.height * scale);
+  const odd = turns % 2 === 1;
+  const canvas = new OffscreenCanvas(
+    odd ? height : width,
+    odd ? width : height,
+  );
+  const context = canvas.getContext("2d")!;
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.rotate((turns * Math.PI) / 2);
+  context.drawImage(bitmap, -width / 2, -height / 2, width, height);
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+interface PreparedPhoto {
+  /** Full resolution, turned to match the preview. */
+  image: PixelImage;
+  /** The preview's place in `image`. */
+  crop: CropFractions;
+}
+
+/** The last prepared photo; a capture is prepared while its corners are reviewed, then flattened. */
+let prepared: { key: number; photo: Promise<PreparedPhoto> } | null = null;
+
+async function preparePhoto(
+  photo: Blob,
+  view: ImageBitmap,
+): Promise<PreparedPhoto> {
+  const viewGray = toGray(pixelsOf(view));
   const bitmap = await createImageBitmap(photo, {
     imageOrientation: "from-image",
   });
   try {
-    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-    const width = Math.round(bitmap.width * scale);
-    const height = Math.round(bitmap.height * scale);
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext("2d")!;
-    context.drawImage(bitmap, 0, 0, width, height);
-    return context.getImageData(0, 0, width, height);
+    const alignment = alignToView(
+      toGray(drawn(bitmap, 0, ALIGN_SIDE)),
+      viewGray,
+    );
+    if (alignment.score < MIN_MATCH)
+      throw new Error("The photo does not match the preview");
+    return {
+      image: drawn(bitmap, alignment.turns, Number.POSITIVE_INFINITY),
+      crop: alignment.crop,
+    };
   } finally {
     bitmap.close();
   }
+}
+
+function prepare(
+  key: number,
+  photo: Blob,
+  view: ImageBitmap,
+): Promise<PreparedPhoto> {
+  if (prepared?.key === key) {
+    view.close();
+    return prepared.photo;
+  }
+  const entry = { key, photo: preparePhoto(photo, view) };
+  // Drop the previous photo first; full-resolution pixels are large.
+  prepared = entry;
+  entry.photo.catch(() => {
+    if (prepared === entry) prepared = null;
+  });
+  return entry.photo;
 }
 
 function pixelsOf(frame: ImageBitmap): PixelImage {
@@ -73,20 +131,25 @@ async function toJpeg(image: PixelImage): Promise<Blob> {
   return canvas.convertToBlob({ type: "image/jpeg", quality: OUTPUT_QUALITY });
 }
 
-async function handle(request: ScanRequest): Promise<Quad | Blob | null> {
+async function handle(request: ScanRequest): Promise<ScanResult> {
   const cv = await loadOpenCv();
   switch (request.type) {
     case "warm-up":
       return null;
     case "detect":
       return detectDocument(cv, pixelsOf(request.frame), request.hint);
+    case "prepare": {
+      const { image } = await prepare(request.key, request.photo, request.view);
+      return { width: image.width, height: image.height };
+    }
     case "flatten": {
-      const photo = await decode(request.photo, Number.POSITIVE_INFINITY);
-      const photoAspect = photo.width / photo.height;
-      if (photoAspect > 1 !== request.viewAspect > 1)
-        throw new Error("The photo is turned differently from the preview");
-      const quad = uncropQuad(request.quad, request.viewAspect, photoAspect);
-      return toJpeg(flattenDocument(cv, photo, quad, OUTPUT_MAX_SIDE));
+      const { image, crop } = await prepare(
+        request.key,
+        request.photo,
+        request.view,
+      );
+      const quad = uncropQuad(request.quad, crop);
+      return toJpeg(flattenDocument(cv, image, quad, OUTPUT_MAX_SIDE));
     }
   }
 }

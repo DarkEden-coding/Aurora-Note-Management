@@ -6,13 +6,23 @@ export type ScanJob =
   /** Pixels are read in the worker, so the page never waits on a GPU readback. */
   | { type: "detect"; frame: ImageBitmap; hint?: Point | undefined }
   /**
-   * `quad` is normalized to a view with `viewAspect` (width/height), such as
-   * the video frame shown at capture; the photo may be a wider still.
+   * Decodes a full-resolution photo and lines it up with `view`, a small copy
+   * of the picture the user reviews; kept under `key` for the flatten.
    */
-  | { type: "flatten"; photo: Blob; quad: Quad; viewAspect: number };
+  | { type: "prepare"; key: number; photo: Blob; view: ImageBitmap }
+  /** `quad` is normalized to the view; the photo may be turned or wider. */
+  | {
+      type: "flatten";
+      key: number;
+      photo: Blob;
+      view: ImageBitmap;
+      quad: Quad;
+    };
 
 export type ScanRequest = ScanJob & { id: number };
 
+export type ScanResult = Quad | Blob | { width: number; height: number } | null;
+
 export type ScanResponse =
-  | { id: number; ok: true; result: Quad | Blob | null }
+  | { id: number; ok: true; result: ScanResult }
   | { id: number; ok: false; error: string };

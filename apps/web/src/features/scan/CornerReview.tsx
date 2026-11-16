@@ -22,6 +22,7 @@ interface Drag {
 export function CornerReview({
   picture,
   detected,
+  resolution,
   busy,
   onRetake,
   onFind,
@@ -30,6 +31,8 @@ export function CornerReview({
   picture: HTMLCanvasElement;
   /** Detected corners; undefined while detection runs, null when nothing was found. */
   detected: Quad | null | undefined;
+  /** The photo that will be flattened; undefined while it is being prepared. */
+  resolution: { width: number; height: number; full: boolean } | undefined;
   busy: boolean;
   onRetake: () => void;
   /** Detect again, preferring quads around this spot. */
@@ -97,6 +100,18 @@ export function CornerReview({
             : detected === null && edited === null
               ? "No edges found. Tap the subject or drag the corners."
               : "Drag the corners, or tap the subject"}
+        </span>
+        <span
+          className="scan-resolution"
+          title={
+            resolution?.full === false
+              ? "The camera gave no full-resolution photo, so the preview frame is used"
+              : "Resolution of the photo that will be flattened"
+          }
+        >
+          {resolution
+            ? `${resolution.full ? "Full" : "Preview"} ${resolution.width}×${resolution.height}`
+            : "Getting full photo…"}
         </span>
       </div>
 

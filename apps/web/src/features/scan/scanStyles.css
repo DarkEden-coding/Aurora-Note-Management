@@ -58,6 +58,13 @@
   color: rgba(255, 255, 255, 0.86);
 }
 
+.scan-resolution {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+}
+
 .scan-stage-area {
   display: grid;
   flex: 1 1 auto;

@@ -1,4 +1,5 @@
 // Page-side handle to the scanner worker. The worker starts on first use and stays up for the session, because loading OpenCV takes a second or two.
+import { analysisBitmap } from "./capture";
 import type { Point, Quad } from "./quadGeometry";
 import type { ScanJob, ScanRequest, ScanResponse } from "./scanProtocol";
 
@@ -54,15 +55,39 @@ export function detectFrame(
   return send<Quad | null>({ type: "detect", frame, hint }, [frame]);
 }
 
+/** Long side of the copy of the reviewed picture that the still is lined up with. */
+const VIEW_SIDE = 256;
+let nextPhotoKey = 1;
+
+/** A fresh key for a captured photo, unique for the worker's lifetime. */
+export function newPhotoKey(): number {
+  return nextPhotoKey++;
+}
+
 /**
- * The quad cut out of the full-resolution photo and flattened, as a JPEG.
- * `quad` is normalized to a view with aspect `viewAspect`, which may be a
- * center crop of the photo.
+ * Decodes the full-resolution photo in the worker and lines it up with the
+ * reviewed `picture`, ready for flattening. Rejects when the photo does not
+ * show what the picture shows.
  */
-export function flattenPhoto(
+export async function preparePhoto(
+  key: number,
   photo: Blob,
+  picture: HTMLCanvasElement,
+): Promise<{ width: number; height: number }> {
+  const view = await analysisBitmap(picture, VIEW_SIDE);
+  return send({ type: "prepare", key, photo, view }, [view]);
+}
+
+/**
+ * The quad (normalized to `picture`) cut out of the full-resolution photo and
+ * flattened, as a JPEG. Reuses the work of `preparePhoto` for the same key.
+ */
+export async function flattenPhoto(
+  key: number,
+  photo: Blob,
+  picture: HTMLCanvasElement,
   quad: Quad,
-  viewAspect: number,
 ): Promise<Blob> {
-  return send<Blob>({ type: "flatten", photo, quad, viewAspect });
+  const view = await analysisBitmap(picture, VIEW_SIDE);
+  return send<Blob>({ type: "flatten", key, photo, view, quad }, [view]);
 }

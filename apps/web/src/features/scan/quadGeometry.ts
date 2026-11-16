@@ -241,22 +241,30 @@ export function rectifiedSize(
   };
 }
 
+/** Share of the width and height of an image that a centered crop covers. */
+export interface CropFractions {
+  width: number;
+  height: number;
+}
+
 /**
- * Maps normalized corners from a center crop to the full image it was cut
- * from, for a video frame that shows a narrower view than the camera's still.
- * Aspects are width/height; the crop spans the full image in one direction.
+ * The largest centered crop of an image with aspect `imageAspect` that has
+ * aspect `cropAspect` (both width/height): it spans the full image one way.
  */
-export function uncropQuad(
-  quad: Quad,
+export function cropFractions(
   cropAspect: number,
   imageAspect: number,
-): Quad {
+): CropFractions {
   const ratio = cropAspect / imageAspect;
-  // A wider crop spans the full width and part of the height, and vice versa.
-  const sx = ratio > 1 ? 1 : ratio;
-  const sy = ratio > 1 ? 1 / ratio : 1;
+  return ratio > 1
+    ? { width: 1, height: 1 / ratio }
+    : { width: ratio, height: 1 };
+}
+
+/** Maps normalized corners from a centered crop to the full image it was cut from. */
+export function uncropQuad(quad: Quad, crop: CropFractions): Quad {
   return quad.map((p) => ({
-    x: 0.5 + (p.x - 0.5) * sx,
-    y: 0.5 + (p.y - 0.5) * sy,
+    x: 0.5 + (p.x - 0.5) * crop.width,
+    y: 0.5 + (p.y - 0.5) * crop.height,
   })) as Quad;
 }

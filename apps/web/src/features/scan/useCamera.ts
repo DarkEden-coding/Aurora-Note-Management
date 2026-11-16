@@ -253,7 +253,12 @@ export function useCamera(video: RefObject<HTMLVideoElement | null>): {
   const takePhoto = useCallback(async (): Promise<Blob> => {
     const still = stillRef.current;
     if (!still) throw new Error("Still capture is not supported");
-    return still.capture.takePhoto(await still.size);
+    try {
+      return await still.capture.takePhoto(await still.size);
+    } catch {
+      // Some cameras reject an explicit size; their default is usually full resolution too.
+      return still.capture.takePhoto();
+    }
   }, []);
 
   return {
