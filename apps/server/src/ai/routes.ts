@@ -1,12 +1,7 @@
 // HTTP routes for ChatGPT device login, chat CRUD, note context, and streamed turns.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import {
-  chatModelSchema,
-  chatReasoningSchema,
-  idSchema,
-  mathSolveRequestSchema,
-} from "@aurora/shared";
+import { chatModelSchema, chatReasoningSchema, idSchema } from "@aurora/shared";
 import type { AuroraEnv } from "../env.js";
 import { DomainError } from "../errors.js";
 import { ownerPreHandler } from "../account/owner.js";
@@ -31,7 +26,6 @@ import {
   readNoteText,
 } from "./noteText.js";
 import { streamTurn } from "./turn.js";
-import { streamMathSolve } from "./math.js";
 
 const idParam = z.object({ id: idSchema });
 const projectParam = z.object({ projectId: idSchema });
@@ -174,23 +168,6 @@ export function registerAiRoutes(app: FastifyInstance, env: AuroraEnv): void {
         reply,
         signal: controller.signal,
       });
-    },
-  );
-
-  app.post(
-    "/api/ai/math/solve",
-    { preHandler, bodyLimit: 8_388_608 },
-    async (request, reply) => {
-      const body = mathSolveRequestSchema.parse(request.body);
-      const controller = new AbortController();
-      reply.raw.once("close", () => controller.abort());
-      await streamMathSolve(
-        env,
-        request.ownerId!,
-        body,
-        reply,
-        controller.signal,
-      );
     },
   );
 

@@ -16,8 +16,6 @@ import {
   type CanvasMode,
   type CanvasObject,
   type DrawingPalette,
-  type MathQuestion,
-  type MathSolveRequest,
   type SyncOperation,
   type Viewport,
 } from "@aurora/shared";
@@ -28,9 +26,8 @@ import {
   fetchNote,
 } from "../library/api";
 import { syncEngine } from "../../sync/engine";
-import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { CanvasScrollbars } from "./CanvasScrollbars";
-import { MarkdownText } from "../chat/MarkdownText";
 import { CanvasToolbar, type CanvasTool } from "./CanvasToolbar";
 import {
   DrawingPlacementPanel,
@@ -90,13 +87,6 @@ import {
   resizeBoundsInMode,
 } from "./pageLayout";
 import { shouldRejectTouch } from "./pointerInput";
-import {
-  captureMathRegion,
-  expandResultRegion,
-  normalizeRegion,
-  streamMathSolution,
-  type ScreenRegion,
-} from "./mathSolver";
 import { usePenCapture } from "./usePenCapture";
 import { useSelection } from "./useSelection";
 import { useViewport } from "./useViewport";
@@ -201,8 +191,7 @@ type Gesture =
       start: Point;
       current: Point;
       snapTo45: boolean;
-    }
-  | { kind: "math"; start: Point; current: Point };
+    };
 
 type CreateTool =
   "line" | "rectangle" | "ellipse" | "arrow" | "matrix" | "text";
@@ -387,29 +376,6 @@ export function CanvasWorkspace({
   const [mirror, setMirror] = useState<CanvasObject[]>(() => objects ?? []);
   const [pageCount, setPageCount] = useState(1);
   const [importError, setImportError] = useState<string | null>(null);
-  const [mathSelection, setMathSelection] = useState<ScreenRegion | null>(null);
-  const [mathImage, setMathImage] = useState<string | null>(null);
-  const [mathReasoning, setMathReasoning] = useState("");
-  const [mathReasoningOpen, setMathReasoningOpen] = useState(true);
-  const [mathSolution, setMathSolution] = useState<string | null>(null);
-  const [mathQuestions, setMathQuestions] = useState<MathQuestion[]>([]);
-  const [mathAnswers, setMathAnswers] = useState<Record<string, string>>({});
-  const [mathClarifications, setMathClarifications] = useState<
-    NonNullable<MathSolveRequest["clarifications"]>
-  >([]);
-  const [mathPython, setMathPython] = useState<{
-    code: string;
-    output?: string;
-    success?: boolean;
-  } | null>(null);
-  const [mathBusy, setMathBusy] = useState(false);
-  const mathAbortRef = useRef<AbortController | null>(null);
-  const mathRunRef = useRef(0);
-  const mathDragRef = useRef<{
-    pointerId: number;
-    start: Point;
-    origin: Point;
-  } | null>(null);
   const importedPdfRef = useRef<File | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
@@ -460,105 +426,6 @@ export function CanvasWorkspace({
     velocity: Point;
   } | null>(null);
   const lastStylusTimeRef = useRef(Number.NEGATIVE_INFINITY);
-
-  /** Cancels the active solver stream and invalidates its late updates. */
-  const cancelMath = useCallback((): void => {
-    mathRunRef.current += 1;
-    mathAbortRef.current?.abort();
-    mathAbortRef.current = null;
-    setMathBusy(false);
-  }, []);
-
-  /** Clears a captured problem before starting a fresh math selection. */
-  const resetMath = useCallback((): void => {
-    cancelMath();
-    setMathImage(null);
-    setMathReasoning("");
-    setMathReasoningOpen(true);
-    setMathSolution(null);
-    setMathQuestions([]);
-    setMathAnswers({});
-    setMathClarifications([]);
-    setMathPython(null);
-  }, [cancelMath]);
-
-  /** Runs one solver round, retaining the image and all prior answers. */
-  const solveMath = useCallback(
-    (
-      image: string,
-      clarifications: NonNullable<MathSolveRequest["clarifications"]>,
-    ): void => {
-      mathAbortRef.current?.abort();
-      const controller = new AbortController();
-      mathAbortRef.current = controller;
-      const run = ++mathRunRef.current;
-      setMathBusy(true);
-      setMathReasoning("");
-      setMathReasoningOpen(true);
-      setMathSolution(null);
-      setMathQuestions([]);
-      setMathPython(null);
-      void (async (): Promise<void> => {
-        try {
-          for await (const event of streamMathSolution(
-            { image, clarifications },
-            controller.signal,
-          )) {
-            if (run !== mathRunRef.current) return;
-            if (event.type === "reasoning-delta") {
-              setMathReasoning((current) => current + event.delta);
-              setMathReasoningOpen(true);
-            } else if (event.type === "reasoning-done") {
-              setMathReasoningOpen(false);
-            } else if (event.type === "text-delta") {
-              setMathReasoningOpen(false);
-              setMathSolution((current) => (current ?? "") + event.delta);
-            } else if (event.type === "questions") {
-              setMathQuestions(event.questions);
-              setMathAnswers(
-                Object.fromEntries(
-                  event.questions.map((question) => [
-                    question.id,
-                    question.suggestedAnswer,
-                  ]),
-                ),
-              );
-            } else if (event.type === "python-start") {
-              setMathPython({ code: event.code });
-            } else if (event.type === "python-result") {
-              setMathPython((current) =>
-                current === null
-                  ? { code: "", output: event.output, success: event.success }
-                  : {
-                      ...current,
-                      output: event.output,
-                      success: event.success,
-                    },
-              );
-            }
-          }
-        } catch (error: unknown) {
-          if (controller.signal.aborted || run !== mathRunRef.current) return;
-          setMathReasoningOpen(false);
-          setMathSolution(
-            error instanceof Error ? error.message : "Math solver failed",
-          );
-        } finally {
-          if (run === mathRunRef.current) {
-            mathAbortRef.current = null;
-            setMathBusy(false);
-          }
-        }
-      })();
-    },
-    [],
-  );
-
-  useEffect(() => {
-    resetMath();
-    setMathSelection(null);
-    return cancelMath;
-  }, [noteId, resetMath, cancelMath]);
 
   // Controlled mode: the parent's array is the source of truth.
   useEffect(() => {
@@ -1290,18 +1157,6 @@ export function CanvasWorkspace({
 
       if (tool !== "select" && isInsideEditable(e.target)) return;
 
-      if (tool === "math") {
-        resetMath();
-        setMathSelection({ x: screen.x, y: screen.y, width: 0, height: 0 });
-        setActiveGesture({ kind: "math", start: screen, current: screen });
-        try {
-          el.setPointerCapture(e.pointerId);
-        } catch {
-          // Pointer capture is best-effort.
-        }
-        return;
-      }
-
       if (tool === "eraser") {
         const removed = new Map<string, CanvasObject>();
         setActiveGesture({ kind: "erase", last: canvasPoint, removed });
@@ -1427,7 +1282,6 @@ export function CanvasWorkspace({
       setActiveGesture,
       selection,
       stopMomentum,
-      resetMath,
     ],
   );
 
@@ -1511,18 +1365,6 @@ export function CanvasWorkspace({
         return;
       }
 
-      if (current.kind === "math") {
-        current.current = screen;
-        setMathSelection(
-          normalizeRegion(
-            current.start,
-            screen,
-            containerSize.width,
-            containerSize.height,
-          ),
-        );
-        return;
-      }
       const canvasPoint = screenToCanvas(screen, viewportRef.current);
       if (current.kind === "erase") {
         eraseStrokeBetween(current.last, canvasPoint, current.removed);
@@ -1624,61 +1466,6 @@ export function CanvasWorkspace({
       setActiveGesture(null);
       if (current === null) return;
 
-      if (current.kind === "math") {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const region = normalizeRegion(
-          current.start,
-          { x: e.clientX - rect.left, y: e.clientY - rect.top },
-          e.currentTarget.clientWidth,
-          e.currentTarget.clientHeight,
-        );
-        if (region.width < 12 || region.height < 12) {
-          setMathSelection(null);
-          return;
-        }
-        setMathSelection(region);
-        setMathBusy(true);
-        const viewportElement = e.currentTarget;
-        const activeViewport = viewportRef.current;
-        const captureRegion = {
-          x: activeViewport.x + region.x / activeViewport.zoom,
-          y: activeViewport.y + region.y / activeViewport.zoom,
-          width: region.width / activeViewport.zoom,
-          height: region.height / activeViewport.zoom,
-        };
-        const captureRun = ++mathRunRef.current;
-        void captureMathRegion(
-          objectsRef.current,
-          captureRegion,
-          background ?? DEFAULT_BACKGROUND,
-        )
-          .then((image) => {
-            if (captureRun !== mathRunRef.current) return;
-            setMathImage(image);
-            setMathSelection(
-              expandResultRegion(
-                region,
-                viewportElement.clientWidth,
-                viewportElement.clientHeight,
-              ),
-            );
-            solveMath(image, []);
-            setTool("select");
-          })
-          .catch((error: unknown) => {
-            if (captureRun !== mathRunRef.current) return;
-            setMathReasoningOpen(false);
-            setMathSolution(
-              error instanceof Error
-                ? error.message
-                : "Could not capture math problem",
-            );
-            setMathBusy(false);
-            setTool("select");
-          });
-        return;
-      }
-
       if (current.kind === "erase") {
         const rect = e.currentTarget.getBoundingClientRect();
         eraseStrokeBetween(
@@ -1774,7 +1561,6 @@ export function CanvasWorkspace({
       recordHistory,
       selection,
       setActiveGesture,
-      solveMath,
       startMomentum,
     ],
   );
@@ -1797,9 +1583,7 @@ export function CanvasWorkspace({
         return;
       }
       const current = gestureRef.current;
-      if (current?.kind === "math") {
-        setMathSelection(null);
-      } else if (current?.kind === "erase") {
+      if (current?.kind === "erase") {
         const next = [...objectsRef.current, ...current.removed.values()];
         objectsRef.current = next;
         setMirror(next);
@@ -2360,253 +2144,6 @@ export function CanvasWorkspace({
           >
             {importError}
           </button>
-        ) : null}
-        {mathSelection !== null ? (
-          <div
-            className={`canvas-math-selection${mathBusy || mathSolution !== null || mathQuestions.length > 0 ? " canvas-math-result panel" : ""}`}
-            style={{
-              left: mathSelection.x,
-              top: mathSelection.y,
-              width: mathSelection.width,
-              height: mathSelection.height,
-            }}
-            role={
-              mathBusy
-                ? "status"
-                : mathSolution !== null || mathQuestions.length > 0
-                  ? "dialog"
-                  : undefined
-            }
-            aria-label={
-              mathQuestions.length > 0
-                ? "Math clarification"
-                : mathSolution !== null
-                  ? "Math solution"
-                  : undefined
-            }
-            aria-hidden={
-              !mathBusy && mathSolution === null && mathQuestions.length === 0
-                ? "true"
-                : undefined
-            }
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerMove={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-          >
-            {mathBusy || mathSolution !== null || mathQuestions.length > 0 ? (
-              <>
-                <div
-                  className="canvas-math-header"
-                  onPointerDown={(event) => {
-                    if (mathSelection === null) return;
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    mathDragRef.current = {
-                      pointerId: event.pointerId,
-                      start: { x: event.clientX, y: event.clientY },
-                      origin: { x: mathSelection.x, y: mathSelection.y },
-                    };
-                  }}
-                  onPointerMove={(event) => {
-                    const drag = mathDragRef.current;
-                    if (
-                      drag === null ||
-                      drag.pointerId !== event.pointerId ||
-                      mathSelection === null
-                    )
-                      return;
-                    setMathSelection((current) =>
-                      current === null
-                        ? null
-                        : {
-                            ...current,
-                            x: Math.max(
-                              0,
-                              Math.min(
-                                containerSize.width - current.width,
-                                drag.origin.x + event.clientX - drag.start.x,
-                              ),
-                            ),
-                            y: Math.max(
-                              0,
-                              Math.min(
-                                containerSize.height - current.height,
-                                drag.origin.y + event.clientY - drag.start.y,
-                              ),
-                            ),
-                          },
-                    );
-                  }}
-                  onPointerUp={(event) => {
-                    if (mathDragRef.current?.pointerId === event.pointerId) {
-                      mathDragRef.current = null;
-                      event.currentTarget.releasePointerCapture(
-                        event.pointerId,
-                      );
-                    }
-                  }}
-                >
-                  <span>Math solution</span>
-                  <button
-                    type="button"
-                    className="ghost icon-button"
-                    aria-label="Close math solution"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={() => {
-                      resetMath();
-                      setMathSelection(null);
-                    }}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-                {mathImage === null ? (
-                  mathBusy ? (
-                    <LoaderCircle className="canvas-math-spinner" size={28} />
-                  ) : (
-                    <pre>{mathSolution}</pre>
-                  )
-                ) : (
-                  <div className="canvas-math-content">
-                    <img src={mathImage} alt="Selected math problem" />
-                    <div className="canvas-math-answer">
-                      {mathBusy &&
-                      mathReasoning.length === 0 &&
-                      mathPython === null &&
-                      mathQuestions.length === 0 &&
-                      !mathSolution ? (
-                        <LoaderCircle
-                          className="canvas-math-spinner"
-                          size={28}
-                        />
-                      ) : (
-                        <div className="canvas-math-stream">
-                          {mathReasoning ? (
-                            <details
-                              className="canvas-math-reasoning"
-                              open={mathReasoningOpen}
-                              onToggle={(event) =>
-                                setMathReasoningOpen(event.currentTarget.open)
-                              }
-                            >
-                              <summary>Reasoning</summary>
-                              {mathBusy ? (
-                                <pre>{mathReasoning}</pre>
-                              ) : (
-                                <MarkdownText>{mathReasoning}</MarkdownText>
-                              )}
-                            </details>
-                          ) : null}
-                          {mathPython !== null ? (
-                            <details className="canvas-math-python">
-                              <summary>
-                                Python{" "}
-                                {mathPython.output === undefined
-                                  ? "running…"
-                                  : mathPython.success
-                                    ? "completed"
-                                    : "failed"}
-                              </summary>
-                              <pre>{mathPython.code}</pre>
-                              {mathPython.output !== undefined ? (
-                                <pre>{mathPython.output}</pre>
-                              ) : null}
-                            </details>
-                          ) : null}
-                          {mathQuestions.length > 0 ? (
-                            <form
-                              className="canvas-math-questions"
-                              onSubmit={(event) => {
-                                event.preventDefault();
-                                if (mathBusy) return;
-                                const answers = mathQuestions.map(
-                                  (question) => ({
-                                    question: question.question,
-                                    answer: (
-                                      mathAnswers[question.id] ?? ""
-                                    ).trim(),
-                                  }),
-                                );
-                                if (
-                                  answers.some(
-                                    ({ answer }) => answer.length === 0,
-                                  ) ||
-                                  mathClarifications.length + answers.length >
-                                    24 ||
-                                  mathImage === null
-                                )
-                                  return;
-                                const clarifications = [
-                                  ...mathClarifications,
-                                  ...answers,
-                                ];
-                                setMathClarifications(clarifications);
-                                setMathQuestions([]);
-                                solveMath(mathImage, clarifications);
-                              }}
-                            >
-                              <p className="canvas-math-question-intro">
-                                Clarify uncertain numbers or symbols.
-                              </p>
-                              {mathQuestions.map((question) => (
-                                <label
-                                  key={question.id}
-                                  className="canvas-math-question"
-                                >
-                                  <MarkdownText>
-                                    {question.question}
-                                  </MarkdownText>
-                                  <input
-                                    value={mathAnswers[question.id] ?? ""}
-                                    maxLength={200}
-                                    required
-                                    onChange={(event) =>
-                                      setMathAnswers((current) => ({
-                                        ...current,
-                                        [question.id]: event.target.value,
-                                      }))
-                                    }
-                                    onKeyDown={(event) =>
-                                      event.stopPropagation()
-                                    }
-                                  />
-                                </label>
-                              ))}
-                              <button
-                                type="submit"
-                                disabled={
-                                  mathBusy ||
-                                  mathClarifications.length +
-                                    mathQuestions.length >
-                                    24 ||
-                                  mathQuestions.some(
-                                    (question) =>
-                                      !(mathAnswers[question.id] ?? "").trim(),
-                                  )
-                                }
-                              >
-                                Continue solving
-                              </button>
-                            </form>
-                          ) : null}
-                          {mathSolution !== null ? (
-                            mathBusy ? (
-                              <pre className="canvas-math-solution">
-                                {mathSolution}
-                              </pre>
-                            ) : (
-                              <div className="canvas-math-solution">
-                                <MarkdownText>{mathSolution}</MarkdownText>
-                              </div>
-                            )
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : null}
-          </div>
         ) : null}
         {tool === "eraser" && eraserPointer !== null ? (
           <span

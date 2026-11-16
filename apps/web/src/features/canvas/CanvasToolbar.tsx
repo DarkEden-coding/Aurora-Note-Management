@@ -3,7 +3,6 @@ import { type ReactNode } from "react";
 import {
   ArrowUpRight,
   Brackets,
-  Calculator,
   Circle,
   Eraser,
   Hand,
@@ -22,7 +21,6 @@ export type CanvasTool =
   | "pen"
   | "highlighter"
   | "eraser"
-  | "math"
   | "line"
   | "rectangle"
   | "ellipse"
@@ -56,7 +54,6 @@ const TOOLS: ToolButton[] = [
     icon: <Highlighter size={16} />,
   },
   { tool: "eraser", label: "Erase stroke (X)", icon: <Eraser size={16} /> },
-  { tool: "math", label: "Solve math region", icon: <Calculator size={16} /> },
   { tool: "text", label: "Text (T)", icon: <Type size={16} /> },
   { tool: "line", label: "Line (L)", icon: <Slash size={16} /> },
   { tool: "rectangle", label: "Rectangle (R)", icon: <Square size={16} /> },
