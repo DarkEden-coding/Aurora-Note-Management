@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -216,6 +217,22 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     });
     void db.notes.update(noteId, { lastOpenedAt: new Date(now).toISOString() });
   }, []);
+
+  // A practice session Claude just started lives in a note this device has not
+  // seen yet: load it and open it, so the first question appears on every device.
+  const knownNoteIds = useRef(new Set<string>());
+  knownNoteIds.current = new Set(notes.map((note) => note.id));
+  useEffect(
+    () =>
+      syncEngine.onPracticeChanged(({ noteId }) => {
+        if (knownNoteIds.current.has(noteId)) return;
+        knownNoteIds.current.add(noteId);
+        void refresh()
+          .then(() => selectNote(noteId))
+          .catch(() => undefined);
+      }),
+    [refresh, selectNote],
+  );
 
   const mutateNote = useCallback(
     async (noteId: string, patch: NotePatch, action: string): Promise<void> => {

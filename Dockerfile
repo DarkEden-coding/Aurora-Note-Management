@@ -15,6 +15,10 @@ RUN npm run build -w @aurora/web
 
 # --- Runtime stage: production deps only (tsx stays a runtime dependency) -----
 FROM node:22-slim
+# Fonts let the practice page renderer draw grid numbers and text labels in submission images.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app ./

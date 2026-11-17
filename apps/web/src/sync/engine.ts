@@ -1,5 +1,5 @@
 // This module is Aurora's sync engine: it owns the /sync/ws WebSocket subscription
-// and outbox flush loop, routes server broadcasts (objects-changed / note-changed)
+// and outbox flush loop, routes server broadcasts (objects-changed / note-changed / practice-changed)
 // into the local cache using the shared ServerEvent contract, notifies feature
 // listeners about remote changes, and stays a single shared instance across the app.
 // Sync runs only while Aurora is visible: hiding the page flushes pending edits once,
@@ -9,7 +9,12 @@ import { api } from "../lib/http.js";
 import { ReconnectingWebSocket, type SocketState } from "../lib/websocket.js";
 import { db } from "./db.js";
 import { hydrateRegion } from "./hydrate.js";
-import { flushOutbox, waitForPendingEnqueues } from "./outbox.js";
+import {
+  countPendingNoteOperations,
+  flushOutbox,
+  makeNoteOperationsDue,
+  waitForPendingEnqueues,
+} from "./outbox.js";
 import { filterChangesForPendingOperations } from "./outboxCore.js";
 
 export interface SyncStatus {
@@ -27,8 +32,16 @@ export interface RemoteChangeEvent {
   deletedObjectIds: string[];
 }
 
+/** A guided-practice session on a note changed on the server. */
+export interface PracticeChangeEvent {
+  noteId: string;
+  sessionId: string;
+}
+
 const FLUSH_INTERVAL_MS = 5_000;
 const FLUSH_DEBOUNCE_MS = 100;
+const NOTE_SYNC_TIMEOUT_MS = 15_000;
+const NOTE_SYNC_POLL_MS = 400;
 
 class SyncEngine {
   private socket: ReconnectingWebSocket | null = null;
@@ -52,6 +65,7 @@ class SyncEngine {
   private listeners = new Set<() => void>();
   private remoteListeners = new Set<(event: RemoteChangeEvent) => void>();
   private libraryListeners = new Set<() => void>();
+  private practiceListeners = new Set<(event: PracticeChangeEvent) => void>();
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -72,7 +86,43 @@ class SyncEngine {
     return () => this.libraryListeners.delete(listener);
   };
 
+  /** Subscribe to practice-changed broadcasts so the practice header can refetch. */
+  onPracticeChanged = (
+    listener: (event: PracticeChangeEvent) => void,
+  ): (() => void) => {
+    this.practiceListeners.add(listener);
+    return () => this.practiceListeners.delete(listener);
+  };
+
   getStatus = (): SyncStatus => this.status;
+
+  /**
+   * Resolve once the server has acknowledged every queued operation for the
+   * note, so server-side reads see what the user sees. Rejects when offline or
+   * when the outbox does not drain within the timeout.
+   */
+  waitForNoteSynced = async (
+    noteId: string,
+    timeoutMs = NOTE_SYNC_TIMEOUT_MS,
+  ): Promise<void> => {
+    await waitForPendingEnqueues(noteId);
+    if ((await countPendingNoteOperations(noteId)) === 0) return;
+    await makeNoteOperationsDue(noteId);
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (!navigator.onLine) {
+        throw new Error("You're offline. Reconnect to send your work.");
+      }
+      this.requestFlush(0);
+      await new Promise((resolve) => setTimeout(resolve, NOTE_SYNC_POLL_MS));
+      if ((await countPendingNoteOperations(noteId)) === 0) return;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "Your latest strokes haven't synced yet. Check the connection and try again.",
+        );
+      }
+    }
+  };
 
   private emit(): void {
     for (const listener of this.listeners) listener();
@@ -216,6 +266,11 @@ class SyncEngine {
     }
     if (event.type === "library-changed" || event.type === "note-changed") {
       this.notifyLibraryChange();
+    }
+    if (event.type === "practice-changed") {
+      for (const listener of this.practiceListeners) {
+        listener({ noteId: event.noteId, sessionId: event.sessionId });
+      }
     }
     this.setStatus({ lastSyncAt: Date.now() });
     await this.refreshCounts();

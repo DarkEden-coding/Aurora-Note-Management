@@ -1,0 +1,164 @@
+<!-- Guided practice: how Claude drives a handwritten practice session in Aurora over MCP, and the contracts both runtimes implement. -->
+
+# Guided practice
+
+Claude (running in Claude Code / T3 Code) runs a practice session through an
+MCP server hosted by Aurora. Each question appears on a page of a practice
+note. You write your answer with the pen and press **Done**. Claude receives
+a rendered image of the page, grades it, and draws red marks on your work.
+Then you press **Next** (or **Retry** when allowed).
+
+## Connecting Claude
+
+The endpoint is `POST /mcp` (MCP Streamable HTTP, stateless, JSON responses).
+Like the rest of Aurora it has no login: it is reachable only inside the
+tailnet, and the app-wide origin guard rejects foreign browser origins.
+
+```sh
+claude mcp add --transport http aurora https://power-server.tail14d560.ts.net:8443/mcp
+```
+
+All MCP actions act as the single Aurora owner.
+
+## Data model
+
+Migration `006_practice.sql`:
+
+- `practice_sessions(id, owner_id, note_id UNIQUE, title, total_questions,
+status 'active'|'complete', status_text, options jsonb, created_at, updated_at)`
+- `practice_questions(id, session_id, owner_id, idx, page_index, state, attempt,
+max_points, points, latest_points, topics text[], prompt_object_id,
+created_at, updated_at)`; `state` is one of `awaiting_work`, `submitted`,
+  `graded`, `closed`; `UNIQUE(session_id, idx)`
+- `practice_events(id bigserial, session_id, question_id, type
+'submitted'|'next'|'retry', attempt, created_at, consumed_at)` — the queue
+  `practice_wait` drains in order. Persisted so a server restart or a dropped
+  MCP call never loses a Done press.
+
+Shared wire types live in `packages/shared/src/practice.ts`
+(`PracticeSession`, `PracticeQuestion`, `PracticeOptions`, `practiceActionSchema`).
+
+## Page geometry
+
+The note uses `canvas_mode = 'paged'`. Page `i` occupies world bounds
+`x=0, y=i*(1056+24), width=816, height=1056` (see
+`apps/web/src/features/canvas/pageLayout.ts`). The first question uses page 0;
+every later question and the summary append a new page row after the note's
+last page. Each question stores its `page_index`; inserting a page with "add
+page below" shifts the stored indexes of later questions along with their
+objects. Adding pages broadcasts `library-changed` so devices reload page counts.
+
+**All MCP coordinates are page-relative** (origin at the page's top-left,
+816 × 1056 units). The server adds the page's world offset.
+
+## Canvas objects created by practice
+
+All practice objects are server-created, `locked: true`, and carry
+`payload.practice = { questionId | null, attempt, role }` where `role` is
+`prompt | mark | label | feedback | solution | summary`.
+
+- `practice-card` (new object kind). Payload `{ variant, html, practice }`,
+  `variant` = `prompt | feedback | solution | label | summary`. The web app
+  sanitizes `html` with DOMPurify (no scripts, no event handlers, no external
+  URLs except `data:` images), renders `$…$` / `$$…$$` / `\(…\)` / `\[…\]` with
+  KaTeX, and mounts it in a shadow root with Aurora's practice card base
+  stylesheet. Pen input passes through cards (`pointer-events: none`), except
+  the solution card's show/hide toggle. The solution card starts collapsed on
+  every device (local UI state). `label` cards render as red handwriting-style
+  text with a transparent background.
+- Ink marks use existing kinds with color `#ff5c5c`:
+  - `circle` → `ellipse` (no fill, strokeWidth 3)
+  - `box` → `rectangle` (no fill, strokeWidth 3)
+  - `underline` / `strike` → `line`
+  - `arrow` → `arrow`
+  - `check` / `cross` / `path` → `stroke` with generated points (pressure 0.5, baseWidth 3)
+  - `text` → `practice-card` variant `label`
+
+Every object insert/delete goes through the canvas object module, bumps the
+note revision, and broadcasts `objects-changed` so all devices update live.
+Every session/question change broadcasts `practice-changed { noteId, sessionId }`.
+
+## Browser HTTP routes
+
+- `GET /api/practice/notes/:noteId` → `PracticeSession` or 404.
+- `POST /api/practice/questions/:questionId/submit` → requires
+  `awaiting_work`; sets `submitted`, status text "Grading…", queues a
+  `submitted` event. Returns `PracticeSession`.
+- `POST /api/practice/questions/:questionId/action` body `{ action }` →
+  requires `graded`. `next` → `closed`, status "Writing the next question…"
+  (or "Writing your summary…" after the last question). `retry` (only when
+  `options.feedback.retry`) → `awaiting_work`, `attempt + 1`. Both queue an
+  event. Returns `PracticeSession`.
+
+The web client drains the note's sync outbox before calling submit, so the
+server renders the strokes the user sees.
+
+## MCP tools
+
+| Tool                      | Purpose                                                                                                                                                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `practice_html_template`  | Returns the full HTML wrapper (base CSS + KaTeX from CDN) so Claude can preview a card with T3's `html_preview` at 816 px wide before sending it.                                                                                                                                                            |
+| `practice_start`          | `{ title, totalQuestions, options? }` → creates (or reuses) project "Practice", a paged note, and the session. Returns `{ sessionId, noteId, appUrl }`.                                                                                                                                                      |
+| `practice_post_question`  | `{ sessionId, html, height, maxPoints, topics[] }` → places the prompt card at page `(32, 32)`, width 752. Allowed when no question is open.                                                                                                                                                                 |
+| `practice_wait`           | `{ sessionId, timeoutSeconds? = 240, max 540 }` → blocks until the next queued event, then consumes it. `submitted` returns text metadata plus the page PNG (MCP image content). `next`/`retry` return text. Returns `{ event: "timeout" }` when nothing happens; call again.                                |
+| `practice_get_submission` | `{ questionId }` → re-renders the page PNG without consuming events.                                                                                                                                                                                                                                         |
+| `practice_grade`          | `{ questionId, points, marks[], feedback?, solution?, statusText? }` → requires `submitted`. Deletes earlier attempts' marks/labels/feedback/solution on that page, adds the new ones, records score (`points` only on attempt 1), sets `graded`. `feedback`/`solution` are `{ html, x, y, width, height }`. |
+| `practice_set_status`     | `{ sessionId, text \| null }` → header status line.                                                                                                                                                                                                                                                          |
+| `practice_finish`         | `{ sessionId, summaryHtml, height }` → summary card on the page after the last question; session `complete`.                                                                                                                                                                                                 |
+| `practice_get_session`    | `{ sessionId? }` → state of the given (or most recent active) session, for resuming after an interrupted chat.                                                                                                                                                                                               |
+
+### Marks
+
+```jsonc
+{ "type": "circle" | "box", "x": 0, "y": 0, "width": 0, "height": 0 }
+{ "type": "underline" | "strike" | "arrow", "x1": 0, "y1": 0, "x2": 0, "y2": 0 }
+{ "type": "check" | "cross", "x": 0, "y": 0, "size": 28 }
+{ "type": "path", "points": [[0, 0], [10, 4]] }
+{ "type": "text", "x": 0, "y": 0, "text": "sign error", "width"?: 220 }
+```
+
+`circle`, `box` and `text` are anchored at their top-left corner; `check` and
+`cross` are centred on `(x, y)`. Marks, feedback and solution cards are
+rejected when the session's options turned them off.
+
+Practice cards render below the ink layer, so the user's writing and Claude's
+marks stay visible on top of an opaque card. The runtime Docker image installs
+`fonts-dejavu-core` so grid numbers and text labels appear in submission images.
+
+## Submission image
+
+`apps/server/src/practice/render.ts` builds an SVG of one page and rasterizes
+it with `@resvg/resvg-js` at 1.5×:
+
+- white page, user strokes/shapes in dark ink (light ink colors are darkened
+  so they stay readable on white)
+- prompt card drawn as a light grey box labelled "Question card"
+- earlier attempts' marks in faded red (only during a retry)
+- a faint coordinate grid every 50 units with labels every 100, in page units,
+  so Claude can place marks precisely
+
+## Header (web)
+
+A practice note shows a header strip above the canvas:
+
+- title, and the status line when `progress.status`
+- **X of N** segmented bar; each finished segment is coloured by
+  `latestPoints / maxPoints` (red → amber → green), current segment outlined
+- running score `Σ points / Σ maxPoints` of graded questions when
+  `progress.runningScore`
+- per-topic mastery bars (expandable) when `progress.mastery`
+- action button: **Done** (awaiting_work), "Grading…" (submitted, disabled),
+  **Next** / **Retry** (graded; Retry only with `feedback.retry`)
+
+When a new question appears, the canvas scrolls to its page.
+
+## Running a session (Claude's checklist)
+
+1. `practice_start` with the options the user asked for.
+2. Draft the question HTML, preview it with `html_preview` +
+   `practice_html_template` when layout matters, then `practice_post_question`.
+3. `practice_wait` until `submitted` (re-call on `timeout`).
+4. Read the image, `practice_grade` with marks in page coordinates.
+5. `practice_wait` for `next` (post the next question, adapting difficulty)
+   or `retry` (wait for the next `submitted`).
+6. After the last question, `practice_finish` with a summary.

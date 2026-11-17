@@ -23,6 +23,7 @@ export interface StrokePoint {
 // image:              { fileId: string, alt: string } (legacy: { src, alt })
 // attachment:         { name: string, size: number, fileId: string }
 // pdf-page-reference: { sourceNoteId: string, pageNumber: number, pdfUrl?: string }
+// practice-card:      { variant, html, practice } (server-created and locked; see features/practice)
 
 export function getRichTextDoc(
   o: CanvasObject,

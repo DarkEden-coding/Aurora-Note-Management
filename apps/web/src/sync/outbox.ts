@@ -1,4 +1,4 @@
-// This module is Aurora's durable outbox: it persists operations to IndexedDB before any network attempt, flushes due batches over HTTP, applies acknowledgements only after storing the resulting revision locally, and exposes enqueueing for feature modules (the canvas feature calls enqueueObjectMutation).
+// This module is Aurora's durable outbox: it persists operations to IndexedDB before any network attempt, flushes due batches over HTTP, applies acknowledgements only after storing the resulting revision locally, exposes enqueueing for feature modules (the canvas feature calls enqueueObjectMutation), and reports per-note pending work so callers can wait for it to drain.
 import type { CanvasObject, SyncOperation } from "@aurora/shared";
 import { ApiError, apiPost } from "../lib/http.js";
 import { db } from "./db.js";
@@ -58,6 +58,20 @@ export async function waitForPendingEnqueues(noteId: string): Promise<void> {
       .filter(([key]) => key.startsWith(`${noteId}:`))
       .map(([, pending]) => pending),
   );
+}
+
+/** Number of a note's operations still waiting for a server acknowledgement. */
+export function countPendingNoteOperations(noteId: string): Promise<number> {
+  return db.outbox
+    .filter((row) => row.op.noteId === noteId && row.status !== "conflict")
+    .count();
+}
+
+/** Make a note's queued operations due now, skipping any retry backoff. */
+export async function makeNoteOperationsDue(noteId: string): Promise<void> {
+  await db.outbox
+    .filter((row) => row.op.noteId === noteId && row.status !== "conflict")
+    .modify({ nextAttemptAt: 0 });
 }
 
 async function enqueueObjectMutationNow(params: {

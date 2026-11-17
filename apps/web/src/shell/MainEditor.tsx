@@ -2,8 +2,15 @@
 // canvas to the sync layer: editing operations flow through enqueueObjectMutation
 // (durable outbox + local cache) and the note's canvas mode comes from the library
 // cache. Viewport rendering, modes, culling, and object editing stay in the canvas.
+// When the note has a practice session, the practice header sits above the canvas
+// and the canvas follows the session to its newest page.
 import { useCallback, useRef, useState } from "react";
 import { CanvasWorkspace } from "../features/canvas";
+import {
+  PracticeHeader,
+  focusPageIndex,
+  usePracticeSession,
+} from "../features/practice";
 import type { SyncOperation } from "@aurora/shared";
 import type { Background, CanvasMode, DrawingPalette } from "@aurora/shared";
 import { syncEngine } from "../sync/engine.js";
@@ -32,6 +39,7 @@ export function MainEditor({
     library.pendingPdfImport?.noteId === noteId
       ? library.pendingPdfImport.file
       : undefined;
+  const practice = usePracticeSession(noteId);
 
   // Every coalesced canvas operation enters the durable outbox; the upserted
   // object is already the local cache version, so acknowledgements can advance
@@ -57,32 +65,45 @@ export function MainEditor({
   }, []);
 
   return (
-    <div className="canvas-area" ref={containerRef}>
-      {persistenceError ? (
-        <button
-          type="button"
-          className="canvas-import-error"
-          role="alert"
-          onClick={() => setPersistenceError(null)}
-        >
-          {persistenceError}
-        </button>
+    <>
+      {practice.session !== null ? (
+        <PracticeHeader
+          key={practice.session.id}
+          session={practice.session}
+          onSessionChange={practice.apply}
+          onRefresh={practice.refresh}
+        />
       ) : null}
-      <CanvasWorkspace
-        ownerId={ownerId}
-        noteId={noteId}
-        mode={canvasMode}
-        background={background}
-        drawingPalette={drawingPalette}
-        onDrawingPaletteChange={onDrawingPaletteChange}
-        {...(pendingPdf
-          ? {
-              importedPdf: pendingPdf,
-              onPdfImported: () => library.clearPendingPdfImport(noteId),
-            }
-          : {})}
-        onOperation={handleOperation}
-      />
-    </div>
+      <div className="canvas-area" ref={containerRef}>
+        {persistenceError ? (
+          <button
+            type="button"
+            className="canvas-import-error"
+            role="alert"
+            onClick={() => setPersistenceError(null)}
+          >
+            {persistenceError}
+          </button>
+        ) : null}
+        <CanvasWorkspace
+          ownerId={ownerId}
+          noteId={noteId}
+          mode={canvasMode}
+          background={background}
+          drawingPalette={drawingPalette}
+          onDrawingPaletteChange={onDrawingPaletteChange}
+          {...(pendingPdf
+            ? {
+                importedPdf: pendingPdf,
+                onPdfImported: () => library.clearPendingPdfImport(noteId),
+              }
+            : {})}
+          onOperation={handleOperation}
+          focusPage={
+            practice.session !== null ? focusPageIndex(practice.session) : null
+          }
+        />
+      </div>
+    </>
   );
 }

@@ -1,0 +1,9 @@
+/* Shadow-host rules for practice cards; the card body styles come from PRACTICE_CARD_CSS in @aurora/shared. */
+:host {
+  all: initial;
+  display: block;
+  /* `all: initial` would re-enable hits; pen input must pass through cards. */
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}

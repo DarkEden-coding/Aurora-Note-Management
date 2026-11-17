@@ -17,6 +17,7 @@ import {
   type Background,
   type CanvasMode,
 } from "@aurora/shared";
+import { shiftPracticePages } from "../practice/store.js";
 
 const NOTE_SELECT = `
   SELECT id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
@@ -206,6 +207,7 @@ export async function createPageBelow(
         JSON.stringify(mergeBackground(note.background)),
       ],
     );
+    await shiftPracticePages(client, ownerId, noteId, afterPageIndex);
     const shifted = await client.query<CanvasObjectRow>(
       `UPDATE canvas_objects SET y = y + 1080, revision = revision + 1, updated_at = now()
        WHERE owner_id = $1 AND note_id = $2 AND y >= $3

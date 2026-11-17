@@ -39,6 +39,7 @@ export const objectKindSchema = z.enum([
   "matrix",
   "sticky-note",
   "pdf-page-reference",
+  "practice-card",
 ]);
 
 export const boundsSchema = z.object({
@@ -192,6 +193,13 @@ export const serverEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("library-changed"),
+    serverTimestamp: isoDateSchema,
+  }),
+  // A guided-practice session on this note changed; clients refetch its state.
+  z.object({
+    type: z.literal("practice-changed"),
+    noteId: idSchema,
+    sessionId: idSchema,
     serverTimestamp: isoDateSchema,
   }),
 ]);

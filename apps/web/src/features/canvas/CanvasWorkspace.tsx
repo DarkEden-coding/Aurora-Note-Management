@@ -1,4 +1,4 @@
-// Canvas workspace composition: four canvas modes, viewport transform with overscan culling, backgrounds, selection/move/resize gestures, pen capture with palm rejection, mouse/touch navigation, paged page frames, and object creation. Edits emit coalesced SyncOperations through onOperation; object rendering is delegated to ObjectRenderer, and the sync cache supplies objects when the prop is omitted.
+// Canvas workspace composition: four canvas modes, viewport transform with overscan culling, backgrounds, selection/move/resize gestures, pen capture with palm rejection, mouse/touch navigation, paged page frames with programmatic page focus, and object creation. Edits emit coalesced SyncOperations through onOperation; object rendering is delegated to ObjectRenderer, and the sync cache supplies objects when the prop is omitted.
 import type React from "react";
 import {
   type ReactNode,
@@ -84,6 +84,7 @@ import {
   canvasScrollBounds,
   canvasSurfaceFrames,
   clampBoundsToMode,
+  pagedPageFrame,
   translateBoundsInMode,
   resizeBoundsInMode,
 } from "./pageLayout";
@@ -122,6 +123,8 @@ export interface CanvasWorkspaceProps {
   /** PDF selected while creating this note from the library. */
   importedPdf?: File;
   onPdfImported?: () => void;
+  /** Paged mode: scroll to this zero-based page whenever the value changes. */
+  focusPage?: number | null;
 }
 
 const STROKE_TOOL_WIDTH = 2.5;
@@ -180,6 +183,8 @@ function isInkTool(tool: CanvasTool): tool is "pen" | "highlighter" {
 const VIEWPORT_STATE_PREFIX = "aurora.viewport.";
 const HANDLE_SCREEN_SIZE = 9;
 const HANDLE_HIT_TOLERANCE_SCREEN = 12;
+/** Screen space kept above a page top so the floating toolbar does not cover it. */
+const TOOLBAR_CLEARANCE = 80;
 
 /** One active pointer gesture at a time. */
 type Gesture =
@@ -377,6 +382,7 @@ export function CanvasWorkspace({
   onOperation,
   importedPdf,
   onPdfImported,
+  focusPage,
 }: CanvasWorkspaceProps): ReactNode {
   const activeMode: CanvasMode = mode ?? "infinite";
   const isControlled = objects !== undefined;
@@ -2123,7 +2129,7 @@ export function CanvasWorkspace({
       const nextX = shouldInitialize
         ? (scrollBounds.contentWidth - view.width) / 2
         : Math.max(scrollBounds.minX, Math.min(current.x, scrollBounds.maxX));
-      const preferredTop = -80 / current.zoom;
+      const preferredTop = -TOOLBAR_CLEARANCE / current.zoom;
       const nextY = shouldInitialize
         ? Math.max(scrollBounds.minY, preferredTop)
         : Math.max(scrollBounds.minY, Math.min(current.y, scrollBounds.maxY));
@@ -2146,6 +2152,52 @@ export function CanvasWorkspace({
       saveViewport(noteId, viewport);
     }
   }, [activeMode, noteId, viewport]);
+
+  const surfaceFrames = canvasSurfaceFrames(
+    displayObjects,
+    activeMode,
+    undefined,
+    undefined,
+    pageCount,
+  );
+
+  // Scroll to a requested page once it exists locally. Regional hydration may
+  // not have loaded a far page yet, so fetch its region first.
+  const focusedPageRef = useRef<string | null>(null);
+  const hydratingFocusRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (activeMode !== "paged" || focusPage == null || scrollBounds === null)
+      return;
+    const identity = `${noteId}:${focusPage}`;
+    if (focusedPageRef.current === identity) return;
+    if (surfaceFrames.length <= focusPage) {
+      if (!isControlled && hydratingFocusRef.current !== identity) {
+        hydratingFocusRef.current = identity;
+        void syncEngine.hydrate(noteId, pagedPageFrame(focusPage));
+      }
+      return;
+    }
+    focusedPageRef.current = identity;
+    setViewport((current) => ({
+      ...current,
+      y: Math.max(
+        scrollBounds.minY,
+        Math.min(
+          pagedPageFrame(focusPage).y - TOOLBAR_CLEARANCE / current.zoom,
+          scrollBounds.maxY,
+        ),
+      ),
+    }));
+  }, [
+    activeMode,
+    focusPage,
+    isControlled,
+    noteId,
+    scrollBounds,
+    setViewport,
+    surfaceFrames.length,
+  ]);
+
   const inView = queryVisibleObjects(displayObjects, view, DEFAULT_OVERSCAN);
   const visibleIds = new Set(inView.map((object) => object.id));
   // PDF pages mount a full screen ahead in every direction so they render before scrolling reaches them.
@@ -2168,13 +2220,6 @@ export function CanvasWorkspace({
         !visibleIds.has(object.id),
     ),
   ]);
-  const surfaceFrames = canvasSurfaceFrames(
-    displayObjects,
-    activeMode,
-    undefined,
-    undefined,
-    pageCount,
-  );
   const pageBackgroundStyle = getBackgroundStyle(
     background ?? DEFAULT_BACKGROUND,
     { x: 0, y: 0, width: 0, height: 0, zoom: 1 },
@@ -2409,10 +2454,13 @@ export function CanvasWorkspace({
             </div>
           ))}
 
+          {/* Images and practice cards sit under the scene so ink and marks stay visible on them. */}
           {visible
             .filter(
               (object) =>
-                object.kind === "image" || object.kind === "pdf-page-reference",
+                object.kind === "image" ||
+                object.kind === "pdf-page-reference" ||
+                object.kind === "practice-card",
             )
             .map((object) => (
               <HtmlObject
@@ -2468,6 +2516,7 @@ export function CanvasWorkspace({
               (o) =>
                 o.kind !== "stroke" &&
                 o.kind !== "image" &&
+                o.kind !== "practice-card" &&
                 o.kind !== "rectangle" &&
                 o.kind !== "ellipse" &&
                 o.kind !== "line" &&

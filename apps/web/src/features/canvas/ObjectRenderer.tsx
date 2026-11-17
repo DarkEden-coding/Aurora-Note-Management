@@ -1,4 +1,4 @@
-// Renders individual canvas objects: SVG shapes and pressure strokes for the scene layer, HTML for rich text, media, attachments, and embedded PDF references. Renderer stays presentation-only; mutations flow through callbacks.
+// Renders individual canvas objects: SVG shapes and pressure strokes for the scene layer, HTML for rich text, media, attachments, embedded PDF references, and practice cards. Renderer stays presentation-only; mutations flow through callbacks.
 import { lazy, memo, Suspense, type ReactNode, useRef, useState } from "react";
 import type { CanvasObject } from "@aurora/shared";
 import { FileText, GripHorizontal } from "lucide-react";
@@ -14,6 +14,9 @@ const RichTextBlock = lazy(async () => ({
 }));
 const PdfPageView = lazy(async () => ({
   default: (await import("../pdf/PdfPageView")).PdfPageView,
+}));
+const PracticeCard = lazy(async () => ({
+  default: (await import("../practice/PracticeCard")).PracticeCard,
 }));
 import {
   getAttachmentName,
@@ -261,6 +264,9 @@ export function HtmlObject({
       className="canvas-html-object"
       data-html-object={object.id}
       data-interactive={interactive ? "true" : "false"}
+      data-pointer-passthrough={
+        object.kind === "practice-card" ? "true" : undefined
+      }
       style={{
         left: b.x,
         top: b.y,
@@ -342,6 +348,12 @@ function HtmlContent({
       return <AttachmentContent object={object} />;
     case "pdf-page-reference":
       return <PdfRefContent object={object} />;
+    case "practice-card":
+      return (
+        <Suspense fallback={null}>
+          <PracticeCard payload={object.payload} />
+        </Suspense>
+      );
     default:
       return null;
   }

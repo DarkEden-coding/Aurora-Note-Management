@@ -190,6 +190,11 @@
   cursor: default;
 }
 
+/* Server-placed practice cards never take pen, touch, or mouse input. */
+.canvas-html-object[data-pointer-passthrough="true"] {
+  pointer-events: none;
+}
+
 .canvas-rich-text {
   width: 100%;
   height: 100%;
