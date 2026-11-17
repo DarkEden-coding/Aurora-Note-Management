@@ -7,6 +7,7 @@ import { resolveOwnerId } from "../account/owner.js";
 import { markSchema } from "./marks.js";
 import { CARD_WIDTH, PAGE_HEIGHT, PAGE_WIDTH } from "./page.js";
 import { practiceHtmlTemplate } from "./template.js";
+import { listLocations } from "./location.js";
 import {
   finishSession,
   getSession,
@@ -18,15 +19,16 @@ import {
   waitForEvent,
 } from "./service.js";
 
-const DEFAULT_WAIT_SECONDS = 240;
-const MAX_WAIT_SECONDS = 540;
+// MCP clients abort requests after 60 s by default, so each wait returns before that.
+const DEFAULT_WAIT_SECONDS = 50;
+const MAX_WAIT_SECONDS = 55;
 
 const HTML_RULES = `Card HTML: plain HTML + inline CSS only (no <script>, no event handlers, no external URLs; data: images are fine). Math: $...$ inline, $$...$$ display (also \\(...\\), \\[...\\]), rendered with KaTeX. Cards are ${CARD_WIDTH}px wide on a dark background (#23262d, text #e6e8ec, 18px/1.5 system-ui); use class "muted" for secondary text.`;
 
 const INSTRUCTIONS = `Aurora guided practice: you run a handwritten practice session. Each question is a card on its own page of a practice note; the user writes the answer with a pen and presses Done; you receive an image of the page, grade it, and draw red marks on their work.
 
 Checklist:
-1. practice_start with the options the user asked for. Tell the user the note title (Aurora > project "Practice").
+1. Decide where the note goes. If the user has not named a project (and optional folder), call practice_list_locations, ask the user where to put it (offer the existing places), and wait for the answer before starting. Then practice_start with that location and the options the user asked for, and tell the user where the note is.
 2. Write the question HTML. When layout matters, preview it with practice_html_template (+ html_preview at ${PAGE_WIDTH}px). Then practice_post_question with a height that fits the content.
 3. practice_wait until event "submitted" (on "timeout", just call it again).
 4. Look at the image and call practice_grade with points and marks.
@@ -91,21 +93,44 @@ export function buildPracticeMcpServer(appUrl: string): McpServer {
   );
 
   server.registerTool(
+    "practice_list_locations",
+    {
+      description:
+        "Lists the user's projects and their folder paths, so you can offer them when asking where a new practice note should go.",
+      inputSchema: {},
+    },
+    async () => json(await listLocations(await ownerId())),
+  );
+
+  server.registerTool(
     "practice_start",
     {
       description:
-        'Starts a session: creates (or reuses) the Aurora project "Practice" and a new paged note titled `title`. Returns { sessionId, noteId, noteTitle, appUrl, session }. options toggles feedback (inkMarks, card, solution, retry) and header progress (bar, runningScore, mastery, status); omitted fields use defaults.',
+        "Starts a session: creates a new paged note titled `title` in the chosen project and folder (missing ones are created; names match case-insensitively). Ask the user for the location first if they have not given one. Returns { sessionId, noteId, noteTitle, appUrl, session }. options toggles feedback (inkMarks, card, solution, retry) and the progress bar below the canvas (bar, runningScore, mastery, status); omitted fields use defaults.",
       inputSchema: {
         title: z.string().min(1).max(200).describe("Session and note title"),
         totalQuestions: z.number().int().min(1).max(50),
+        project: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe("Project name the user chose"),
+        folder: z
+          .string()
+          .max(500)
+          .optional()
+          .describe(
+            'Folder path inside the project, e.g. "Calculus/Derivatives"',
+          ),
         options: practiceOptionsSchema.optional(),
       },
     },
-    async ({ title, totalQuestions, options }) => {
+    async ({ title, totalQuestions, project, folder, options }) => {
       const session = await startSession(await ownerId(), {
         title,
         totalQuestions,
         options: options ?? practiceOptionsSchema.parse({}),
+        location: { project, folder },
       });
       return json({
         sessionId: session.id,

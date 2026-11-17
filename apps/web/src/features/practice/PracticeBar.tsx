@@ -1,4 +1,4 @@
-// Practice header strip above the canvas: title and status, segmented question progress, running score, topic mastery, and the Done / Next / Retry actions. Done waits for the note's strokes to sync before submitting.
+// Practice bar below the canvas: status line, segmented question progress, running score, topic mastery, and the Done / Next / Retry actions. Done waits for the note's strokes to sync before submitting.
 import { useState, type ReactNode } from "react";
 import {
   ArrowRight,
@@ -72,7 +72,7 @@ function ProgressBar({ session }: { session: PracticeSession }): ReactNode {
   );
 }
 
-export function PracticeHeader({
+export function PracticeBar({
   session,
   onSessionChange,
   onRefresh,
@@ -189,17 +189,33 @@ export function PracticeHeader({
     );
   }
 
+  // The bar sits under the canvas, so the expandable mastery list opens above its row.
   return (
-    <section className="practice-header" aria-label="Practice session">
-      <div className="practice-header-row">
-        <div className="practice-heading">
-          <strong className="practice-title">{session.title}</strong>
-          {progress.status && session.statusText ? (
-            <span className="practice-status" aria-live="polite">
-              {session.statusText}
-            </span>
-          ) : null}
-        </div>
+    <section className="practice-bar" aria-label="Practice session">
+      {masteryOpen && topics.length > 0 ? (
+        <ul className="practice-mastery">
+          {topics.map((topic) => (
+            <li key={topic.topic}>
+              <span className="practice-mastery-topic">{topic.topic}</span>
+              <span className="practice-mastery-bar">
+                <span
+                  style={{
+                    width: percent(topic.ratio),
+                    background: scoreColor(topic.ratio),
+                  }}
+                />
+              </span>
+              <span className="practice-mastery-value">
+                {percent(topic.ratio)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="practice-bar-row">
+        <span className="practice-status" aria-live="polite">
+          {progress.status ? (session.statusText ?? "") : ""}
+        </span>
         {progress.bar ? <ProgressBar session={session} /> : null}
         {progress.runningScore && !complete && score !== null ? (
           <ScoreText score={score} />
@@ -226,26 +242,6 @@ export function PracticeHeader({
         >
           {error}
         </button>
-      ) : null}
-      {masteryOpen && topics.length > 0 ? (
-        <ul className="practice-mastery">
-          {topics.map((topic) => (
-            <li key={topic.topic}>
-              <span className="practice-mastery-topic">{topic.topic}</span>
-              <span className="practice-mastery-bar">
-                <span
-                  style={{
-                    width: percent(topic.ratio),
-                    background: scoreColor(topic.ratio),
-                  }}
-                />
-              </span>
-              <span className="practice-mastery-value">
-                {percent(topic.ratio)}
-              </span>
-            </li>
-          ))}
-        </ul>
       ) : null}
     </section>
   );

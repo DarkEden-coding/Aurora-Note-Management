@@ -6,7 +6,8 @@ import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect, pageFrame } from "./page.js";
 
 const RENDER_SCALE = 1.5;
 const FADED_OPACITY = 0.35;
-const FONT = 'font-family="sans-serif"';
+// resvg maps the generic "sans-serif" to Arial, which the Linux image lacks; name DejaVu (installed there) first.
+const FONT = `font-family="DejaVu Sans, Arial, sans-serif"`;
 
 export type RenderTarget = {
   pageIndex: number;

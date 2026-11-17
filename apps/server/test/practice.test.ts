@@ -1,6 +1,7 @@
 // Pure checks for guided practice: mark conversion, page rendering, state transitions, and the wait loop.
 import { describe, expect, it } from "vitest";
 import { practiceOptionsSchema, type CanvasObject } from "@aurora/shared";
+import { folderPaths, folderSegments } from "../src/practice/location.js";
 import { markToObjects, practiceTagOf } from "../src/practice/marks.js";
 import {
   buildPageSvg,
@@ -228,5 +229,22 @@ describe("practice wait loop", () => {
     );
     controller.abort();
     await expect(aborted).resolves.toBeNull();
+  });
+});
+
+describe("practice locations", () => {
+  it("splits folder paths and lists nested folders as paths", () => {
+    expect(folderSegments(" Calculus / Derivatives/ ")).toEqual([
+      "Calculus",
+      "Derivatives",
+    ]);
+    expect(folderSegments(undefined)).toEqual([]);
+    expect(
+      folderPaths([
+        { id: "b", parentId: "a", name: "Derivatives" },
+        { id: "a", parentId: null, name: "Calculus" },
+        { id: "c", parentId: null, name: "Algebra" },
+      ]),
+    ).toEqual(["Algebra", "Calculus", "Calculus/Derivatives"]);
   });
 });

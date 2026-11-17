@@ -10,7 +10,7 @@ import type {
 import { notFound } from "../errors.js";
 import { withTransaction, getPool } from "../db/pool.js";
 import { queryRegionalObjects } from "../canvas/objects.js";
-import { createProject, listProjects } from "../library/projects.js";
+import { resolveLocation, type PracticeLocation } from "./location.js";
 import { createNote } from "../library/notes.js";
 import { notifyPracticeEvent, waitForClaim } from "./events.js";
 import {
@@ -63,8 +63,6 @@ import {
   type QuestionRow,
   type SessionRow,
 } from "./store.js";
-
-const PRACTICE_PROJECT_NAME = "Practice";
 
 export type PlacedCard = Bounds & { html: string };
 
@@ -199,25 +197,32 @@ export function actOnQuestion(
 
 // ---- Claude (MCP) actions ------------------------------------------------
 
-async function practiceProjectId(ownerId: string): Promise<string> {
-  const projects = await listProjects(ownerId, false);
-  const existing = projects.find((p) => p.name === PRACTICE_PROJECT_NAME);
-  if (existing) return existing.id;
-  return (await createProject(ownerId, { name: PRACTICE_PROJECT_NAME })).id;
-}
-
 export async function startSession(
   ownerId: string,
-  input: { title: string; totalQuestions: number; options: PracticeOptions },
+  input: {
+    title: string;
+    totalQuestions: number;
+    options: PracticeOptions;
+    location: PracticeLocation;
+  },
 ): Promise<PracticeSession> {
-  const projectId = await practiceProjectId(ownerId);
+  const { projectId, folderId } = await resolveLocation(
+    ownerId,
+    input.location,
+  );
   const note = await createNote(ownerId, {
     projectId,
+    folderId: folderId ?? undefined,
     title: input.title,
     canvasMode: "paged",
   });
   const session = await withTransaction((client) =>
-    insertSession(client, ownerId, { noteId: note.id, ...input }),
+    insertSession(client, ownerId, {
+      noteId: note.id,
+      title: input.title,
+      totalQuestions: input.totalQuestions,
+      options: input.options,
+    }),
   );
   broadcastChanges(ownerId, session.id, note.id, undefined, true);
   return mapSession(session, []);

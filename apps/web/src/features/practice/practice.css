@@ -1,55 +1,28 @@
-/* Practice presentation outside card shadow roots: the header strip above the canvas and the solution card's show/hide toggle. */
-.practice-header {
+/* Practice presentation outside card shadow roots: the bar below the canvas and the solution card's show/hide toggle. */
+/* No panel of its own: the bar reads as part of the page chrome under the canvas. */
+.practice-bar {
   display: flex;
+  flex: none;
   flex-direction: column;
   gap: 4px;
-  padding: 4px 6px 4px 14px;
-  border: var(--panel-border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface) 68%, transparent);
-  backdrop-filter: blur(var(--blur));
+  padding: 0 6px 0 14px;
 }
 
-:root[data-theme="neomorphic"] .practice-header {
-  box-shadow:
-    10px 10px 22px rgba(4, 6, 10, 0.7),
-    -7px -7px 18px rgba(255, 255, 255, 0.045);
-}
-
-:root[data-theme="minimal"] .practice-header {
-  border-radius: 0;
-}
-
-.practice-header-row {
+.practice-bar-row {
   display: flex;
   align-items: center;
   gap: 16px;
   min-height: 44px;
 }
 
-.practice-heading {
-  display: flex;
-  flex: 1 1 160px;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.3;
-}
-
-.practice-title,
 .practice-status {
+  flex: 1 1 120px;
+  min-width: 0;
   overflow: hidden;
+  font-size: 13px;
+  color: var(--text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.practice-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.practice-status {
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .practice-progress {
@@ -185,7 +158,7 @@ button.practice-error {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 6px 24px;
   margin: 0;
-  padding: 2px 8px 8px 0;
+  padding: 8px 8px 2px 0;
   list-style: none;
 }
 
@@ -222,7 +195,7 @@ button.practice-error {
 }
 
 @media (max-width: 720px) {
-  .practice-header-row {
+  .practice-bar-row {
     flex-wrap: wrap;
     row-gap: 2px;
   }

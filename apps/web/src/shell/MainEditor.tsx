@@ -2,12 +2,12 @@
 // canvas to the sync layer: editing operations flow through enqueueObjectMutation
 // (durable outbox + local cache) and the note's canvas mode comes from the library
 // cache. Viewport rendering, modes, culling, and object editing stay in the canvas.
-// When the note has a practice session, the practice header sits above the canvas
+// When the note has a practice session, the practice bar sits below the canvas
 // and the canvas follows the session to its newest page.
 import { useCallback, useRef, useState } from "react";
 import { CanvasWorkspace } from "../features/canvas";
 import {
-  PracticeHeader,
+  PracticeBar,
   focusPageIndex,
   usePracticeSession,
 } from "../features/practice";
@@ -66,14 +66,6 @@ export function MainEditor({
 
   return (
     <>
-      {practice.session !== null ? (
-        <PracticeHeader
-          key={practice.session.id}
-          session={practice.session}
-          onSessionChange={practice.apply}
-          onRefresh={practice.refresh}
-        />
-      ) : null}
       <div className="canvas-area" ref={containerRef}>
         {persistenceError ? (
           <button
@@ -104,6 +96,14 @@ export function MainEditor({
           }
         />
       </div>
+      {practice.session !== null ? (
+        <PracticeBar
+          key={practice.session.id}
+          session={practice.session}
+          onSessionChange={practice.apply}
+          onRefresh={practice.refresh}
+        />
+      ) : null}
     </>
   );
 }
