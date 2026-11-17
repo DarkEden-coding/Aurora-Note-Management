@@ -271,7 +271,8 @@ export async function renderPagePng(
 ): Promise<Buffer> {
   const image = await renderAsync(buildPageSvg(objects, target), {
     fitTo: { mode: "zoom", value: RENDER_SCALE },
-    font: { loadSystemFonts: true },
+    // resvg's own system scan misses Debian's font folder, so name it (absent elsewhere, then ignored).
+    font: { loadSystemFonts: true, fontDirs: ["/usr/share/fonts"] },
     logLevel: "off",
   });
   return image.asPng();
