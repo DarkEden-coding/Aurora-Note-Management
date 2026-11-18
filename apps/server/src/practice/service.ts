@@ -3,7 +3,10 @@ import crypto from "node:crypto";
 import type pg from "pg";
 import type {
   Bounds,
+  CanvasObject,
   PracticeAction,
+  PracticeCardRegion,
+  PracticeGrading,
   PracticeOptions,
   PracticeSession,
 } from "@aurora/shared";
@@ -27,12 +30,19 @@ import {
   PAGE_WIDTH,
   pageFrame,
 } from "./page.js";
+import type { PracticeTag } from "./marks.js";
 import {
   broadcastChanges,
   writeObjects,
   type ObjectChanges,
 } from "./publish.js";
-import { renderPagePng } from "./render.js";
+import {
+  describePage,
+  renderPageImages,
+  type ImageOptions,
+  type PageGeometry,
+  type PageImage,
+} from "./submission.js";
 import {
   checkCanFinish,
   checkFeedbackAllowed,
@@ -57,6 +67,8 @@ import {
   loadSession,
   loadSessionByNote,
   mapSession,
+  questionRegions,
+  sessionGrading,
   sessionOptions,
   updateQuestion,
   updateSession,
@@ -129,10 +141,12 @@ async function applyTransition(
   session: SessionRow,
   question: QuestionRow,
   transition: Transition,
+  cardRegions?: PracticeCardRegion[],
 ): Promise<PracticeSession> {
   await updateQuestion(client, question.id, {
     state: transition.state,
     attempt: transition.attempt,
+    cardRegions,
   });
   await updateSession(client, session.id, {
     statusText: transition.statusText,
@@ -150,6 +164,7 @@ async function runTransition(
   ownerId: string,
   questionId: string,
   plan: (session: SessionFacts, question: QuestionFacts) => Transition,
+  cardRegions?: PracticeCardRegion[],
 ): Promise<PracticeSession> {
   const result = await withQuestion(
     ownerId,
@@ -160,6 +175,7 @@ async function runTransition(
         session,
         question,
         plan(sessionFacts(session), questionFacts(question)),
+        cardRegions,
       ),
   );
   broadcastChanges(ownerId, result.id, result.noteId);
@@ -178,11 +194,13 @@ export async function getSessionForNote(
   return sessionState(getPool(), session);
 }
 
+/** Done pressed; `cardRegions` is the card layout the browser measured (absent from older clients). */
 export function submitQuestion(
   ownerId: string,
   questionId: string,
+  cardRegions?: PracticeCardRegion[],
 ): Promise<PracticeSession> {
-  return runTransition(ownerId, questionId, planSubmit);
+  return runTransition(ownerId, questionId, planSubmit, cardRegions);
 }
 
 export function actOnQuestion(
@@ -203,6 +221,7 @@ export async function startSession(
     title: string;
     totalQuestions: number;
     options: PracticeOptions;
+    grading: PracticeGrading | null;
     location: PracticeLocation;
   },
 ): Promise<PracticeSession> {
@@ -222,6 +241,7 @@ export async function startSession(
       title: input.title,
       totalQuestions: input.totalQuestions,
       options: input.options,
+      grading: input.grading,
     }),
   );
   broadcastChanges(ownerId, session.id, note.id, undefined, true);
@@ -316,16 +336,76 @@ export async function postQuestion(
   return { questionId, session };
 }
 
+export type GradeInput = {
+  questionId: string;
+  points: number;
+  marks: Mark[];
+  feedback?: PlacedCard | undefined;
+  solution?: PlacedCard | undefined;
+  statusText?: string | undefined;
+};
+
+// New mark/card objects for a grade, and the ids of the earlier ones on that page it replaces (the prompt stays).
+function gradeObjects(
+  ownerId: string,
+  session: SessionRow,
+  question: QuestionRow,
+  input: GradeInput,
+  pageObjects: CanvasObject[],
+): { inserts: CanvasObject[]; stale: string[] } {
+  checkFeedbackAllowed(sessionOptions(session), {
+    marks: input.marks.length,
+    card: input.feedback !== undefined,
+    solution: input.solution !== undefined,
+  });
+  const ctx = {
+    ownerId,
+    noteId: session.note_id,
+    pageIndex: question.page_index,
+  };
+  const tag = { questionId: question.id, attempt: question.attempt };
+  const inserts = input.marks.flatMap((mark) =>
+    markToObjects(ctx, mark, question.id, question.attempt),
+  );
+  const cards: Array<[PlacedCard | undefined, "feedback" | "solution"]> = [
+    [input.feedback, "feedback"],
+    [input.solution, "solution"],
+  ];
+  for (const [card, role] of cards) {
+    if (!card) continue;
+    const { html, ...bounds } = card;
+    const practice: PracticeTag = { ...tag, role };
+    inserts.push(cardObject(ctx, role, html, bounds, practice));
+  }
+  const stale = pageObjects
+    .filter((object) => {
+      const objectTag = practiceTagOf(object);
+      return (
+        objectTag?.questionId === question.id && objectTag.role !== "prompt"
+      );
+    })
+    .map((object) => object.id);
+  return { inserts, stale };
+}
+
+function loadPageObjects(
+  ownerId: string,
+  noteId: string,
+  pageIndex: number,
+): Promise<CanvasObject[]> {
+  return queryRegionalObjects(ownerId, {
+    noteId,
+    viewport: pageFrame(pageIndex),
+  }).then((page) => page.objects);
+}
+
+/**
+ * Grades a submitted question, or re-grades a graded one before the user presses Next/Retry.
+ * Either way the question's earlier marks and cards are replaced by these.
+ */
 export async function gradeQuestion(
   ownerId: string,
-  input: {
-    questionId: string;
-    points: number;
-    marks: Mark[];
-    feedback?: PlacedCard | undefined;
-    solution?: PlacedCard | undefined;
-    statusText?: string | undefined;
-  },
+  input: GradeInput,
 ): Promise<PracticeSession> {
   const found = await loadQuestion(getPool(), ownerId, input.questionId);
   if (!found) throw notFound("Practice question");
@@ -337,48 +417,14 @@ export async function gradeQuestion(
       true,
     );
     if (!question) throw notFound("Practice question");
-    checkFeedbackAllowed(sessionOptions(session), {
-      marks: input.marks.length,
-      card: input.feedback !== undefined,
-      solution: input.solution !== undefined,
-    });
     const scores = planGrade(questionFacts(question), input.points);
-
-    const ctx = {
+    const { inserts, stale } = gradeObjects(
       ownerId,
-      noteId: session.note_id,
-      pageIndex: question.page_index,
-    };
-    const tag = { questionId: question.id, attempt: question.attempt };
-    const inserts = input.marks.flatMap((mark) =>
-      markToObjects(ctx, mark, question.id, question.attempt),
+      session,
+      question,
+      input,
+      await loadPageObjects(ownerId, session.note_id, question.page_index),
     );
-    if (input.feedback) {
-      const { html, ...bounds } = input.feedback;
-      inserts.push(
-        cardObject(ctx, "feedback", html, bounds, { ...tag, role: "feedback" }),
-      );
-    }
-    if (input.solution) {
-      const { html, ...bounds } = input.solution;
-      inserts.push(
-        cardObject(ctx, "solution", html, bounds, { ...tag, role: "solution" }),
-      );
-    }
-    // Replace every earlier attempt's marks and cards for this question; the prompt stays.
-    const page = await queryRegionalObjects(ownerId, {
-      noteId: session.note_id,
-      viewport: pageFrame(question.page_index),
-    });
-    const stale = page.objects
-      .filter((object) => {
-        const objectTag = practiceTagOf(object);
-        return (
-          objectTag?.questionId === question.id && objectTag.role !== "prompt"
-        );
-      })
-      .map((object) => object.id);
-
     const changes = await writeObjects(
       client,
       ownerId,
@@ -391,6 +437,47 @@ export async function gradeQuestion(
       statusText: input.statusText ?? null,
     });
     return { result: await sessionState(client, session), changes };
+  });
+}
+
+/** Renders the page as it would look after this grade, without saving anything. */
+export async function previewGrade(
+  ownerId: string,
+  input: GradeInput,
+  image: ImageOptions,
+): Promise<{ meta: SubmissionMeta; images: PageImage[] }> {
+  const { session, question } = await loadQuestionWithSession(
+    ownerId,
+    input.questionId,
+  );
+  planGrade(questionFacts(question), input.points);
+  const pageObjects = await loadPageObjects(
+    ownerId,
+    session.note_id,
+    question.page_index,
+  );
+  const { inserts, stale } = gradeObjects(
+    ownerId,
+    session,
+    question,
+    input,
+    pageObjects,
+  );
+  const objects = [
+    ...pageObjects.filter((object) => !stale.includes(object.id)),
+    ...inserts,
+  ];
+  return renderPage(session, question, objects, image);
+}
+
+export function setGrading(
+  ownerId: string,
+  sessionId: string,
+  grading: PracticeGrading | null,
+): Promise<PracticeSession> {
+  return commitObjects(ownerId, sessionId, async (client, session) => {
+    await updateSession(client, session.id, { grading });
+    return { result: await sessionState(client, session) };
   });
 }
 
@@ -445,24 +532,41 @@ export type SubmissionMeta = {
   maxPoints: number;
   topics: string[];
   pageSize: { width: number; height: number };
-};
+  grading: PracticeGrading | null;
+  // The page area the main image shows and its pixels per page unit (crop/scale options).
+  image: PageImage["area"];
+  // Present when the card has a .final-answer box: the second image is a close-up of it.
+  finalAnswerImage?: PageImage["area"];
+} & PageGeometry;
 
-export async function renderSubmission(
+async function loadQuestionWithSession(
   ownerId: string,
   questionId: string,
-): Promise<{ meta: SubmissionMeta; png: Buffer }> {
+): Promise<{ session: SessionRow; question: QuestionRow }> {
   const question = await loadQuestion(getPool(), ownerId, questionId);
   if (!question) throw notFound("Practice question");
   const session = await loadSession(getPool(), ownerId, question.session_id);
   if (!session) throw notFound("Practice session");
-  const page = await queryRegionalObjects(ownerId, {
-    noteId: session.note_id,
-    viewport: pageFrame(question.page_index),
-  });
-  const png = await renderPagePng(page.objects, {
-    pageIndex: question.page_index,
-    attempt: question.attempt,
-  });
+  return { session, question };
+}
+
+async function renderPage(
+  session: SessionRow,
+  question: QuestionRow,
+  objects: CanvasObject[],
+  image: ImageOptions,
+): Promise<{ meta: SubmissionMeta; images: PageImage[] }> {
+  const geometry = describePage(
+    objects,
+    question.page_index,
+    questionRegions(question),
+  );
+  const { page, finalAnswer } = await renderPageImages(
+    objects,
+    { pageIndex: question.page_index, attempt: question.attempt },
+    geometry,
+    image,
+  );
   return {
     meta: {
       questionId: question.id,
@@ -471,14 +575,35 @@ export async function renderSubmission(
       maxPoints: Number(question.max_points),
       topics: question.topics,
       pageSize: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
+      grading: sessionGrading(session),
+      image: page.area,
+      ...(finalAnswer ? { finalAnswerImage: finalAnswer.area } : {}),
+      ...geometry,
     },
-    png,
+    images: finalAnswer ? [page, finalAnswer] : [page],
   };
+}
+
+export async function renderSubmission(
+  ownerId: string,
+  questionId: string,
+  image: ImageOptions,
+): Promise<{ meta: SubmissionMeta; images: PageImage[] }> {
+  const { session, question } = await loadQuestionWithSession(
+    ownerId,
+    questionId,
+  );
+  const objects = await loadPageObjects(
+    ownerId,
+    session.note_id,
+    question.page_index,
+  );
+  return renderPage(session, question, objects, image);
 }
 
 export type WaitResult =
   | { event: "timeout" }
-  | ({ event: "submitted"; png: Buffer } & SubmissionMeta)
+  | ({ event: "submitted"; images: PageImage[] } & SubmissionMeta)
   | {
       event: "next";
       questionId: string;
@@ -492,6 +617,7 @@ export async function waitForEvent(
   ownerId: string,
   sessionId: string,
   timeoutMs: number,
+  image: ImageOptions,
   signal?: AbortSignal,
 ): Promise<WaitResult> {
   const session = await loadSession(getPool(), ownerId, sessionId);
@@ -504,8 +630,12 @@ export async function waitForEvent(
   );
   if (!event) return { event: "timeout" };
   if (event.type === "submitted") {
-    const { meta, png } = await renderSubmission(ownerId, event.question_id);
-    return { event: "submitted", ...meta, attempt: event.attempt, png };
+    const { meta, images } = await renderSubmission(
+      ownerId,
+      event.question_id,
+      image,
+    );
+    return { event: "submitted", ...meta, attempt: event.attempt, images };
   }
   const question = await loadQuestion(getPool(), ownerId, event.question_id);
   const index = question?.idx ?? -1;

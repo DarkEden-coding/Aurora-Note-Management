@@ -32,6 +32,13 @@ const envSchema = z.object({
     z.string().min(1).optional(),
   ),
   AURORA_AI_MODEL: z.string().min(1).default("gpt-5.5"),
+  // Longest practice_wait an MCP client may ask for; the default wait stays under 60 s.
+  AURORA_PRACTICE_WAIT_MAX_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(55)
+    .max(3600)
+    .default(900),
 });
 
 export type AuroraEnv = z.infer<typeof envSchema> & {

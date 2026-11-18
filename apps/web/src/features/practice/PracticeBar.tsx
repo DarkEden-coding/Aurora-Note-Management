@@ -11,6 +11,7 @@ import type { PracticeSession } from "@aurora/shared";
 import { ApiError } from "../../lib/http.js";
 import { syncEngine } from "../../sync/engine.js";
 import { sendPracticeAction, submitPracticeQuestion } from "./api.js";
+import { measureCardRegions } from "./cardLayout.js";
 import {
   currentQuestionIndex,
   formatPoints,
@@ -136,7 +137,14 @@ export function PracticeBar({
         className="primary practice-action"
         disabled={busy !== null}
         onClick={() =>
-          void run(() => submitPracticeQuestion(question.id), true)
+          void run(
+            () =>
+              submitPracticeQuestion(
+                question.id,
+                measureCardRegions(question.promptObjectId),
+              ),
+            true,
+          )
         }
       >
         {busy !== null ? (

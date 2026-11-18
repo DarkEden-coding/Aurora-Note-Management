@@ -1,7 +1,7 @@
-// Browser practice routes (single owner): read a note's practice session, submit work, and choose Next/Retry.
+// Browser practice routes (single owner): read a note's practice session, submit work (with the measured card layout), and choose Next/Retry.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { practiceActionSchema } from "@aurora/shared";
+import { practiceActionSchema, practiceSubmitSchema } from "@aurora/shared";
 import { ownerPreHandler } from "../account/owner.js";
 import { actOnQuestion, getSessionForNote, submitQuestion } from "./service.js";
 
@@ -21,7 +21,8 @@ export function registerPracticeRoutes(app: FastifyInstance): void {
     { preHandler },
     async (request) => {
       const { questionId } = questionParamsSchema.parse(request.params);
-      return submitQuestion(request.ownerId!, questionId);
+      const { regions } = practiceSubmitSchema.parse(request.body ?? {});
+      return submitQuestion(request.ownerId!, questionId, regions);
     },
   );
 

@@ -1,4 +1,4 @@
-// Mounts the practice MCP server at /mcp (stateless Streamable HTTP, JSON responses). Like every route it is tailnet-only and behind the app-wide origin guard.
+// Mounts the practice MCP server at /mcp (stateless Streamable HTTP; JSON responses, or SSE when a request carries a progress token). Like every route it is tailnet-only and behind the app-wide origin guard.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { AuroraEnv } from "../env.js";
@@ -12,14 +12,34 @@ function rpcError(reply: FastifyReply, status: number, message: string) {
   });
 }
 
+/** True when any JSON-RPC message in the body asks for progress (params._meta.progressToken). */
+export function wantsProgress(body: unknown): boolean {
+  const messages: unknown[] = Array.isArray(body) ? body : [body];
+  return messages.some((message) => {
+    if (!message || typeof message !== "object") return false;
+    const params = (message as { params?: { _meta?: unknown } }).params;
+    const meta = params?._meta;
+    return (
+      typeof meta === "object" &&
+      meta !== null &&
+      (meta as { progressToken?: unknown }).progressToken !== undefined
+    );
+  });
+}
+
 export function registerPracticeMcpRoute(
   app: FastifyInstance,
   env: AuroraEnv,
 ): void {
   app.post("/mcp", async (request: FastifyRequest, reply: FastifyReply) => {
-    const server = buildPracticeMcpServer(env.AURORA_ORIGIN);
+    const server = buildPracticeMcpServer(
+      env.AURORA_ORIGIN,
+      env.AURORA_PRACTICE_WAIT_MAX_SECONDS,
+    );
+    // Plain JSON keeps simple clients working; a progress token switches this response to SSE
+    // so practice_wait can stream keepalive progress notifications during a long wait.
     const transport = new StreamableHTTPServerTransport({
-      enableJsonResponse: true,
+      enableJsonResponse: !wantsProgress(request.body),
     });
     reply.hijack();
     // Closing aborts in-flight tool calls, so a disconnected practice_wait stops waiting.

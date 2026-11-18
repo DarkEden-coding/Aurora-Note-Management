@@ -1,8 +1,12 @@
 // Owns practice SQL: session and question rows, their wire mapping, and the persisted practice event queue.
 import pg from "pg";
 import {
+  practiceCardRegionSchema,
+  practiceGradingSchema,
   practiceOptionsSchema,
   practiceSessionSchema,
+  type PracticeCardRegion,
+  type PracticeGrading,
   type PracticeOptions,
   type PracticeQuestionState,
   type PracticeSession,
@@ -19,6 +23,7 @@ export type SessionRow = {
   status: "active" | "complete";
   status_text: string | null;
   options: unknown;
+  grading: unknown;
   updated_at: Date;
 };
 
@@ -35,6 +40,7 @@ export type QuestionRow = {
   latest_points: string | null;
   topics: string[];
   prompt_object_id: string | null;
+  card_regions: unknown;
 };
 
 export type PracticeEventType = "submitted" | "next" | "retry";
@@ -48,15 +54,25 @@ export type EventRow = {
 };
 
 const SESSION_COLUMNS =
-  "id, owner_id, note_id, title, total_questions, status, status_text, options, updated_at";
+  "id, owner_id, note_id, title, total_questions, status, status_text, options, grading, updated_at";
 const QUESTION_COLUMNS =
-  "id, session_id, owner_id, idx, page_index, state, attempt, max_points, points, latest_points, topics, prompt_object_id";
+  "id, session_id, owner_id, idx, page_index, state, attempt, max_points, points, latest_points, topics, prompt_object_id, card_regions";
 
 const toNumber = (value: string | null): number | null =>
   value === null ? null : Number(value);
 
 export function sessionOptions(row: SessionRow): PracticeOptions {
   return practiceOptionsSchema.parse(row.options ?? {});
+}
+
+export function sessionGrading(row: SessionRow): PracticeGrading | null {
+  return row.grading ? practiceGradingSchema.parse(row.grading) : null;
+}
+
+/** Card-relative regions the browser measured on the latest Done press (empty for older clients). */
+export function questionRegions(row: QuestionRow): PracticeCardRegion[] {
+  const parsed = practiceCardRegionSchema.array().safeParse(row.card_regions);
+  return parsed.success ? parsed.data : [];
 }
 
 export function mapSession(
@@ -71,6 +87,7 @@ export function mapSession(
     status: row.status,
     statusText: row.status_text,
     options: sessionOptions(row),
+    grading: sessionGrading(row),
     questions: questions.map((q) => ({
       id: q.id,
       index: q.idx,
@@ -81,6 +98,7 @@ export function mapSession(
       points: toNumber(q.points),
       latestPoints: toNumber(q.latest_points),
       topics: q.topics,
+      promptObjectId: q.prompt_object_id,
     })),
     updatedAt: row.updated_at.toISOString(),
   });
@@ -94,17 +112,19 @@ export async function insertSession(
     title: string;
     totalQuestions: number;
     options: PracticeOptions;
+    grading: PracticeGrading | null;
   },
 ): Promise<SessionRow> {
   const result = await db.query<SessionRow>(
-    `INSERT INTO practice_sessions (owner_id, note_id, title, total_questions, options)
-     VALUES ($1, $2, $3, $4, $5) RETURNING ${SESSION_COLUMNS}`,
+    `INSERT INTO practice_sessions (owner_id, note_id, title, total_questions, options, grading)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${SESSION_COLUMNS}`,
     [
       ownerId,
       input.noteId,
       input.title,
       input.totalQuestions,
       JSON.stringify(input.options),
+      input.grading === null ? null : JSON.stringify(input.grading),
     ],
   );
   return result.rows[0]!;
@@ -152,7 +172,11 @@ export async function loadLatestActiveSession(
 export async function updateSession(
   db: Db,
   sessionId: string,
-  fields: { status?: "active" | "complete"; statusText?: string | null },
+  fields: {
+    status?: "active" | "complete";
+    statusText?: string | null;
+    grading?: PracticeGrading | null;
+  },
 ): Promise<void> {
   const assignments = ["updated_at = now()"];
   const params: unknown[] = [sessionId];
@@ -163,6 +187,12 @@ export async function updateSession(
   if (fields.statusText !== undefined) {
     params.push(fields.statusText);
     assignments.push(`status_text = $${params.length}`);
+  }
+  if (fields.grading !== undefined) {
+    params.push(
+      fields.grading === null ? null : JSON.stringify(fields.grading),
+    );
+    assignments.push(`grading = $${params.length}`);
   }
   await db.query(
     `UPDATE practice_sessions SET ${assignments.join(", ")} WHERE id = $1`,
@@ -233,6 +263,7 @@ export async function updateQuestion(
     attempt?: number;
     points?: number | null;
     latestPoints?: number | null;
+    cardRegions?: PracticeCardRegion[] | undefined;
   },
 ): Promise<void> {
   const columns: Array<[string, unknown]> = [
@@ -240,6 +271,12 @@ export async function updateQuestion(
     ["attempt", fields.attempt],
     ["points", fields.points],
     ["latest_points", fields.latestPoints],
+    [
+      "card_regions",
+      fields.cardRegions === undefined
+        ? undefined
+        : JSON.stringify(fields.cardRegions),
+    ],
   ];
   const assignments = ["updated_at = now()"];
   const params: unknown[] = [questionId];

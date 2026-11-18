@@ -96,6 +96,26 @@ svg {
   color: #9aa0aa;
 }
 
+/* Empty box the user writes their final answer in; Claude gets its region (and a crop) with the submission. */
+.final-answer {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 96px;
+  margin: 0.8em 0 0;
+  border: 2px dashed #5b6475;
+  border-radius: 10px;
+}
+
+.final-answer::before {
+  content: "Final answer";
+  position: absolute;
+  top: 4px;
+  left: 10px;
+  color: #9aa0aa;
+  font-size: 13px;
+  line-height: 1;
+}
+
 .card[data-variant="feedback"] {
   border-left: 4px solid rgba(255, 92, 92, 0.65);
 }

@@ -1,8 +1,10 @@
-// Practice HTTP surface for the browser: load a note's session, submit the open question, and choose Next/Retry. Responses are validated with the shared schemas.
+// Practice HTTP surface for the browser: load a note's session, submit the open question (with its measured card layout), and choose Next/Retry. Responses are validated with the shared schemas.
 import {
   practiceSessionSchema,
   type PracticeAction,
+  type PracticeCardRegion,
   type PracticeSession,
+  type PracticeSubmit,
 } from "@aurora/shared";
 import { ApiError, api, apiPost } from "../../lib/http.js";
 
@@ -22,11 +24,13 @@ export async function fetchPracticeSession(
 
 export async function submitPracticeQuestion(
   questionId: string,
+  regions?: PracticeCardRegion[],
 ): Promise<PracticeSession> {
+  const body: PracticeSubmit = regions ? { regions } : {};
   return practiceSessionSchema.parse(
     await apiPost<unknown>(
       `/api/practice/questions/${encodeURIComponent(questionId)}/submit`,
-      {},
+      body,
     ),
   );
 }

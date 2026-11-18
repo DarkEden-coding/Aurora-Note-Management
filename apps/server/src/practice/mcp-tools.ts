@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { practiceOptionsSchema } from "@aurora/shared";
+import { practiceGradingSchema, practiceOptionsSchema } from "@aurora/shared";
 import { resolveOwnerId } from "../account/owner.js";
 import { markSchema } from "./marks.js";
 import { CARD_WIDTH, PAGE_HEIGHT, PAGE_WIDTH } from "./page.js";
@@ -13,30 +13,43 @@ import {
   getSession,
   gradeQuestion,
   postQuestion,
+  previewGrade,
   renderSubmission,
+  setGrading,
   setStatus,
   startSession,
   waitForEvent,
 } from "./service.js";
+import { DEFAULT_IMAGE_OPTIONS, type PageImage } from "./submission.js";
 
-// MCP clients abort requests after 60 s by default, so each wait returns before that.
+// Many MCP clients abort a request after 60 s, so the default wait stays under that; clients
+// that allow long tool calls can ask for up to the server's configured maximum.
 const DEFAULT_WAIT_SECONDS = 50;
-const MAX_WAIT_SECONDS = 55;
+// With a progress token, practice_wait streams a progress notification this often as a keepalive.
+const KEEPALIVE_MS = 15_000;
 
-const HTML_RULES = `Card HTML: plain HTML + inline CSS only (no <script>, no event handlers, no external URLs; data: images are fine). Math: $...$ inline, $$...$$ display (also \\(...\\), \\[...\\]), rendered with KaTeX. Cards are ${CARD_WIDTH}px wide on a dark background (#23262d, text #e6e8ec, 18px/1.5 system-ui); use class "muted" for secondary text.`;
+const HTML_RULES = `Card HTML: plain HTML + inline CSS only (no <script>, no event handlers, no external URLs; data: images are fine). Math: $...$ inline, $$...$$ display (also \\(...\\), \\[...\\]), rendered with KaTeX. Cards are ${CARD_WIDTH}px wide on a dark background (#23262d, text #e6e8ec, 18px/1.5 system-ui); use class "muted" for secondary text. Labelled elements: give each multiple-choice option data-option="A" (B, C, ...) and any other part you want located data-region="name"; add <div class="final-answer"></div> (a dashed, empty box labelled "Final answer"; set a height with style if 96px is too small) for the user to write the final answer in. The submission returns each labelled element's page bounds in regions, draws them on the image, and adds a close-up image of the final-answer box. Include the box and options in the card height.`;
+
+const SUBMISSION_FIELDS = `Submission metadata (practice_wait "submitted", practice_get_submission, practice_grade dryRun), all page-relative: card = question card bounds; regions = [{ kind: "option" | "finalAnswer" | "region", label, x, y, width, height, text? }] measured in the user's browser on Done (empty for older app versions), also drawn as dashed blue labelled boxes on the image; ink = { bounds, clusters[] } of the user's writing; freeRegions = empty rectangles near the work, good spots for text marks or a feedback card; grading = the session's grading policy; image = { x, y, width, height, scale } the page area the first image shows; finalAnswerImage = the area of the second image (close-up of the final-answer box), when there is one.`;
+
+const IMAGE_OPTIONS_DOC = `image options: crop "page" (default, whole page) or "ink" (only the user's writing, card regions and this question's marks plus padding, snapped to the 50-unit grid; grid labels stay in page units); scale = pixels per page unit (default 1.5; 1 or 0.75 saves context).`;
 
 const INSTRUCTIONS = `Aurora guided practice: you run a handwritten practice session. Each question is a card on its own page of a practice note; the user writes the answer with a pen and presses Done; you receive an image of the page, grade it, and draw red marks on their work.
 
 Checklist:
 1. Decide where the note goes. If the user has not named a project (and optional folder), call practice_list_locations, ask the user where to put it (offer the existing places), and wait for the answer before starting. Then practice_start with that location and the options the user asked for, and tell the user where the note is.
 2. Write the question HTML. When layout matters, preview it with practice_html_template (+ html_preview at ${PAGE_WIDTH}px). Then practice_post_question with a height that fits the content.
-3. practice_wait until event "submitted" (on "timeout", just call it again).
-4. Look at the image and call practice_grade with points and marks.
+3. practice_wait until event "submitted" (on "timeout", just call it again). Waiting is cheap: if your MCP client allows long tool calls, pass timeoutSeconds up to the server maximum (see the tool) instead of re-calling every 50 s; send a progressToken to get keepalive progress notifications every 15 s.
+4. Look at the image and call practice_grade with points and marks. Apply the session's grading policy (returned as grading). To check placement first, call practice_grade with dryRun: true. If a mark lands badly, call practice_grade again: it replaces the question's marks until the user presses Next or Retry.
 5. practice_wait again: "next" -> post the next question (adapt difficulty to performance); "retry" -> wait for the next "submitted".
 6. After the last question's "next", practice_finish with a summary card.
 If the chat was interrupted, practice_get_session recovers the current state.
 
-Coordinates: every x/y you send or see is page-relative: origin at the page's top-left, page is ${PAGE_WIDTH} x ${PAGE_HEIGHT} units, y grows downward. The submission image is drawn at 1.5x with a faint grid every 50 units, labelled every 100 units; read positions off the grid labels, not image pixels. The question card sits at (32, 32), ${CARD_WIDTH} wide; the user's writing is below/around it.
+Coordinates: every x/y you send or see is page-relative: origin at the page's top-left, page is ${PAGE_WIDTH} x ${PAGE_HEIGHT} units, y grows downward. The submission image is drawn at 1.5x by default with a faint grid every 50 units, labelled every 100 units; read positions off the grid labels, not image pixels. The question card sits at (32, 32), ${CARD_WIDTH} wide, drawn as a grey box with its labelled elements outlined; the user's writing is below/around it (and may be on it, e.g. a circled option). Place marks with the returned ink bounds/clusters and freeRegions rather than guessing.
+
+${SUBMISSION_FIELDS}
+
+Context: over a long session, pass image { crop: "ink", scale: 1 } to practice_wait and practice_get_submission for smaller images.
 
 ${HTML_RULES}`;
 
@@ -63,22 +76,56 @@ const placedCardSchema = z
   })
   .describe(`Card placed in page-relative coordinates. ${HTML_RULES}`);
 
+const imageOptions = z
+  .object({
+    crop: z.enum(["page", "ink"]).default(DEFAULT_IMAGE_OPTIONS.crop),
+    scale: z.number().min(0.5).max(3).default(DEFAULT_IMAGE_OPTIONS.scale),
+    padding: z
+      .number()
+      .min(0)
+      .max(200)
+      .default(DEFAULT_IMAGE_OPTIONS.padding)
+      .describe('Page units around the content when crop is "ink"'),
+  })
+  .optional()
+  .describe(IMAGE_OPTIONS_DOC);
+
+const gradingPolicy = practiceGradingSchema.describe(
+  'Session grading policy returned with every submission: leniency "strict" | "standard" (default) | "lenient" (generous partial credit for correct method), and an optional free-text rubric (e.g. "full marks if the derivative is right even with arithmetic slips").',
+);
+
 function json(value: unknown): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
 
+function submissionContent(meta: object, images: PageImage[]): CallToolResult {
+  return {
+    content: [
+      { type: "text", text: JSON.stringify(meta, null, 2) },
+      ...images.map((image) => ({
+        type: "image" as const,
+        data: image.png.toString("base64"),
+        mimeType: "image/png",
+      })),
+    ],
+  };
+}
+
 const ownerId = resolveOwnerId;
 
-export function buildPracticeMcpServer(appUrl: string): McpServer {
+export function buildPracticeMcpServer(
+  appUrl: string,
+  maxWaitSeconds: number,
+): McpServer {
   const server = new McpServer(
-    { name: "aurora-practice", version: "1.0.0" },
+    { name: "aurora-practice", version: "1.1.0" },
     { instructions: INSTRUCTIONS },
   );
 
   server.registerTool(
     "practice_html_template",
     {
-      description: `Returns a standalone HTML document (Aurora's card CSS + KaTeX from CDN) for previewing a card at the page width before sending it. Pass html to embed it, or omit it to get the wrapper with a placeholder comment. ${HTML_RULES}`,
+      description: `Returns a standalone HTML document (Aurora's card CSS + KaTeX from CDN) for previewing a card at the page width before sending it. Pass html to embed it, or omit it to get the wrapper with a placeholder comment. The .final-answer class is included. Example multiple-choice card: <p>Which is $f'(x)$ for $f(x)=x^3$?</p><p data-option="A">A. $3x^2$</p><p data-option="B">B. $x^2$</p><div class="final-answer" style="height:80px"></div>. ${HTML_RULES}`,
       inputSchema: {
         html: z
           .string()
@@ -106,7 +153,7 @@ export function buildPracticeMcpServer(appUrl: string): McpServer {
     "practice_start",
     {
       description:
-        "Starts a session: creates a new paged note titled `title` in the chosen project and folder (missing ones are created; names match case-insensitively). Ask the user for the location first if they have not given one. Returns { sessionId, noteId, noteTitle, appUrl, session }. options toggles feedback (inkMarks, card, solution, retry) and the progress bar below the canvas (bar, runningScore, mastery, status); omitted fields use defaults.",
+        "Starts a session: creates a new paged note titled `title` in the chosen project and folder (missing ones are created; names match case-insensitively). Ask the user for the location first if they have not given one. Returns { sessionId, noteId, noteTitle, appUrl, session }. options toggles feedback (inkMarks, card, solution, retry) and the progress bar below the canvas (bar, runningScore, mastery, status); omitted fields use defaults. grading (optional) sets the session grading policy; it is returned by practice_get_session and with every submission, and practice_set_grading changes it later.",
       inputSchema: {
         title: z.string().min(1).max(200).describe("Session and note title"),
         totalQuestions: z.number().int().min(1).max(50),
@@ -123,13 +170,15 @@ export function buildPracticeMcpServer(appUrl: string): McpServer {
             'Folder path inside the project, e.g. "Calculus/Derivatives"',
           ),
         options: practiceOptionsSchema.optional(),
+        grading: gradingPolicy.optional(),
       },
     },
-    async ({ title, totalQuestions, project, folder, options }) => {
+    async ({ title, totalQuestions, project, folder, options, grading }) => {
       const session = await startSession(await ownerId(), {
         title,
         totalQuestions,
         options: options ?? practiceOptionsSchema.parse({}),
+        grading: grading ?? null,
         location: { project, folder },
       });
       return json({
@@ -163,66 +212,74 @@ export function buildPracticeMcpServer(appUrl: string): McpServer {
   server.registerTool(
     "practice_wait",
     {
-      description: `Blocks until the user acts, then consumes that event. "submitted": text metadata { event, questionId, index, attempt, maxPoints, topics, pageSize } plus the page PNG; grade it with practice_grade. "next": the user moved on (post the next question or finish). "retry": the user is re-answering; wait for the next "submitted". { event: "timeout" } means nothing happened yet; call again.`,
+      description: `Blocks until the user acts, then consumes that event. "submitted": text metadata { event, questionId, index, attempt, maxPoints, topics, pageSize, grading, card, regions, ink, freeRegions, image, finalAnswerImage? } plus the page PNG (and a final-answer close-up when the card has a .final-answer box); grade it with practice_grade. "next": the user moved on (post the next question or finish). "retry": the user is re-answering; wait for the next "submitted". { event: "timeout" } means nothing happened yet; call again. timeoutSeconds defaults to ${DEFAULT_WAIT_SECONDS} (safe for clients that abort after 60 s) and may be up to ${maxWaitSeconds} when your client allows long tool calls. If the request carries a progressToken, the server answers as an SSE stream and sends a progress notification every ${KEEPALIVE_MS / 1000} s while waiting, so clients that reset their timeout on progress can wait the full time. ${IMAGE_OPTIONS_DOC}`,
       inputSchema: {
         sessionId,
         timeoutSeconds: z
           .number()
           .int()
           .min(1)
-          .max(MAX_WAIT_SECONDS)
+          .max(maxWaitSeconds)
           .default(DEFAULT_WAIT_SECONDS),
+        image: imageOptions,
       },
     },
-    async ({ sessionId, timeoutSeconds }, extra) => {
-      const result = await waitForEvent(
-        await ownerId(),
-        sessionId,
-        timeoutSeconds * 1000,
-        extra.signal,
-      );
-      if (result.event !== "submitted") return json(result);
-      const { png, ...meta } = result;
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(meta, null, 2) },
-          {
-            type: "image",
-            data: png.toString("base64"),
-            mimeType: "image/png",
-          },
-        ],
-      };
+    async ({ sessionId, timeoutSeconds, image }, extra) => {
+      const progressToken = extra._meta?.progressToken;
+      const started = Date.now();
+      const keepalive =
+        progressToken === undefined
+          ? null
+          : setInterval(() => {
+              extra
+                .sendNotification({
+                  method: "notifications/progress",
+                  params: {
+                    progressToken,
+                    progress: Math.round((Date.now() - started) / 1000),
+                    total: timeoutSeconds,
+                    message: "Waiting for the user",
+                  },
+                })
+                .catch(() => undefined);
+            }, KEEPALIVE_MS);
+      try {
+        const result = await waitForEvent(
+          await ownerId(),
+          sessionId,
+          timeoutSeconds * 1000,
+          image ?? DEFAULT_IMAGE_OPTIONS,
+          extra.signal,
+        );
+        if (result.event !== "submitted") return json(result);
+        const { images, ...meta } = result;
+        return submissionContent(meta, images);
+      } finally {
+        if (keepalive) clearInterval(keepalive);
+      }
     },
   );
 
   server.registerTool(
     "practice_get_submission",
     {
-      description:
-        "Re-renders a question's page as a PNG (same format as practice_wait) without consuming any event.",
-      inputSchema: { questionId },
+      description: `Re-renders a question's page (same metadata and images as practice_wait "submitted") without consuming any event; after grading it shows your marks. ${IMAGE_OPTIONS_DOC}`,
+      inputSchema: { questionId, image: imageOptions },
     },
-    async ({ questionId }) => {
-      const { meta, png } = await renderSubmission(await ownerId(), questionId);
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(meta, null, 2) },
-          {
-            type: "image",
-            data: png.toString("base64"),
-            mimeType: "image/png",
-          },
-        ],
-      };
+    async ({ questionId, image }) => {
+      const { meta, images } = await renderSubmission(
+        await ownerId(),
+        questionId,
+        image ?? DEFAULT_IMAGE_OPTIONS,
+      );
+      return submissionContent(meta, images);
     },
   );
 
   server.registerTool(
     "practice_grade",
     {
-      description:
-        "Grades a submitted question. Replaces any earlier attempt's marks/cards on that page with the new ones and sets the question to graded. points counts toward the score only on attempt 1. All coordinates are page-relative (816x1056). Marks are drawn in red: circle/box {x,y,width,height} (top-left + size); underline/strike/arrow {x1,y1,x2,y2}; check/cross {x,y,size?=28} centred on (x,y); path {points:[[x,y],...]}; text {x,y,text,width?=220} (top-left). feedback/solution cards only when enabled in the session options. statusText sets the header status line (cleared when omitted).",
+      description: `Grades a submitted question, or re-grades one that is already graded (allowed until the user presses Next or Retry): replaces that question's earlier marks/cards on the page with the new ones and sets it to graded. points counts toward the score only on attempt 1 (a re-grade of attempt 1 corrects it). dryRun: true saves nothing and returns the page image with the proposed marks (same metadata as a submission) so you can check placement first. All coordinates are page-relative (816x1056); use the submission's ink and freeRegions to avoid covering the user's writing. Marks are drawn in red: circle/box {x,y,width,height} (top-left + size); underline/strike/arrow {x1,y1,x2,y2}; check/cross {x,y,size?=28} centred on (x,y); path {points:[[x,y],...]}; text {x,y,text,width?=220} (top-left). feedback/solution cards only when enabled in the session options. statusText sets the header status line (cleared when omitted). Follow the session's grading policy (practice_get_session or the submission's grading). ${IMAGE_OPTIONS_DOC} (dryRun only)`,
       inputSchema: {
         questionId,
         points: z.number().min(0).max(1000),
@@ -232,9 +289,35 @@ export function buildPracticeMcpServer(appUrl: string): McpServer {
           .optional()
           .describe("Worked solution card; starts collapsed for the user"),
         statusText: z.string().max(200).optional(),
+        dryRun: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Preview only: return the page image with these marks; nothing is saved",
+          ),
+        image: imageOptions,
       },
     },
-    async (input) => json(await gradeQuestion(await ownerId(), input)),
+    async ({ dryRun, image, ...input }) => {
+      if (!dryRun) return json(await gradeQuestion(await ownerId(), input));
+      const { meta, images } = await previewGrade(
+        await ownerId(),
+        input,
+        image ?? DEFAULT_IMAGE_OPTIONS,
+      );
+      return submissionContent({ dryRun: true, ...meta }, images);
+    },
+  );
+
+  server.registerTool(
+    "practice_set_grading",
+    {
+      description:
+        "Sets (or clears with null) the session grading policy, e.g. when the user asks for more lenient marking. Returned by practice_get_session and with every later submission. To apply it to a question that is still graded, re-grade it with practice_grade.",
+      inputSchema: { sessionId, grading: gradingPolicy.nullable() },
+    },
+    async ({ sessionId, grading }) =>
+      json(await setGrading(await ownerId(), sessionId, grading)),
   );
 
   server.registerTool(
@@ -265,7 +348,7 @@ export function buildPracticeMcpServer(appUrl: string): McpServer {
     "practice_get_session",
     {
       description:
-        "Returns a session's state (questions with state, attempt, points). Without sessionId, returns the most recently active session. Use it to resume after an interrupted chat.",
+        "Returns a session's state (questions with state, attempt, points; options; grading policy). Without sessionId, returns the most recently active session. Use it to resume after an interrupted chat.",
       inputSchema: { sessionId: sessionId.optional() },
     },
     async ({ sessionId }) => json(await getSession(await ownerId(), sessionId)),

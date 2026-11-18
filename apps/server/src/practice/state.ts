@@ -108,12 +108,19 @@ export function nextQuestionIndex(
   return questions.length;
 }
 
-/** Score columns after grading: `points` is fixed by the first attempt, `latestPoints` follows every attempt. */
+/**
+ * Score columns after grading: `points` is fixed by the first attempt, `latestPoints` follows every attempt.
+ * A graded question can be re-graded (marks replaced, score corrected) until the user presses Next or Retry.
+ */
 export function planGrade(
   question: QuestionFacts,
   points: number,
 ): { points: number | null; latestPoints: number } {
-  requireState(question, "submitted");
+  if (question.state !== "submitted" && question.state !== "graded") {
+    throw conflict(
+      `Question ${question.index + 1} is ${question.state}; grading needs submitted (or graded, to re-grade before the user moves on)`,
+    );
+  }
   if (points > question.maxPoints) {
     throw invalid(
       `points (${points}) exceeds maxPoints (${question.maxPoints}) for this question`,

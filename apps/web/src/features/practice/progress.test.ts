@@ -23,6 +23,7 @@ function question(
     points: 4,
     latestPoints: 4,
     topics: [],
+    promptObjectId: null,
     ...patch,
   };
 }
@@ -42,6 +43,7 @@ function session(
       feedback: { inkMarks: true, card: false, solution: false, retry: true },
       progress: { bar: true, runningScore: true, mastery: true, status: true },
     },
+    grading: null,
     questions,
     updatedAt: "2026-11-17T10:00:00.000Z",
     ...patch,

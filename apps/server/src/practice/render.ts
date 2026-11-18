@@ -1,10 +1,11 @@
 // Renders one practice page (user ink, shapes, practice cards, marks, coordinate grid) to SVG and rasterizes it to PNG for Claude.
 import { renderAsync } from "@resvg/resvg-js";
-import type { CanvasObject } from "@aurora/shared";
+import type { Bounds, CanvasObject, PracticeCardRegion } from "@aurora/shared";
 import { MARK_COLOR, practiceTagOf } from "./marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect, pageFrame } from "./page.js";
 
-const RENDER_SCALE = 1.5;
+export const RENDER_SCALE = 1.5;
+const REGION_COLOR = "#2f6fd6";
 const FADED_OPACITY = 0.35;
 // resvg maps the generic "sans-serif" to Arial, which the Linux image lacks; name DejaVu (installed there) first.
 const FONT = `font-family="DejaVu Sans, Arial, sans-serif"`;
@@ -13,6 +14,14 @@ export type RenderTarget = {
   pageIndex: number;
   // Marks from attempts before this one are drawn faded (a retry in progress).
   attempt: number;
+  // Card elements the browser measured, already moved to page coordinates; drawn on the grey question card.
+  regions?: PracticeCardRegion[];
+};
+
+export type RenderView = {
+  // Page-relative area to draw; the whole page when omitted.
+  view?: Bounds;
+  scale?: number;
 };
 
 const r = (n: number): number => Math.round(n * 10) / 10;
@@ -145,12 +154,46 @@ function labelledBox(
   label: string,
   fill: string,
   stroke: string,
+  corner = false,
 ): string {
   const b = object.bounds;
+  const text = corner
+    ? `<text x="${r(b.x + b.width - 8)}" y="${r(b.y + 16)}" ${FONT} font-size="12" fill="#6b7280" text-anchor="end">${escapeXml(label)}</text>`
+    : `<text x="${r(b.x + b.width / 2)}" y="${r(b.y + Math.min(b.height / 2, 40) + 7)}" ${FONT} font-size="20" fill="#6b7280" text-anchor="middle">${escapeXml(label)}</text>`;
   return (
     `<rect x="${r(b.x)}" y="${r(b.y)}" width="${r(b.width)}" height="${r(b.height)}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="2"/>` +
-    `<text x="${r(b.x + b.width / 2)}" y="${r(b.y + Math.min(b.height / 2, 40) + 7)}" ${FONT} font-size="20" fill="#6b7280" text-anchor="middle">${escapeXml(label)}</text>`
+    text
   );
+}
+
+// Each measured card element: a dashed blue outline, its label, and its text when it fits.
+function regionsSvg(regions: PracticeCardRegion[], frameY: number): string {
+  return regions
+    .map((region) => {
+      const x = region.x;
+      const y = region.y + frameY;
+      const name =
+        region.kind === "option"
+          ? region.label
+          : region.kind === "finalAnswer"
+            ? "final answer"
+            : region.label;
+      const chars = Math.max(0, Math.floor((region.width - 34) / 6.5));
+      const text =
+        region.text && chars > 3 && region.kind !== "finalAnswer"
+          ? region.text.length > chars
+            ? `${region.text.slice(0, chars - 1)}…`
+            : region.text
+          : "";
+      return (
+        `<rect x="${r(x)}" y="${r(y)}" width="${r(region.width)}" height="${r(region.height)}" rx="4" fill="none" stroke="${REGION_COLOR}" stroke-width="1.5" stroke-dasharray="5 3"/>` +
+        `<text x="${r(x + 4)}" y="${r(y + 14)}" ${FONT} font-size="13" font-weight="bold" fill="${REGION_COLOR}">${escapeXml(name)}</text>` +
+        (text
+          ? `<text x="${r(x + 4 + name.length * 9 + 6)}" y="${r(y + 14)}" ${FONT} font-size="11" fill="#4b5563">${escapeXml(text)}</text>`
+          : "")
+      );
+    })
+    .join("");
 }
 
 // Labels are stored as escaped text with <br>; recover the plain text and wrap it roughly.
@@ -208,7 +251,13 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
         variant === "label"
           ? labelSvg(object, MARK_COLOR)
           : variant === "prompt"
-            ? labelledBox(object, "Question card", "#e5e7eb", "#9ca3af")
+            ? labelledBox(
+                object,
+                "Question card",
+                "#e5e7eb",
+                "#9ca3af",
+                (target.regions?.length ?? 0) > 0,
+              )
             : labelledBox(
                 object,
                 CARD_LABELS[variant] ?? "Card",
@@ -223,54 +272,78 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
   return faded ? `<g opacity="${FADED_OPACITY}">${svg}</g>` : svg;
 }
 
-function gridSvg(): string {
+// Labels sit on the view's top and left edges, so a cropped image still reads in page units;
+// they are drawn last, with a white halo, so cards and ink never hide them.
+function gridSvg(view: Bounds): { lines: string; labels: string } {
   const minor: string[] = [];
   const major: string[] = [];
   const labels: string[] = [];
+  const right = view.x + view.width;
+  const bottom = view.y + view.height;
   for (let x = 50; x < PAGE_WIDTH; x += 50) {
     (x % 100 === 0 ? major : minor).push(`M${x} 0V${PAGE_HEIGHT}`);
-    if (x % 100 === 0 && x < PAGE_WIDTH - 24) {
-      labels.push(`<text x="${x + 2}" y="10">${x}</text>`);
+    if (x % 100 === 0 && x > view.x && x < right - 24) {
+      labels.push(`<text x="${x + 2}" y="${view.y + 10}">${x}</text>`);
     }
   }
   for (let y = 50; y < PAGE_HEIGHT; y += 50) {
     (y % 100 === 0 ? major : minor).push(`M0 ${y}H${PAGE_WIDTH}`);
-    if (y % 100 === 0) {
-      labels.push(`<text x="2" y="${y - 2}">${y}</text>`);
+    if (y % 100 === 0 && y > view.y + 12 && y <= bottom) {
+      labels.push(`<text x="${view.x + 2}" y="${y - 2}">${y}</text>`);
     }
   }
-  return (
-    `<path d="${minor.join("")}" stroke="#f0f1f3" stroke-width="1"/>` +
-    `<path d="${major.join("")}" stroke="#dfe2e6" stroke-width="1"/>` +
-    `<g ${FONT} font-size="10" fill="#a0a6b0">${labels.join("")}</g>`
-  );
+  return {
+    lines:
+      `<path d="${minor.join("")}" stroke="#f0f1f3" stroke-width="1"/>` +
+      `<path d="${major.join("")}" stroke="#dfe2e6" stroke-width="1"/>`,
+    labels: `<g ${FONT} font-size="10" fill="#8a909a" stroke="#ffffff" stroke-width="3" paint-order="stroke">${labels.join("")}</g>`,
+  };
 }
 
-/** SVG of one page in page-relative units; only objects intersecting the page are drawn. */
+const FULL_PAGE: Bounds = {
+  x: 0,
+  y: 0,
+  width: PAGE_WIDTH,
+  height: PAGE_HEIGHT,
+};
+
+/**
+ * SVG of one page (or the `view` part of it) in page-relative units; only objects intersecting
+ * the page are drawn. Measured card regions go above the question card and below the user's ink.
+ */
 export function buildPageSvg(
   objects: CanvasObject[],
   target: RenderTarget,
+  view: Bounds = FULL_PAGE,
 ): string {
   const frame = pageFrame(target.pageIndex);
   const onPage = objects
     .filter((object) => boundsIntersect(object.bounds, frame))
     .sort((a, b) => a.zIndex - b.zIndex);
+  // The opaque question card goes first so ink written on it (a circled option) stays visible.
+  const prompts = onPage.filter((o) => practiceTagOf(o)?.role === "prompt");
+  const rest = onPage.filter((o) => !prompts.includes(o));
+  const draw = (list: CanvasObject[]): string =>
+    list.map((o) => objectSvg(o, target)).join("");
+  const grid = gridSvg(view);
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_WIDTH}" height="${PAGE_HEIGHT}" viewBox="0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${r(view.width)}" height="${r(view.height)}" viewBox="${r(view.x)} ${r(view.y)} ${r(view.width)} ${r(view.height)}">` +
     `<rect width="${PAGE_WIDTH}" height="${PAGE_HEIGHT}" fill="#ffffff"/>` +
-    gridSvg() +
-    `<g transform="translate(0 ${-frame.y})">${onPage.map((o) => objectSvg(o, target)).join("")}</g>` +
+    grid.lines +
+    `<g transform="translate(0 ${-frame.y})">${draw(prompts)}${regionsSvg(target.regions ?? [], frame.y)}${draw(rest)}</g>` +
+    grid.labels +
     `</svg>`
   );
 }
 
-/** Rasterizes the page at 1.5x. Missing system fonts only drop text; boxes and ink still render. */
+/** Rasterizes the page (default 1.5x). Missing system fonts only drop text; boxes and ink still render. */
 export async function renderPagePng(
   objects: CanvasObject[],
   target: RenderTarget,
+  { view, scale = RENDER_SCALE }: RenderView = {},
 ): Promise<Buffer> {
-  const image = await renderAsync(buildPageSvg(objects, target), {
-    fitTo: { mode: "zoom", value: RENDER_SCALE },
+  const image = await renderAsync(buildPageSvg(objects, target, view), {
+    fitTo: { mode: "zoom", value: scale },
     // resvg's own system scan misses Debian's font folder, so name it (absent elsewhere, then ignored).
     font: { loadSystemFonts: true, fontDirs: ["/usr/share/fonts"] },
     logLevel: "off",

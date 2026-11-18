@@ -35,8 +35,14 @@ created_at, updated_at)`; `state` is one of `awaiting_work`, `submitted`,
   `practice_wait` drains in order. Persisted so a server restart or a dropped
   MCP call never loses a Done press.
 
+Migration `010_practice_grading_layout.sql` adds `practice_sessions.grading
+jsonb` (the session grading policy `{ leniency, rubric? }`, null when unset) and
+`practice_questions.card_regions jsonb` (the card layout the browser measured on
+the latest Done press).
+
 Shared wire types live in `packages/shared/src/practice.ts`
-(`PracticeSession`, `PracticeQuestion`, `PracticeOptions`, `practiceActionSchema`).
+(`PracticeSession`, `PracticeQuestion`, `PracticeOptions`, `PracticeGrading`,
+`practiceSubmitSchema`, `practiceActionSchema`).
 
 ## Page geometry
 
@@ -81,9 +87,13 @@ Every session/question change broadcasts `practice-changed { noteId, sessionId }
 ## Browser HTTP routes
 
 - `GET /api/practice/notes/:noteId` → `PracticeSession` or 404.
-- `POST /api/practice/questions/:questionId/submit` → requires
-  `awaiting_work`; sets `submitted`, status text "Grading…", queues a
-  `submitted` event. Returns `PracticeSession`.
+- `POST /api/practice/questions/:questionId/submit` body `{ regions? }` →
+  requires `awaiting_work`; sets `submitted`, status text "Grading…", queues a
+  `submitted` event, and stores `regions` when sent. Returns `PracticeSession`.
+  `regions` are the question card's labelled elements (`[data-option]`,
+  `[data-region]`, `.final-answer`) measured in the browser
+  (`apps/web/src/features/practice/cardLayout.ts`) in card-relative units, with
+  KaTeX turned back into `$TeX$` text. Older clients send `{}`.
 - `POST /api/practice/questions/:questionId/action` body `{ action }` →
   requires `graded`. `next` → `closed`, status "Writing the next question…"
   (or "Writing your summary…" after the last question). `retry` (only when
@@ -95,18 +105,23 @@ server renders the strokes the user sees.
 
 ## MCP tools
 
-| Tool                      | Purpose                                                                                                                                                                                                                                                                                                             |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `practice_html_template`  | Returns the full HTML wrapper (base CSS + KaTeX from CDN) so Claude can preview a card with T3's `html_preview` at 816 px wide before sending it.                                                                                                                                                                   |
-| `practice_list_locations` | `{}` → the user's projects with their folder paths, to offer when asking where the note goes.                                                                                                                                                                                                                       |
-| `practice_start`          | `{ title, totalQuestions, project, folder?, options? }` → finds or creates the project and folder path (case-insensitive), then a paged note and the session. Returns `{ sessionId, noteId, appUrl }`.                                                                                                              |
-| `practice_post_question`  | `{ sessionId, html, height, maxPoints, topics[] }` → places the prompt card at page `(32, 32)`, width 752. Allowed when no question is open.                                                                                                                                                                        |
-| `practice_wait`           | `{ sessionId, timeoutSeconds? = 50, max 55 }` (MCP clients abort requests after 60 s) → blocks until the next queued event, then consumes it. `submitted` returns text metadata plus the page PNG (MCP image content). `next`/`retry` return text. Returns `{ event: "timeout" }` when nothing happens; call again. |
-| `practice_get_submission` | `{ questionId }` → re-renders the page PNG without consuming events.                                                                                                                                                                                                                                                |
-| `practice_grade`          | `{ questionId, points, marks[], feedback?, solution?, statusText? }` → requires `submitted`. Deletes earlier attempts' marks/labels/feedback/solution on that page, adds the new ones, records score (`points` only on attempt 1), sets `graded`. `feedback`/`solution` are `{ html, x, y, width, height }`.        |
-| `practice_set_status`     | `{ sessionId, text \| null }` → status line in the practice bar.                                                                                                                                                                                                                                                    |
-| `practice_finish`         | `{ sessionId, summaryHtml, height }` → summary card on the page after the last question; session `complete`.                                                                                                                                                                                                        |
-| `practice_get_session`    | `{ sessionId? }` → state of the given (or most recent active) session, for resuming after an interrupted chat.                                                                                                                                                                                                      |
+| Tool                      | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `practice_html_template`  | Returns the full HTML wrapper (base CSS incl. `.final-answer`, KaTeX from CDN) so Claude can preview a card with T3's `html_preview` at 816 px wide before sending it.                                                                                                                                                                                                                                                                     |
+| `practice_list_locations` | `{}` → the user's projects with their folder paths, to offer when asking where the note goes.                                                                                                                                                                                                                                                                                                                                              |
+| `practice_start`          | `{ title, totalQuestions, project, folder?, options?, grading? }` → finds or creates the project and folder path (case-insensitive), then a paged note and the session. `grading = { leniency: strict \| standard \| lenient, rubric? }`. Returns `{ sessionId, noteId, appUrl }`.                                                                                                                                                         |
+| `practice_post_question`  | `{ sessionId, html, height, maxPoints, topics[] }` → places the prompt card at page `(32, 32)`, width 752. Allowed when no question is open.                                                                                                                                                                                                                                                                                               |
+| `practice_wait`           | `{ sessionId, timeoutSeconds? = 50 (max AURORA_PRACTICE_WAIT_MAX_SECONDS, default 900), image? }` → blocks until the next queued event, then consumes it. `submitted` returns the submission metadata plus the page PNG (and a final-answer close-up). `next`/`retry` return text. Returns `{ event: "timeout" }` when nothing happens. A request with `_meta.progressToken` gets an SSE response with a progress notification every 15 s. |
+| `practice_get_submission` | `{ questionId, image? }` → re-renders the page (same metadata and images) without consuming events.                                                                                                                                                                                                                                                                                                                                        |
+| `practice_grade`          | `{ questionId, points, marks[], feedback?, solution?, statusText?, dryRun?, image? }` → requires `submitted`, or `graded` to re-grade before the user presses Next/Retry. Deletes the question's earlier marks/labels/feedback/solution on that page, adds the new ones, records score (`points` only on attempt 1), sets `graded`. `dryRun: true` saves nothing and returns the page image with the proposed marks.                       |
+| `practice_set_grading`    | `{ sessionId, grading \| null }` → changes the session grading policy.                                                                                                                                                                                                                                                                                                                                                                     |
+| `practice_set_status`     | `{ sessionId, text \| null }` → status line in the practice bar.                                                                                                                                                                                                                                                                                                                                                                           |
+| `practice_finish`         | `{ sessionId, summaryHtml, height }` → summary card on the page after the last question; session `complete`.                                                                                                                                                                                                                                                                                                                               |
+| `practice_get_session`    | `{ sessionId? }` → state of the given (or most recent active) session, including `grading`, for resuming after an interrupted chat.                                                                                                                                                                                                                                                                                                        |
+
+`image` options: `crop: "page" | "ink"` (ink = the user's writing, card
+regions and this question's marks plus `padding`, snapped to the 50-unit grid)
+and `scale` (pixels per page unit, default 1.5).
 
 ### Marks
 
@@ -128,15 +143,25 @@ marks stay visible on top of an opaque card. The runtime Docker image installs
 
 ## Submission image
 
-`apps/server/src/practice/render.ts` builds an SVG of one page and rasterizes
-it with `@resvg/resvg-js` at 1.5×:
+`apps/server/src/practice/render.ts` builds an SVG of one page (or a cropped
+part of it) and rasterizes it with `@resvg/resvg-js` (1.5× by default):
 
 - white page, user strokes/shapes in dark ink (light ink colors are darkened
   so they stay readable on white)
-- prompt card drawn as a light grey box labelled "Question card"
+- prompt card drawn as a light grey box labelled "Question card", under the
+  user's ink so writing on the card (a circled option) stays visible
+- measured card regions as dashed blue boxes with their label (`A`, `B`,
+  `final answer`, …) and text
 - earlier attempts' marks in faded red (only during a retry)
 - a faint coordinate grid every 50 units with labels every 100, in page units,
-  so Claude can place marks precisely
+  on the top and left edges of whatever area the image shows
+
+`apps/server/src/practice/submission.ts` and `geometry.ts` add the metadata,
+all page-relative: `card`, `regions`, `ink { bounds, clusters }` (clusters
+merge strokes within 24 units), `freeRegions` (empty rectangles at least
+128 × 48, preferring large ones near the ink), `grading`, `image` (area and
+scale of the first image) and `finalAnswerImage` (area of the 2× close-up of
+the first `.final-answer` box, sent as a second image).
 
 ## Practice bar (web)
 
@@ -161,8 +186,11 @@ When a new question appears, the canvas scrolls to its page.
    `practice_start` with that project/folder and the options they asked for.
 2. Draft the question HTML, preview it with `html_preview` +
    `practice_html_template` when layout matters, then `practice_post_question`.
-3. `practice_wait` until `submitted` (re-call on `timeout`).
-4. Read the image, `practice_grade` with marks in page coordinates.
+3. `practice_wait` until `submitted` (re-call on `timeout`; use a long
+   `timeoutSeconds` when the client allows it).
+4. Read the image, `practice_grade` with marks in page coordinates, placed
+   with `ink` and `freeRegions` and following `grading`. Use `dryRun` to
+   preview; call it again to fix marks before the user moves on.
 5. `practice_wait` for `next` (post the next question, adapting difficulty)
    or `retry` (wait for the next `submitted`).
 6. After the last question, `practice_finish` with a summary.
