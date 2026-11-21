@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 export default defineConfig({
   publicDir: false,
   build: {
-    outDir: "../android/app/src/main/assets/render/build",
+    outDir: "../android/app/src/main/assets/render/lib",
     emptyOutDir: true,
     lib: {
       entry: "src/native/renderObject.ts",
