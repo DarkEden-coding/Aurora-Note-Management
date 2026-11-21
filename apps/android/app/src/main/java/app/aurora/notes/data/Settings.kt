@@ -49,6 +49,19 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("lockX", false)
         set(value) = prefs.edit().putBoolean("lockX", value).apply()
 
+    /** The highlighter's color, width and palette, kept on this device like the web's localStorage copy. */
+    var highlighter: HighlighterStyle
+        get() {
+            val color = prefs.getString("highlighter.color", null) ?: return HighlighterStyle()
+            val palette = prefs.getString("highlighter.palette", null)?.split(',')?.filter { it.isNotBlank() }
+            return HighlighterStyle(color, prefs.getFloat("highlighter.width", 14f).toDouble(), palette?.ifEmpty { null } ?: HIGHLIGHTER_PALETTE)
+        }
+        set(value) = prefs.edit()
+            .putString("highlighter.color", value.color)
+            .putFloat("highlighter.width", value.width.toFloat())
+            .putString("highlighter.palette", value.palette.joinToString(","))
+            .apply()
+
     fun pageCount(noteId: String): Int = prefs.getInt("pages.$noteId", 1)
 
     fun savePageCount(noteId: String, count: Int) = prefs.edit().putInt("pages.$noteId", count).apply()
@@ -57,6 +70,10 @@ class Settings(context: Context) {
         const val DEFAULT_SERVER = "https://power-server.tail14d560.ts.net:8443"
     }
 }
+
+val HIGHLIGHTER_PALETTE = listOf("#facc15", "#4ade80", "#38bdf8", "#f472b6", "#fb923c", "#a78bfa")
+
+data class HighlighterStyle(val color: String = "#facc15", val width: Double = 14.0, val palette: List<String> = HIGHLIGHTER_PALETTE)
 
 /** Canvas position: world coordinate at the view's top-left and the zoom factor. */
 data class Camera(val x: Double, val y: Double, val zoom: Double)

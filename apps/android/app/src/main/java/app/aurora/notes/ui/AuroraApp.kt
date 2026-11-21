@@ -5,6 +5,7 @@ package app.aurora.notes.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,6 +28,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -70,6 +73,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.aurora.notes.canvas.CanvasView
+import app.aurora.notes.canvas.DrawingStyle
+import app.aurora.notes.canvas.drawingStyle
 import app.aurora.notes.canvas.Tool
 import app.aurora.notes.data.Background
 import app.aurora.notes.data.LibraryFolder
@@ -92,6 +97,7 @@ fun AuroraApp(state: AppState) {
         label = "sidebar",
     )
     var settingsOpen by remember { mutableStateOf(false) }
+    var calculatorOpen by remember { mutableStateOf(false) }
     val modals = remember { mutableStateOf(0) }
 
     androidx.compose.runtime.CompositionLocalProvider(LocalModalCount provides modals) {
@@ -109,10 +115,14 @@ fun AuroraApp(state: AppState) {
                 onReset = { sidebarWidth.value = 280f; state.settings.sidebarWidth = 280f },
             )
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(shellGap)) {
-                TopBar(state, onSettings = { settingsOpen = true })
+                TopBar(state, onSettings = { settingsOpen = true }, onCalculator = { calculatorOpen = !calculatorOpen })
                 CanvasArea(state, Modifier.weight(1f).fillMaxWidth())
             }
         }
+        if (calculatorOpen) CalculatorPopover(
+            onClose = { calculatorOpen = false },
+            Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing).padding(top = 16.dp + 60.dp + 8.dp, end = 16.dp + 56.dp),
+        )
     }
     if (settingsOpen) SettingsDialog(state) { settingsOpen = false }
     }
@@ -181,6 +191,8 @@ private fun Sidebar(
     }
     var dialog by remember { mutableStateOf<LibraryDialogKind?>(null) }
     var overlay by remember { mutableStateOf<String?>(null) }
+    val menu = remember { mutableStateOf<MenuTarget?>(null) }
+    val rows = TreeRows(state, menu) { projectId, folderId -> dialog = LibraryDialogKind.Note(projectId, folderId) }
     val tree = state.library
     val notes = tree.notes.filter { !it.trashed && !it.archived }
 
@@ -219,28 +231,30 @@ private fun Sidebar(
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (favorites.isNotEmpty()) {
                 item { SectionTitle("Favorites", Lucide.Heart) }
-                favorites.forEach { note -> item("fav-${note.id}") { NoteItem(state, note) } }
+                favorites.forEach { note -> item("fav-${note.id}") { NoteItem(rows, note) } }
             }
             item { SectionTitle("Projects") }
             for (project in tree.projects.sortedBy { it.order }) {
                 val open = expanded[project.id] ?: false
                 item(project.id) {
-                    TreeItem(selected = false, onClick = { toggleOpen(project.id) }, actions = {
-                        IconButton(Lucide.FolderPlus, 15) { dialog = LibraryDialogKind.Folder(project.id) }
-                        IconButton(Lucide.Plus, 15) { dialog = LibraryDialogKind.Note(project.id, null) }
-                    }) {
-                        Chevron(open)
-                        LucideIcon(if (open) Lucide.FolderOpen else Lucide.Folder, 16, Neo.muted)
-                        Label(project.name, weight = FontWeight.Bold)
+                    rows.WithMenu(MenuTarget.Project(project)) { onLongPress ->
+                        TreeItem(selected = false, onClick = { toggleOpen(project.id) }, onLongPress = onLongPress, actions = {
+                            IconButton(Lucide.FolderPlus, 15) { dialog = LibraryDialogKind.Folder(project.id) }
+                            IconButton(Lucide.Plus, 15) { dialog = LibraryDialogKind.Note(project.id, null) }
+                        }) {
+                            Chevron(open)
+                            LucideIcon(if (open) Lucide.FolderOpen else Lucide.Folder, 16, Neo.muted)
+                            Label(project.name, weight = FontWeight.Bold)
+                        }
                     }
                 }
                 item("${project.id}-children") {
                     Reveal(open) {
                         TreeChildren {
                             for (folder in tree.folders.filter { it.projectId == project.id && it.parentId == null }) {
-                                FolderTree(state, folder, tree.folders, notes, expanded, toggleOpen) { folderId -> dialog = LibraryDialogKind.Note(project.id, folderId) }
+                                FolderTree(rows, folder, tree.folders, notes, expanded, toggleOpen)
                             }
-                            for (note in notes.filter { it.projectId == project.id && it.folderId == null }) NoteItem(state, note)
+                            for (note in notes.filter { it.projectId == project.id && it.folderId == null }) NoteItem(rows, note)
                         }
                     }
                 }
@@ -326,34 +340,52 @@ private fun TreeChildren(content: @Composable () -> Unit) {
 
 /** .tree-item: a 36dp row; selected rows are pressed in with an accent edge. */
 @Composable
-internal fun TreeItem(selected: Boolean, onClick: () -> Unit, actions: (@Composable () -> Unit)? = null, content: @Composable RowScope.() -> Unit) {
+internal fun TreeItem(
+    selected: Boolean, onClick: () -> Unit, actions: (@Composable () -> Unit)? = null, onLongPress: (() -> Unit)? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
     val shape = RoundedCornerShape(13.dp)
     var row = Modifier.fillMaxWidth().clip(shape)
     if (selected) row = row.background(Neo.bgRaised).insetShadow(Neo.inset, 13.dp).drawBehind {
         drawRect(Neo.accent, size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height))
     }
-    Row(row.clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+    Row(row.combinedClickable(onLongClick = onLongPress, onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).heightIn(min = 36.dp).padding(horizontal = 9.dp, vertical = 7.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) { content() }
         if (actions != null) Row(Modifier.padding(end = 4.dp).alpha(0.9f), horizontalArrangement = Arrangement.spacedBy(1.dp)) { actions() }
     }
 }
 
+/** What every tree row needs: the app state, the open long-press menu, and the new-note dialog. */
+private class TreeRows(val state: AppState, val menu: androidx.compose.runtime.MutableState<MenuTarget?>, val onNewNote: (String, String?) -> Unit) {
+    /** Draws a row and, while it is open, the row's long-press menu anchored to it. */
+    @Composable
+    fun WithMenu(target: MenuTarget, row: @Composable (onLongPress: () -> Unit) -> Unit) {
+        Box {
+            row { menu.value = target }
+            if (menu.value == target) LibraryMenu(state, target, onNewNote) { menu.value = null }
+        }
+    }
+}
+
 @Composable
 private fun FolderTree(
-    state: AppState, folder: LibraryFolder, folders: List<LibraryFolder>, notes: List<LibraryNote>,
-    expanded: Map<String, Boolean>, onToggleOpen: (id: String) -> Unit, onAddNote: (folderId: String) -> Unit,
+    rows: TreeRows, folder: LibraryFolder, folders: List<LibraryFolder>, notes: List<LibraryNote>,
+    expanded: Map<String, Boolean>, onToggleOpen: (id: String) -> Unit,
 ) {
     val open = expanded[folder.id] ?: false
-    TreeItem(selected = false, onClick = { onToggleOpen(folder.id) }, actions = { IconButton(Lucide.Plus, 15) { onAddNote(folder.id) } }) {
-        Chevron(open)
-        LucideIcon(if (open) Lucide.FolderOpen else Lucide.Folder, 16, Neo.muted)
-        Label(folder.name)
+    rows.WithMenu(MenuTarget.Folder(folder)) { onLongPress ->
+        TreeItem(selected = false, onClick = { onToggleOpen(folder.id) }, onLongPress = onLongPress,
+            actions = { IconButton(Lucide.Plus, 15) { rows.onNewNote(folder.projectId, folder.id) } }) {
+            Chevron(open)
+            LucideIcon(if (open) Lucide.FolderOpen else Lucide.Folder, 16, Neo.muted)
+            Label(folder.name)
+        }
     }
     Reveal(open) {
         TreeChildren {
-            for (child in folders.filter { it.parentId == folder.id }) FolderTree(state, child, folders, notes, expanded, onToggleOpen, onAddNote)
-            for (note in notes.filter { it.folderId == folder.id }) NoteItem(state, note)
+            for (child in folders.filter { it.parentId == folder.id }) FolderTree(rows, child, folders, notes, expanded, onToggleOpen)
+            for (note in notes.filter { it.folderId == folder.id }) NoteItem(rows, note)
         }
     }
 }
@@ -378,11 +410,13 @@ private fun Chevron(open: Boolean) {
 }
 
 @Composable
-private fun NoteItem(state: AppState, note: LibraryNote) {
-    TreeItem(selected = note.id == state.openNoteId, onClick = { state.open(note.id) }) {
-        LucideIcon(Lucide.FileText, 16, Neo.muted)
-        Label(note.title.ifBlank { "Untitled" }, modifier = Modifier.weight(1f))
-        if (note.favorite) LucideIcon(Lucide.Star, 13, Neo.accent)
+private fun NoteItem(rows: TreeRows, note: LibraryNote) {
+    rows.WithMenu(MenuTarget.Note(note)) { onLongPress ->
+        TreeItem(selected = note.id == rows.state.openNoteId, onClick = { rows.state.open(note.id) }, onLongPress = onLongPress) {
+            LucideIcon(Lucide.FileText, 16, Neo.muted)
+            Label(note.title.ifBlank { "Untitled" }, modifier = Modifier.weight(1f))
+            if (note.favorite) LucideIcon(Lucide.Star, 13, Neo.accent)
+        }
     }
 }
 
@@ -503,7 +537,7 @@ internal fun DialogHeader(eyebrow: String, title: String, onClose: () -> Unit) {
 }
 
 @Composable
-private fun NeoTextField(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun NeoTextField(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().well().padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
         BasicTextField(value, onChange, singleLine = true, textStyle = TextStyle(color = Neo.text, fontSize = 14.sp, fontFamily = AuroraFont),
             cursorBrush = SolidColor(Neo.accent), modifier = Modifier.fillMaxWidth())
@@ -530,7 +564,7 @@ private fun SettingsDialog(state: AppState, onDismiss: () -> Unit) {
 // ---- Top bar ---------------------------------------------------------------
 
 @Composable
-private fun TopBar(state: AppState, onSettings: () -> Unit) {
+private fun TopBar(state: AppState, onSettings: () -> Unit, onCalculator: () -> Unit) {
     val status by state.sync.status.collectAsState()
     Row(
         Modifier.fillMaxWidth().heightIn(min = 60.dp).panel(Neo.shell, fill = Neo.surface.copy(alpha = 0.68f)).padding(shellGap),
@@ -551,7 +585,7 @@ private fun TopBar(state: AppState, onSettings: () -> Unit) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
                 Label(if (status.pending > 0) "${status.pending} queued" else if (status.connected) "open" else "closed", 12.sp, Neo.muted)
             }
-            IconButton(Lucide.Calculator, 16) {}
+            IconButton(Lucide.Calculator, 16, onClick = onCalculator)
             note?.let { Label(modeLabel(it.canvasMode), 11.sp, Neo.muted) }
         }
         // button.ghost keeps its hairline border.
@@ -588,22 +622,44 @@ private val toolSpecs = listOf(
 @Composable
 private fun CanvasArea(state: AppState, modifier: Modifier) {
     var tool by remember { mutableStateOf(Tool.Pen) }
+    // The tool's properties panel opens when a drawing tool is picked and steps aside once drawing starts.
+    var panelOpen by remember { mutableStateOf(true) }
+    var scanning by remember { mutableStateOf(false) }
     var view by remember { mutableStateOf<CanvasView?>(null) }
     val palette = state.account?.drawingPalette ?: listOf("#000000")
-    val color = state.penColor ?: palette.first()
+    val style = state.drawingStyle ?: DrawingStyle(strokeColor = palette.first())
+    val highlighter = state.highlighter
 
     Box(modifier.panel(Neo.shell, fill = Neo.surfaceSunken)) {
         AndroidView(
-            factory = { context -> CanvasView(context).also { view = it; state.attach(it) } },
+            factory = { context -> CanvasView(context).also { view = it; state.attach(it); it.onDrawStart = { panelOpen = false } } },
             modifier = Modifier.fillMaxSize(),
-            update = { v -> v.tool = tool; v.penColor = color },
+            update = { v ->
+                v.tool = tool
+                v.drawingStyle = style
+                v.highlighterColor = highlighter.color
+                v.highlighterWidth = highlighter.width
+            },
         )
         if (state.openNoteId == null) {
             Label("Select or create a note in the sidebar.", color = Neo.muted, modifier = Modifier.align(Alignment.Center))
             return@Box
         }
-        Toolbar(state, tool, onTool = { tool = it }, onPaste = { view?.paste() }, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
-        if (tool == Tool.Pen) PenPalette(palette, color, onColor = { state.penColor = it }, Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 82.dp))
+        Toolbar(state, tool, onTool = { tool = it; panelOpen = placementKind(it) != null }, onPaste = { view?.paste() },
+            onScan = { scanning = true }, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
+        if (scanning) ScanScreen(onScanned = { name, jpeg -> scanning = false; state.importScan(name, jpeg) }, onClose = { scanning = false })
+        val kind = placementKind(tool)
+        if (kind != null && panelOpen) {
+            val panelModifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 82.dp)
+            if (kind == "highlighter") DrawingPlacementPanel(
+                kind, style.copy(strokeColor = highlighter.color, strokeWidth = highlighter.width), highlighter.palette,
+                onPaletteChange = { state.highlighter = highlighter.copy(palette = it) },
+                onPreview = { state.highlighter = highlighter.copy(color = it.strokeColor, width = it.strokeWidth) },
+                modifier = panelModifier,
+            ) else DrawingPlacementPanel(
+                kind, style, palette, onPaletteChange = state::setDrawingPalette, onPreview = { state.drawingStyle = it }, modifier = panelModifier,
+            )
+        }
         val note = state.openNote
         if (note?.canvasMode == "paged" && !state.importedPdf && state.selectionCount == 0) {
             Row(
@@ -631,22 +687,23 @@ private fun CanvasArea(state: AppState, modifier: Modifier) {
 }
 
 @Composable
-private fun Toolbar(state: AppState, tool: Tool, onTool: (Tool) -> Unit, onPaste: () -> Unit, modifier: Modifier) {
+private fun Toolbar(state: AppState, tool: Tool, onTool: (Tool) -> Unit, onPaste: () -> Unit, onScan: () -> Unit, modifier: Modifier) {
+    // Like the web's narrow layout, the bar scrolls sideways when it is wider than the canvas.
     Row(
-        modifier.panel(radius = 13.dp, fill = Neo.surface.copy(alpha = 0.92f)).padding(10.dp),
+        modifier.padding(horizontal = 8.dp).panel(radius = 13.dp, fill = Neo.surface.copy(alpha = 0.92f))
+            .horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for (spec in toolSpecs) ToolButton(spec.icon, active = spec.tool == tool) { onTool(spec.tool) }
         }
-        // Undo, redo and paste only appear while they can do something.
-        if (state.canUndo || state.canRedo || state.canPaste) {
-            Box(Modifier.padding(horizontal = 4.dp).size(1.dp, 18.dp).background(Color.White.copy(alpha = 0.16f)))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (state.canUndo) ToolButton(Lucide.Undo2) { state.undo() }
-                if (state.canRedo) ToolButton(Lucide.Redo2) { state.redo() }
-                if (state.canPaste) ToolButton(Lucide.ClipboardPaste, onClick = onPaste)
-            }
+        Box(Modifier.padding(horizontal = 4.dp).size(1.dp, 18.dp).background(Color.White.copy(alpha = 0.16f)))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Undo, redo and paste only appear while they can do something.
+            if (state.canUndo) ToolButton(Lucide.Undo2) { state.undo() }
+            if (state.canRedo) ToolButton(Lucide.Redo2) { state.redo() }
+            if (state.canPaste) ToolButton(Lucide.ClipboardPaste, onClick = onPaste)
+            ToolButton(Lucide.Camera, onClick = onScan)
         }
     }
 }
@@ -662,27 +719,6 @@ private fun ToolButton(icon: ImageVector, active: Boolean = false, onClick: () -
     ) { LucideIcon(icon, 16, if (active) Neo.toolActiveInk else Neo.text) }
 }
 
-/** The pen tool's vertical palette (.drawing-properties-panel[data-tool="pen"]). */
-@Composable
-private fun PenPalette(colors: List<String>, selected: String, onColor: (String) -> Unit, modifier: Modifier) {
-    Column(modifier.width(50.dp).panel().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Box(Modifier.size(28.dp, 26.dp).panel(radius = Neo.radius), contentAlignment = Alignment.Center) { LucideIcon(Lucide.Trash2, 13, Neo.muted) }
-        for (c in colors) {
-            val on = c.equals(selected, ignoreCase = true)
-            // outline: 2px accent, offset 3px — drawn outside the swatch without changing layout.
-            Box(Modifier.size(32.dp).drawBehind {
-                if (on) drawCircle(Neo.accent, radius = size.minDimension / 2 + 4.dp.toPx(), style = Stroke(2.dp.toPx()))
-            }) {
-                Box(Modifier.fillMaxSize().clip(CircleShape).background(hex(c)).insetShadow(listOf(BoxShadow(0, 1, 3, Color.Black.copy(alpha = 0.45f))), 16.dp)
-                    .border(2.dp, Neo.mix(Neo.border, Color.White, 0.91f).copy(alpha = 0.16f), CircleShape).clickable { onColor(c) })
-            }
-        }
-        Box(Modifier.size(32.dp).clip(CircleShape).background(Neo.surfaceSunken).dashedBorder(Neo.border.copy(alpha = 0.2f), 16.dp), contentAlignment = Alignment.Center) {
-            LucideIcon(Lucide.Plus, 17, Neo.muted)
-        }
-    }
-}
-
 /** The floating .selection-actions bar above (or below) the selection. */
 @Composable
 private fun SelectionBar(state: AppState, view: CanvasView?) {
@@ -695,6 +731,8 @@ private fun SelectionBar(state: AppState, view: CanvasView?) {
     val up = rect.top - gap - barSize.height >= minTop
     val x = (rect.centerX() - barSize.width / 2f).coerceIn(8f, (view.width - barSize.width - 8f).coerceAtLeast(8f))
     val y = if (up) rect.top - gap - barSize.height else (rect.bottom + gap).coerceAtMost(view.height - barSize.height - 56f)
+    val shape = view.selectedShape()
+    var propertiesOpen by remember(shape?.id) { mutableStateOf(false) }
     Row(
         Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }.onGloballyPositioned { barSize = it.size }
             .boxShadow(Neo.floating, 999.dp).clip(CircleShape).background(Neo.surface.copy(alpha = 0.94f)).border(1.dp, Neo.border, CircleShape).padding(4.dp),
@@ -710,6 +748,39 @@ private fun SelectionBar(state: AppState, view: CanvasView?) {
         SelectionAction(Lucide.SendToBack) { view.reorderSelection(false) }
         Divider()
         SelectionAction(Lucide.Trash2, Neo.danger) { view.deleteSelection() }
+        if (shape != null) {
+            Divider()
+            // .shape-properties-button: accent-ringed, toggles the shape properties popover.
+            Box(Modifier.padding(horizontal = 6.dp).size(28.dp).boxShadow(Neo.outset, 14.dp).clip(CircleShape).background(Neo.surfaceRaised)
+                .border(1.dp, Neo.accent, CircleShape).clickable { propertiesOpen = !propertiesOpen }, contentAlignment = Alignment.Center) {
+                LucideIcon(Lucide.Settings2, 14, Neo.accent)
+            }
+        }
+    }
+    if (shape != null && propertiesOpen) ShapePropertiesPopover(state, view, shape, barX = x, barY = y, barHeight = barSize.height.toFloat(), above = up)
+}
+
+/** .shape-properties-popover: edits the one selected shape, opening away from the selection. */
+@Composable
+private fun ShapePropertiesPopover(state: AppState, view: CanvasView, shape: app.aurora.notes.data.CanvasObject, barX: Float, barY: Float, barHeight: Float, above: Boolean) {
+    var style by remember(shape.id) { mutableStateOf(shape.drawingStyle()) }
+    var height by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
+    val gap = with(density) { 8.dp.toPx() }
+    val maxHeight = with(density) { (if (above) barY - gap - 16f else view.height - barY - barHeight - gap - 16f).coerceAtLeast(180.dp.toPx()).toDp() }
+    val top = if (above) barY - gap - height else barY + barHeight + gap
+    val left = barX.coerceAtMost(view.width - with(density) { 300.dp.toPx() }).coerceAtLeast(8f)
+    Column(
+        Modifier.offset { IntOffset(left.roundToInt(), top.roundToInt()) }.onGloballyPositioned { height = it.size.height }
+            .width(292.dp).heightIn(max = maxHeight.coerceAtMost(480.dp)).panel(Neo.floating, Neo.radius + 2.dp)
+            .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp),
+    ) {
+        PropertiesTitle("Shape properties")
+        DrawingStyleControls(
+            shape.kind, style, state.account?.drawingPalette ?: listOf("#000000"), state::setDrawingPalette,
+            onPreview = { style = it; view.previewShapeStyle(it) },
+            onCommit = { view.commitShapeStyle() },
+        )
     }
 }
 

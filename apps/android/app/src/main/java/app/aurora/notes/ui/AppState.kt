@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.aurora.notes.canvas.CanvasDocument
 import app.aurora.notes.canvas.CanvasView
+import app.aurora.notes.canvas.DrawingStyle
+import app.aurora.notes.data.HighlighterStyle
 import app.aurora.notes.canvas.hasImportedPdf
 import app.aurora.notes.data.Account
 import app.aurora.notes.data.AuroraApi
@@ -45,7 +47,12 @@ class AppState(context: Context) {
         private set
     var selectionCount by mutableStateOf(0)
         private set
-    var penColor by mutableStateOf<String?>(null)
+    /** Pen color and shape defaults; the stroke color starts as the first palette color. */
+    var drawingStyle by mutableStateOf<DrawingStyle?>(null)
+    private var highlighterState by mutableStateOf(settings.highlighter)
+    var highlighter: HighlighterStyle
+        get() = highlighterState
+        set(value) { highlighterState = value; settings.highlighter = value }
     var zoom by mutableStateOf(1.0)
         private set
     var currentPage by mutableStateOf(0)
@@ -175,6 +182,31 @@ class AppState(context: Context) {
         sync.stop()
         sync.start()
         scope.launch { refreshLibrary(); openNoteId?.let { open(it) } }
+    }
+
+    /** Saves a reordered or edited account palette, shown immediately and shared with every device. */
+    fun setDrawingPalette(palette: List<String>) {
+        val previous = account ?: return
+        account = previous.copy(drawingPalette = palette)
+        scope.launch {
+            runCatching { api.setDrawingPalette(palette) }.onFailure {
+                account = previous
+                error = "Could not save the drawing palette: ${it.message}"
+            }
+        }
+    }
+
+    /** Uploads a scanned page and places it in the middle of the open note, like the web's scan import. */
+    fun importScan(name: String, jpeg: ByteArray) {
+        val view = canvas ?: return
+        val size = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, size)
+        if (size.outWidth <= 0 || size.outHeight <= 0) { error = "The scan could not be read"; return }
+        scope.launch {
+            runCatching { api.uploadFile(name, jpeg, "image/jpeg") }
+                .onSuccess { fileId -> view.insertImage(fileId, name, size.outWidth, size.outHeight) }
+                .onFailure { error = "Image import failed: ${it.message}" }
+        }
     }
 
     fun undo() { canvas?.document?.undo() }

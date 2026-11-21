@@ -401,4 +401,38 @@ object Lucide {
         "M3 3v5h5",
         )
     }
+
+    val Delete: ImageVector by lazy {
+        lucide(
+            "Delete",
+            "M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z",
+        "m12 9 6 6",
+        "m18 9-6 6",
+        )
+    }
+
+    val Settings2: ImageVector by lazy {
+        lucide(
+            "Settings2",
+            "M14 17H5",
+        "M19 7h-9",
+        "M14 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+        "M4 7a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+        )
+    }
+
+    val Pencil: ImageVector by lazy {
+        lucide(
+            "Pencil",
+            "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
+        "m15 5 4 4",
+        )
+    }
+
+    val Check: ImageVector by lazy {
+        lucide(
+            "Check",
+            "M20 6 9 17l-5-5",
+        )
+    }
 }

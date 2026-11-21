@@ -75,6 +75,15 @@ class CanvasDocument(
         apply(before, after)
     }
 
+    /** Shows a transient version of an existing object (a slider drag) without syncing or recording history. */
+    fun preview(next: CanvasObject) {
+        val current = byId[next.id] ?: return
+        dirty += current.bounds
+        dirty += next.bounds
+        byId[next.id] = next
+        changed()
+    }
+
     fun undo() {
         val entry = undoStack.removeLastOrNull() ?: return
         redoStack.addLast(entry)

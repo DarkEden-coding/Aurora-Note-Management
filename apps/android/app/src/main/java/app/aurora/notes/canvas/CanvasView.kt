@@ -84,9 +84,14 @@ class CanvasView(context: Context) : View(context) {
             // Picking a drawing or pan tool ends the current selection; select and lasso keep it.
             if (value != Tool.Select && value != Tool.Lasso) clearSelection()
         }
-    var penColor = "#e6e8ec"
-    var highlighterColor = "#ffe066"
-    var highlighterWidth = 16.0
+    /** Pen color and shape defaults; the pen draws in [DrawingStyle.strokeColor]. */
+    var drawingStyle = DrawingStyle()
+    private val penColor get() = drawingStyle.strokeColor
+    var highlighterColor = "#facc15"
+    var highlighterWidth = 14.0
+
+    /** Fires when the pen starts inking or drawing a shape, so placement panels can step aside. */
+    var onDrawStart: (() -> Unit)? = null
 
     var onCameraChanged: ((Camera) -> Unit)? = null
     var onSelectionChanged: ((Int) -> Unit)? = null
@@ -155,8 +160,10 @@ class CanvasView(context: Context) : View(context) {
 
     /** Applies a user camera move, keeping bounded notes inside their scroll limits. */
     private fun moveCamera(next: Camera) {
-        val zoom = next.zoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
-        var x = if (lockX && (mode == "paged" || mode == "fixed-width") && zoom == camera.zoom) camera.x else next.x
+        // The scroll lock freezes zoom and sideways movement, leaving only vertical scrolling.
+        val locked = zoomLocked
+        val zoom = if (locked) camera.zoom else next.zoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
+        var x = if (locked) camera.x else next.x
         var y = next.y
         val doc = document
         if (doc != null) {
@@ -367,7 +374,7 @@ class CanvasView(context: Context) : View(context) {
             val span = hypot(event.getX(a) - event.getX(b), event.getY(a) - event.getY(b))
             val fx = (event.getX(a) + event.getX(b)) / 2
             val fy = (event.getY(a) + event.getY(b)) / 2
-            val zoom = (camera.zoom * span / pinchSpan).coerceIn(MIN_ZOOM, MAX_ZOOM)
+            val zoom = if (zoomLocked) camera.zoom else (camera.zoom * span / pinchSpan).coerceIn(MIN_ZOOM, MAX_ZOOM)
             // Keep the world point under the previous focus under the new focus.
             val wx = worldX(pinchFocusX); val wy = worldY(pinchFocusY)
             val newScale = zoom * density
@@ -413,6 +420,7 @@ class CanvasView(context: Context) : View(context) {
             tool == Tool.Lasso -> startMove(doc, wx, wy) ?: startMarquee(true, wx, wy)
             else -> Create(tool, wx, wy)
         }
+        if (gesture is Ink || gesture is Create) onDrawStart?.invoke()
         invalidate()
     }
 
@@ -548,6 +556,7 @@ class CanvasView(context: Context) : View(context) {
     }
 
     private fun setSelection(ids: Collection<String>) {
+        commitShapeStyle()
         selection.clear(); selection.addAll(ids)
         onSelectionChanged?.invoke(selection.size)
         onChromeChanged?.invoke()
@@ -647,22 +656,63 @@ class CanvasView(context: Context) : View(context) {
         return toScreen(b)
     }
 
-    /** Locks horizontal scrolling on page-width notes, like the web's axis lock. */
+    /** Locks zoom and horizontal scrolling on page-width notes, so only vertical scrolling remains. */
     var lockX = false
         set(value) { field = value; invalidate() }
+    private val zoomLocked get() = lockX && (mode == "paged" || mode == "fixed-width")
 
     /** Ids whose local state must not be replaced by server broadcasts right now. */
     fun protectedIds(): Set<String> = when (val g = gesture) {
         is Move -> g.origins.keys
         is Erase -> g.removed.keys
         else -> emptySet()
+    } + listOfNotNull(styleOrigin?.id)
+
+    /** Places an uploaded picture (a scan) at the middle of the view, sized like the web's fitImageSize. */
+    fun insertImage(fileId: String, name: String, pixelWidth: Int, pixelHeight: Int) {
+        val doc = document ?: return
+        val fit = min(1.0, min(480.0 / pixelWidth, 360.0 / pixelHeight))
+        val w = max(1.0, pixelWidth * fit); val h = max(1.0, pixelHeight * fit)
+        val center = Pt(worldX(width / 2f), worldY(height / 2f))
+        val bounds = clampToMode(Bounds(center.x, center.y, w, h), mode)
+        val payload = JsonObject(mapOf("fileId" to JsonPrimitive(fileId), "alt" to JsonPrimitive(name)))
+        doc.edit(emptyList(), listOf(newObject(doc, "image", bounds, payload)))
+    }
+
+    // ---- Restyling a selected shape -----------------------------------------
+
+    /** The version of the shape being restyled from before the current slider drag, if any. */
+    private var styleOrigin: CanvasObject? = null
+
+    /** The single selected vector shape, which the shape properties popover edits. */
+    fun selectedShape(): CanvasObject? {
+        val doc = document ?: return null
+        val id = selection.singleOrNull() ?: return null
+        return doc[id]?.takeIf { it.kind in VECTOR_KINDS && !it.locked }
+    }
+
+    /** Shows [style] on the selected shape without recording history; [commitShapeStyle] records it. */
+    fun previewShapeStyle(style: DrawingStyle) {
+        val doc = document ?: return
+        val shape = selectedShape() ?: return
+        val next = shape.restyled(style)
+        if (next == shape) return
+        if (styleOrigin?.id != shape.id) styleOrigin = shape
+        doc.preview(next)
+    }
+
+    fun commitShapeStyle() {
+        val doc = document ?: return
+        val origin = styleOrigin ?: return
+        styleOrigin = null
+        val current = doc[origin.id] ?: return
+        if (current.payload != origin.payload) doc.edit(listOf(origin), listOf(current))
     }
 
     // ---- Shape creation ----------------------------------------------------
 
-    private fun shapePayload(extra: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap()) = JsonObject(
-        mapOf("color" to JsonPrimitive(penColor), "strokeWidth" to JsonPrimitive(2), "lineStyle" to JsonPrimitive("solid")) + extra,
-    )
+    private fun shapePayload(kind: String, extra: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap()) =
+        JsonObject(drawingStyle.payloadFor(kind) + extra)
 
     private fun commitShape(doc: CanvasDocument, g: Create) {
         val w = abs(g.x - g.startX); val h = abs(g.y - g.startY)
@@ -674,10 +724,10 @@ class CanvasView(context: Context) : View(context) {
         val raw = Bounds(min(g.startX, g.x), min(g.startY, g.y), max(MIN_BOUNDS_SIZE, w), max(MIN_BOUNDS_SIZE, h))
         val bounds = clampToMode(raw, mode)
         val dx = bounds.x - raw.x; val dy = bounds.y - raw.y
-        val payload = if (kind == "line" || kind == "arrow") shapePayload(mapOf(
+        val payload = if (kind == "line" || kind == "arrow") shapePayload(kind, mapOf(
             "start" to pointJson(Pt(g.startX + dx, g.startY + dy)),
             "end" to pointJson(Pt(g.x + dx, g.y + dy)),
-        )) else shapePayload()
+        )) else shapePayload(kind)
         doc.edit(emptyList(), listOf(newObject(doc, kind, bounds, payload)))
     }
 
@@ -819,9 +869,9 @@ class CanvasView(context: Context) : View(context) {
     private fun drawCreatePreview(canvas: Canvas) {
         val g = gesture as? Create ?: return
         val doc = document ?: return
-        val preview = newObject(doc, "rectangle", Bounds(min(g.startX, g.x), min(g.startY, g.y), max(1.0, abs(g.x - g.startX)), max(1.0, abs(g.y - g.startY))), shapePayload())
         val kind = when (g.tool) { Tool.Line -> "line"; Tool.Arrow -> "arrow"; Tool.Ellipse -> "ellipse"; Tool.Matrix -> "matrix"; else -> "rectangle" }
-        val obj = if (kind == "line" || kind == "arrow") preview.copy(kind = kind, payload = shapePayload(mapOf(
+        val preview = newObject(doc, "rectangle", Bounds(min(g.startX, g.x), min(g.startY, g.y), max(1.0, abs(g.x - g.startX)), max(1.0, abs(g.y - g.startY))), shapePayload(kind))
+        val obj = if (kind == "line" || kind == "arrow") preview.copy(kind = kind, payload = shapePayload(kind, mapOf(
             "start" to pointJson(Pt(g.startX, g.startY)), "end" to pointJson(Pt(g.x, g.y)),
         ))) else preview.copy(kind = kind)
         SceneRenderer().draw(canvas, obj)

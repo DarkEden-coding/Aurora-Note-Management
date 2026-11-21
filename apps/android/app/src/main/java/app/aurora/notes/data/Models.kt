@@ -121,3 +121,9 @@ data class ProjectJson(val id: String, val name: String, @SerialName("sortOrder"
 
 @Serializable
 data class PageCreated(val pageCount: Int)
+
+@Serializable
+data class FileEnvelope(val file: FileJson)
+
+@Serializable
+data class FileJson(val id: String)

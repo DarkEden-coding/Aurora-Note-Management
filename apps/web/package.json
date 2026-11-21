@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build:native": "vite build --config vite.native.config.ts"
+    "build:native": "vite build --config vite.native.config.ts && vite build --config vite.native-scan.config.ts"
   },
   "dependencies": {
     "@aurora/shared": "*",

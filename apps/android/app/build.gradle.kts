@@ -49,6 +49,8 @@ dependencies {
     // Applies the libraries' baseline profiles at install so Compose starts compiled, not interpreted.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("com.squareup.okhttp3:okhttp:5.5.1")
+    // Serves the bundled scanner page from a secure https origin, so the WebView may use the camera.
+    implementation("androidx.webkit:webkit:1.14.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 }

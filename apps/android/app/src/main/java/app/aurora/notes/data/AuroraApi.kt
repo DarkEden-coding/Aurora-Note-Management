@@ -46,7 +46,46 @@ class AuroraApi(private val settings: Settings) {
         }
     }
 
+    /** Uploads a file (a scanned page) and returns its id for an image object's payload. */
+    suspend fun uploadFile(name: String, bytes: ByteArray, mimeType: String): String = withContext(Dispatchers.IO) {
+        val body = okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
+            .addFormDataPart("file", name, bytes.toRequestBody(mimeType.toMediaType()))
+            .build()
+        val request = Request.Builder().url(settings.serverUrl + "/api/files").post(body).build()
+        http.newCall(request).execute().use { response ->
+            val text = response.body.string()
+            if (!response.isSuccessful) throw ApiException(response.code, "Upload failed (${response.code})")
+            AuroraJson.decodeFromString<FileEnvelope>(text).file.id
+        }
+    }
+
     suspend fun account(): Account = AuroraJson.decodeFromString(call("GET", "/api/account"))
+
+    suspend fun setDrawingPalette(palette: List<String>) {
+        call("PATCH", "/api/account/drawing-palette", buildJsonObject {
+            put("drawingPalette", kotlinx.serialization.json.JsonArray(palette.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+        })
+    }
+
+    suspend fun renameProject(projectId: String, name: String) {
+        call("PATCH", "/api/projects/$projectId", buildJsonObject { put("name", name) })
+    }
+
+    suspend fun deleteProject(projectId: String) {
+        call("DELETE", "/api/projects/$projectId")
+    }
+
+    suspend fun renameFolder(folderId: String, name: String) {
+        call("PATCH", "/api/folders/$folderId", buildJsonObject { put("name", name) })
+    }
+
+    suspend fun deleteFolder(folderId: String) {
+        call("DELETE", "/api/folders/$folderId")
+    }
+
+    suspend fun setFavorite(noteId: String, favorite: Boolean) {
+        call("POST", "/api/notes/$noteId/${if (favorite) "favorite" else "unfavorite"}", JsonObject(emptyMap()))
+    }
 
     suspend fun library(): LibraryTree = AuroraJson.decodeFromString(call("GET", "/api/library"))
 
@@ -62,8 +101,11 @@ class AuroraApi(private val settings: Settings) {
         call("POST", "/api/projects", buildJsonObject { put("name", name) })
     }
 
-    suspend fun createFolder(projectId: String, name: String) {
-        call("POST", "/api/projects/$projectId/folders", buildJsonObject { put("name", name) })
+    suspend fun createFolder(projectId: String, name: String, parentId: String? = null) {
+        call("POST", "/api/projects/$projectId/folders", buildJsonObject {
+            put("name", name)
+            if (parentId != null) put("parentId", parentId)
+        })
     }
 
     suspend fun createNote(projectId: String, folderId: String?, title: String, canvasMode: String, background: Background) {
