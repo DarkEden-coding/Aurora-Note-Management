@@ -1,6 +1,7 @@
-// Renders one practice page (user ink, shapes, practice cards, marks, coordinate grid) to SVG and rasterizes it to PNG for Claude.
+// Renders one page (user ink, shapes, typed text, practice cards, marks, coordinate grid) to SVG and rasterizes it to PNG for Claude.
 import { renderAsync } from "@resvg/resvg-js";
 import type { Bounds, CanvasObject, PracticeCardRegion } from "@aurora/shared";
+import { objectText } from "../canvas/text.js";
 import { MARK_COLOR, practiceTagOf } from "./marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect, pageFrame } from "./page.js";
 
@@ -14,6 +15,8 @@ export type RenderTarget = {
   pageIndex: number;
   // Marks from attempts before this one are drawn faded (a retry in progress).
   attempt: number;
+  // World frame of the page; defaults to the paged-note frame of pageIndex (canvas notes pass a tile).
+  frame?: Bounds;
   // Card elements the browser measured, already moved to page coordinates; drawn on the grey question card.
   regions?: PracticeCardRegion[];
 };
@@ -167,11 +170,11 @@ function labelledBox(
 }
 
 // Each measured card element: a dashed blue outline, its label, and its text when it fits.
-function regionsSvg(regions: PracticeCardRegion[], frameY: number): string {
+function regionsSvg(regions: PracticeCardRegion[], frame: Bounds): string {
   return regions
     .map((region) => {
-      const x = region.x;
-      const y = region.y + frameY;
+      const x = region.x + frame.x;
+      const y = region.y + frame.y;
       const name =
         region.kind === "option"
           ? region.label
@@ -196,26 +199,22 @@ function regionsSvg(regions: PracticeCardRegion[], frameY: number): string {
     .join("");
 }
 
-// Labels are stored as escaped text with <br>; recover the plain text and wrap it roughly.
-function labelSvg(object: CanvasObject, color: string): string {
-  const html =
-    typeof object.payload.html === "string" ? object.payload.html : "";
-  const text = html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&");
-  const perLine = Math.max(1, Math.floor(object.bounds.width / 10));
+// Wraps plain text roughly by character count; enough for Claude to read typed text and red labels.
+function textBlockSvg(
+  b: Bounds,
+  text: string,
+  color: string,
+  fontSize: number,
+): string {
+  const lineHeight = Math.round(fontSize * 1.4);
+  const perLine = Math.max(1, Math.floor(b.width / (fontSize / 2)));
   const lines = text
     .split("\n")
     .flatMap((line) => line.match(new RegExp(`.{1,${perLine}}`, "g")) ?? [""]);
-  const b = object.bounds;
   return lines
     .map(
       (line, i) =>
-        `<text x="${r(b.x)}" y="${r(b.y + 22 + i * 28)}" ${FONT} font-size="20" fill="${color}">${escapeXml(line)}</text>`,
+        `<text x="${r(b.x)}" y="${r(b.y + fontSize + 2 + i * lineHeight)}" ${FONT} font-size="${fontSize}" fill="${color}">${escapeXml(line)}</text>`,
     )
     .join("");
 }
@@ -249,7 +248,12 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
       const variant = String(object.payload.variant ?? "");
       svg =
         variant === "label"
-          ? labelSvg(object, MARK_COLOR)
+          ? textBlockSvg(
+              object.bounds,
+              objectText(object) ?? "",
+              MARK_COLOR,
+              20,
+            )
           : variant === "prompt"
             ? labelledBox(
                 object,
@@ -266,6 +270,23 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
               );
       break;
     }
+    case "rich-text":
+      svg = textBlockSvg(object.bounds, objectText(object) ?? "", color, 16);
+      break;
+    case "sticky-note":
+      svg =
+        `<rect x="${r(object.bounds.x)}" y="${r(object.bounds.y)}" width="${r(object.bounds.width)}" height="${r(object.bounds.height)}" rx="6" fill="#fdf3c4" stroke="#e5c85a"/>` +
+        textBlockSvg(
+          {
+            ...object.bounds,
+            x: object.bounds.x + 10,
+            width: object.bounds.width - 20,
+          },
+          objectText(object) ?? "",
+          "#222222",
+          14,
+        );
+      break;
     default:
       svg = labelledBox(object, object.kind, "#f5f5f5", "#c4c8ce");
   }
@@ -316,7 +337,7 @@ export function buildPageSvg(
   target: RenderTarget,
   view: Bounds = FULL_PAGE,
 ): string {
-  const frame = pageFrame(target.pageIndex);
+  const frame = target.frame ?? pageFrame(target.pageIndex);
   const onPage = objects
     .filter((object) => boundsIntersect(object.bounds, frame))
     .sort((a, b) => a.zIndex - b.zIndex);
@@ -330,7 +351,7 @@ export function buildPageSvg(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${r(view.width)}" height="${r(view.height)}" viewBox="${r(view.x)} ${r(view.y)} ${r(view.width)} ${r(view.height)}">` +
     `<rect width="${PAGE_WIDTH}" height="${PAGE_HEIGHT}" fill="#ffffff"/>` +
     grid.lines +
-    `<g transform="translate(0 ${-frame.y})">${draw(prompts)}${regionsSvg(target.regions ?? [], frame.y)}${draw(rest)}</g>` +
+    `<g transform="translate(${-frame.x} ${-frame.y})">${draw(prompts)}${regionsSvg(target.regions ?? [], frame)}${draw(rest)}</g>` +
     grid.labels +
     `</svg>`
   );

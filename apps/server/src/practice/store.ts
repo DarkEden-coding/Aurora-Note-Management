@@ -169,6 +169,67 @@ export async function loadLatestActiveSession(
   return result.rows[0] ?? null;
 }
 
+export type SessionSummary = {
+  id: string;
+  noteId: string;
+  title: string;
+  status: "active" | "complete";
+  totalQuestions: number;
+  questionsPosted: number;
+  questionsGraded: number;
+  // Sum of first-attempt points over graded questions, out of those questions' maxPoints.
+  score: number;
+  scoredOutOf: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Every practice session of the owner, newest activity first, with its score so far. */
+export async function listSessionSummaries(
+  db: Db,
+  ownerId: string,
+  filters: { status?: "active" | "complete" | undefined; limit: number },
+): Promise<SessionSummary[]> {
+  const result = await db.query<{
+    id: string;
+    note_id: string;
+    title: string;
+    status: "active" | "complete";
+    total_questions: number;
+    posted: string;
+    graded: string;
+    score: string;
+    scored_out_of: string;
+    created_at: Date;
+    updated_at: Date;
+  }>(
+    `SELECT s.id, s.note_id, s.title, s.status, s.total_questions, s.created_at, s.updated_at,
+            count(q.id) AS posted, count(q.points) AS graded,
+            coalesce(sum(q.points), 0) AS score,
+            coalesce(sum(q.max_points) FILTER (WHERE q.points IS NOT NULL), 0) AS scored_out_of
+     FROM practice_sessions s
+     LEFT JOIN practice_questions q ON q.session_id = s.id
+     WHERE s.owner_id = $1 AND ($2::text IS NULL OR s.status = $2)
+     GROUP BY s.id
+     ORDER BY s.updated_at DESC
+     LIMIT $3`,
+    [ownerId, filters.status ?? null, filters.limit],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    noteId: row.note_id,
+    title: row.title,
+    status: row.status,
+    totalQuestions: row.total_questions,
+    questionsPosted: Number(row.posted),
+    questionsGraded: Number(row.graded),
+    score: Number(row.score),
+    scoredOutOf: Number(row.scored_out_of),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  }));
+}
+
 export async function updateSession(
   db: Db,
   sessionId: string,

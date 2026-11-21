@@ -1,4 +1,4 @@
-// Defines the practice MCP server: instructions for Claude and every practice_* tool with its input schema.
+// Defines Aurora's MCP server: instructions for Claude, every practice_* tool with its input schema, and the notes_* library tools.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import {
   finishSession,
   getSession,
   gradeQuestion,
+  listSessions,
   postQuestion,
   previewGrade,
   renderSubmission,
@@ -21,6 +22,7 @@ import {
   waitForEvent,
 } from "./service.js";
 import { DEFAULT_IMAGE_OPTIONS, type PageImage } from "./submission.js";
+import { NOTES_INSTRUCTIONS, registerNoteTools } from "../agent/mcp-tools.js";
 
 // Many MCP clients abort a request after 60 s, so the default wait stays under that; clients
 // that allow long tool calls can ask for up to the server's configured maximum.
@@ -51,7 +53,9 @@ ${SUBMISSION_FIELDS}
 
 Context: over a long session, pass image { crop: "ink", scale: 1 } to practice_wait and practice_get_submission for smaller images.
 
-${HTML_RULES}`;
+${HTML_RULES}
+
+${NOTES_INSTRUCTIONS}`;
 
 const sessionId = z
   .string()
@@ -118,7 +122,7 @@ export function buildPracticeMcpServer(
   maxWaitSeconds: number,
 ): McpServer {
   const server = new McpServer(
-    { name: "aurora-practice", version: "1.1.0" },
+    { name: "aurora-practice", version: "1.2.0" },
     { instructions: INSTRUCTIONS },
   );
 
@@ -348,11 +352,26 @@ export function buildPracticeMcpServer(
     "practice_get_session",
     {
       description:
-        "Returns a session's state (questions with state, attempt, points; options; grading policy). Without sessionId, returns the most recently active session. Use it to resume after an interrupted chat.",
+        "Returns a session's state (questions with state, attempt, points; options; grading policy), for any session including completed ones (ids from practice_list_sessions). Without sessionId, returns the most recently active session. Use it to resume after an interrupted chat. To see a question's submitted work and your marks, call practice_get_submission with its id.",
       inputSchema: { sessionId: sessionId.optional() },
     },
     async ({ sessionId }) => json(await getSession(await ownerId(), sessionId)),
   );
+
+  server.registerTool(
+    "practice_list_sessions",
+    {
+      description:
+        "Lists the user's practice sessions, newest activity first: id, title, noteId, status, questions posted/graded, and score (first-attempt points over graded questions' maxPoints). Read one with practice_get_session, its pages with practice_get_submission or notes_read.",
+      inputSchema: {
+        status: z.enum(["active", "complete"]).optional(),
+        limit: z.number().int().min(1).max(200).default(50),
+      },
+    },
+    async (filters) => json(await listSessions(await ownerId(), filters)),
+  );
+
+  registerNoteTools(server);
 
   return server;
 }

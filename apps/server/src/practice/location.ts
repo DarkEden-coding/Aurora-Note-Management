@@ -1,7 +1,7 @@
-// Where practice notes live: lists the library's project/folder paths for Claude and resolves a chosen path, creating what is missing.
+// Library locations by name, for the MCP tools: lists the library's project/folder paths for Claude and resolves a chosen path, creating what is missing.
 import { createFolder, listFolders } from "../library/folders.js";
 import { createProject, listProjects } from "../library/projects.js";
-import { invalid } from "../errors.js";
+import { invalid, notFound } from "../errors.js";
 
 export type PracticeLocation = { project: string; folder?: string | undefined };
 
@@ -18,14 +18,21 @@ export function folderSegments(path: string | undefined): string[] {
     .filter((segment) => segment.length > 0);
 }
 
-/** Every folder as a "/"-joined path from its project root, sorted. */
-export function folderPaths(folders: FolderNode[]): string[] {
+/** Each folder id mapped to its "/"-joined path from the project root. */
+export function folderPathById(folders: FolderNode[]): Map<string, string> {
   const byId = new Map(folders.map((folder) => [folder.id, folder]));
   const pathOf = (folder: FolderNode): string => {
     const parent = folder.parentId ? byId.get(folder.parentId) : undefined;
     return parent ? `${pathOf(parent)}/${folder.name}` : folder.name;
   };
-  return folders.map(pathOf).sort((a, b) => a.localeCompare(b));
+  return new Map(folders.map((folder) => [folder.id, pathOf(folder)]));
+}
+
+/** Every folder as a "/"-joined path from its project root, sorted. */
+export function folderPaths(folders: FolderNode[]): string[] {
+  return [...folderPathById(folders).values()].sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 export async function listLocations(
@@ -38,6 +45,26 @@ export async function listLocations(
       folders: folderPaths(await listFolders(ownerId, project.id)),
     })),
   );
+}
+
+/** Finds an existing project and folder path by name (case-insensitive); never creates anything. */
+export async function findLocation(
+  ownerId: string,
+  location: PracticeLocation,
+): Promise<{ projectId: string; folderId: string | null }> {
+  const projects = await listProjects(ownerId, false);
+  const project = projects.find((p) => sameName(p.name, location.project));
+  if (!project) throw notFound(`Project "${location.project}"`);
+  const folders = await listFolders(ownerId, project.id);
+  let parentId: string | null = null;
+  for (const name of folderSegments(location.folder)) {
+    const folder = folders.find(
+      (f) => f.parentId === parentId && sameName(f.name, name),
+    );
+    if (!folder) throw notFound(`Folder "${location.folder}"`);
+    parentId = folder.id;
+  }
+  return { projectId: project.id, folderId: parentId };
 }
 
 /** Finds the project and folder path by name (case-insensitive), creating any missing part. */

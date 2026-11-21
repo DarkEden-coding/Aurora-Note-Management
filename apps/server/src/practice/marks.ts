@@ -2,12 +2,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import type { Bounds, CanvasObject } from "@aurora/shared";
-import {
-  PAGE_HEIGHT,
-  PAGE_WIDTH,
-  pageBoundsToWorld,
-  pageFrame,
-} from "./page.js";
+import { PAGE_HEIGHT, PAGE_WIDTH, pageFrame } from "./page.js";
 
 export const MARK_COLOR = "#ff5c5c";
 const MARK_WIDTH = 3;
@@ -78,11 +73,24 @@ export const markSchema = z.union([
 
 export type Mark = z.infer<typeof markSchema>;
 
+type Point = { x: number; y: number };
+
 export type ObjectContext = {
   ownerId: string;
   noteId: string;
   pageIndex: number;
+  // World position of the page's top-left; defaults to the paged-note frame of pageIndex.
+  origin?: Point;
 };
+
+function pageOrigin(ctx: ObjectContext): Point {
+  return ctx.origin ?? { x: 0, y: pageFrame(ctx.pageIndex).y };
+}
+
+function toWorld(ctx: ObjectContext, bounds: Bounds): Bounds {
+  const origin = pageOrigin(ctx);
+  return { ...bounds, x: bounds.x + origin.x, y: bounds.y + origin.y };
+}
 
 /** Builds one locked practice object from world bounds. */
 export function practiceObject(
@@ -122,13 +130,11 @@ export function cardObject(
   return practiceObject(
     ctx,
     "practice-card",
-    pageBoundsToWorld(ctx.pageIndex, pageBounds),
+    toWorld(ctx, pageBounds),
     { variant, html },
     practice,
   );
 }
-
-type Point = { x: number; y: number };
 
 function boundsAround(points: Point[], pad: number): Bounds {
   const xs = points.map((p) => p.x);
@@ -171,8 +177,11 @@ function strokeObject(
   pagePoints: Point[],
   practice: PracticeTag,
 ): CanvasObject {
-  const offsetY = pageFrame(ctx.pageIndex).y;
-  const world = pagePoints.map((p) => ({ x: p.x, y: p.y + offsetY }));
+  const origin = pageOrigin(ctx);
+  const world = pagePoints.map((p) => ({
+    x: p.x + origin.x,
+    y: p.y + origin.y,
+  }));
   return practiceObject(
     ctx,
     "stroke",
@@ -193,9 +202,9 @@ function lineObject(
   end: Point,
   practice: PracticeTag,
 ): CanvasObject {
-  const offsetY = pageFrame(ctx.pageIndex).y;
-  const s = { x: start.x, y: start.y + offsetY };
-  const e = { x: end.x, y: end.y + offsetY };
+  const origin = pageOrigin(ctx);
+  const s = { x: start.x + origin.x, y: start.y + origin.y };
+  const e = { x: end.x + origin.x, y: end.y + origin.y };
   return practiceObject(
     ctx,
     kind,
@@ -215,7 +224,7 @@ function lineObject(
 export function markToObjects(
   ctx: ObjectContext,
   mark: Mark,
-  questionId: string,
+  questionId: string | null,
   attempt: number,
 ): CanvasObject[] {
   const tag: PracticeTag = { questionId, attempt, role: "mark" };
@@ -226,7 +235,7 @@ export function markToObjects(
         practiceObject(
           ctx,
           mark.type === "circle" ? "ellipse" : "rectangle",
-          pageBoundsToWorld(ctx.pageIndex, {
+          toWorld(ctx, {
             x: mark.x,
             y: mark.y,
             width: mark.width,

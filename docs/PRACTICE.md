@@ -117,7 +117,8 @@ server renders the strokes the user sees.
 | `practice_set_grading`    | `{ sessionId, grading \| null }` → changes the session grading policy.                                                                                                                                                                                                                                                                                                                                                                     |
 | `practice_set_status`     | `{ sessionId, text \| null }` → status line in the practice bar.                                                                                                                                                                                                                                                                                                                                                                           |
 | `practice_finish`         | `{ sessionId, summaryHtml, height }` → summary card on the page after the last question; session `complete`.                                                                                                                                                                                                                                                                                                                               |
-| `practice_get_session`    | `{ sessionId? }` → state of the given (or most recent active) session, including `grading`, for resuming after an interrupted chat.                                                                                                                                                                                                                                                                                                        |
+| `practice_get_session`    | `{ sessionId? }` → state of the given session (any, including completed) or the most recent active one, including `grading`, for resuming after an interrupted chat.                                                                                                                                                                                                                                                                       |
+| `practice_list_sessions`  | `{ status?, limit? }` → every session, newest activity first, with questions posted/graded and first-attempt score.                                                                                                                                                                                                                                                                                                                        |
 
 `image` options: `crop: "page" | "ink"` (ink = the user's writing, card
 regions and this question's marks plus `padding`, snapped to the 50-unit grid)
@@ -140,6 +141,28 @@ rejected when the session's options turned them off.
 Practice cards render below the ink layer, so the user's writing and Claude's
 marks stay visible on top of an opaque card. The runtime Docker image installs
 `fonts-dejavu-core` so grid numbers and text labels appear in submission images.
+
+## Library tools (notes_*)
+
+The same MCP server also gives Claude read access to the whole library and a
+few additive edits. Code: `apps/server/src/agent/`.
+
+| Tool             | Purpose                                                                                                                                                                                                                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notes_list`     | `{ project?, folder?, archived?, limit?, offset? }` → notes (newest update first) with title, project, folder path, canvas mode, created/updated times. Names match case-insensitively; a folder lists only the notes directly in it.                                                                 |
+| `notes_search`   | `{ query, limit? }` → case-insensitive substring search over titles and typed text (rich text, sticky notes, practice cards), with snippets. Handwriting is not searchable.                                                                                                                           |
+| `notes_read`     | `{ noteId, pages?, scale? = 1 }` → note metadata, each page's typed text with page-relative bounds, and PNG images of the requested pages (default the first 3, max 8), handwriting included. Practice notes also return `practiceSessionId` and per-page `practiceQuestionId`.                       |
+| `notes_create`   | `{ title, project, folder?, canvasMode? = paged }` → new empty note; missing project/folders are created, as in `practice_start`.                                                                                                                                                                     |
+| `notes_rename`   | `{ noteId, title }` → renames a note.                                                                                                                                                                                                                                                                 |
+| `notes_add_page` | `{ noteId }` → appends a page to a paged note.                                                                                                                                                                                                                                                        |
+| `notes_annotate` | `{ noteId, pageIndex, marks[], texts[], dryRun?, scale? }` → adds red marks and comments (same shapes as `practice_grade`) and typed text boxes `{ x, y, width, height?, text }` to one page. Added objects are unlocked so the user can move or delete them. Returns the new ids and the page image. |
+
+There are no delete tools. Every note is read as 816 × 1056 pages in the same
+page-relative coordinates and grid as submission images: paged notes use their
+pages; infinite and fixed canvases are cut into page-sized tiles on a grid
+anchored at the world origin, keeping only tiles with content, in reading
+order. Each page reports its world `origin`. Typed text and cards are drawn as
+plain text in the images; images and PDF pages are drawn as labelled boxes.
 
 ## Submission image
 

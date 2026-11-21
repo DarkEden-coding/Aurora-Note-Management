@@ -62,6 +62,7 @@ import {
   insertQuestion,
   insertSession,
   listQuestions,
+  listSessionSummaries,
   loadLatestActiveSession,
   loadQuestion,
   loadSession,
@@ -74,6 +75,7 @@ import {
   updateSession,
   type QuestionRow,
   type SessionRow,
+  type SessionSummary,
 } from "./store.js";
 
 export type PlacedCard = Bounds & { html: string };
@@ -246,6 +248,13 @@ export async function startSession(
   );
   broadcastChanges(ownerId, session.id, note.id, undefined, true);
   return mapSession(session, []);
+}
+
+export function listSessions(
+  ownerId: string,
+  filters: { status?: "active" | "complete" | undefined; limit: number },
+): Promise<SessionSummary[]> {
+  return listSessionSummaries(getPool(), ownerId, filters);
 }
 
 export async function getSession(

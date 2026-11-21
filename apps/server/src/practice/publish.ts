@@ -33,6 +33,25 @@ export async function writeObjects(
   return { noteId, objects, deletedObjectIds };
 }
 
+/** Sends committed object changes to the owner's devices (no-op when nothing changed). */
+export function broadcastObjectChanges(
+  ownerId: string,
+  changes: ObjectChanges,
+  originOperationId = `practice:${crypto.randomUUID()}`,
+): void {
+  if (changes.objects.length === 0 && changes.deletedObjectIds.length === 0) {
+    return;
+  }
+  broadcastToOwner(ownerId, {
+    type: "objects-changed",
+    noteId: changes.noteId,
+    objects: changes.objects,
+    deletedObjectIds: changes.deletedObjectIds,
+    originOperationId,
+    serverTimestamp: new Date().toISOString(),
+  });
+}
+
 /** Call after commit so devices only ever see committed state. */
 export function broadcastChanges(
   ownerId: string,
@@ -42,19 +61,7 @@ export function broadcastChanges(
   libraryChanged = false,
 ): void {
   const serverTimestamp = new Date().toISOString();
-  if (
-    changes &&
-    (changes.objects.length > 0 || changes.deletedObjectIds.length > 0)
-  ) {
-    broadcastToOwner(ownerId, {
-      type: "objects-changed",
-      noteId: changes.noteId,
-      objects: changes.objects,
-      deletedObjectIds: changes.deletedObjectIds,
-      originOperationId: `practice:${crypto.randomUUID()}`,
-      serverTimestamp,
-    });
-  }
+  if (changes) broadcastObjectChanges(ownerId, changes);
   // New notes and pages change the library tree; devices reload it, and their page counts, on this.
   if (libraryChanged) {
     broadcastToOwner(ownerId, { type: "library-changed", serverTimestamp });

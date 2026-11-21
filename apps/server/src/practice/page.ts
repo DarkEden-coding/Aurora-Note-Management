@@ -19,11 +19,6 @@ export function pageFrame(pageIndex: number): Bounds {
   };
 }
 
-/** Moves page-relative bounds onto the page's world frame. */
-export function pageBoundsToWorld(pageIndex: number, bounds: Bounds): Bounds {
-  return { ...bounds, y: bounds.y + pageFrame(pageIndex).y };
-}
-
 export function boundsIntersect(a: Bounds, b: Bounds): boolean {
   return (
     a.x < b.x + b.width &&
