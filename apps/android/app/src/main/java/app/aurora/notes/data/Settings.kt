@@ -1,4 +1,4 @@
-// Per-device preferences: server address, device id, sidebar width, and the remembered camera for each note.
+// Per-device preferences: server address, device id, sidebar and library tree state, scroll lock, and the remembered camera for each note.
 package app.aurora.notes.data
 
 import android.content.Context
@@ -34,6 +34,20 @@ class Settings(context: Context) {
     var sidebarWidth: Float
         get() = prefs.getFloat("sidebarWidth", 280f)
         set(value) = prefs.edit().putFloat("sidebarWidth", value).apply()
+
+    var sidebarCollapsed: Boolean
+        get() = prefs.getBoolean("sidebarCollapsed", false)
+        set(value) = prefs.edit().putBoolean("sidebarCollapsed", value).apply()
+
+    /** Projects and folders left open in the library tree. */
+    var expandedTreeItems: Set<String>
+        get() = prefs.getStringSet("expandedTreeItems", emptySet())!!.toSet()
+        set(value) = prefs.edit().putStringSet("expandedTreeItems", value).apply()
+
+    /** The horizontal scroll lock for vertically scrolling notes. */
+    var lockX: Boolean
+        get() = prefs.getBoolean("lockX", false)
+        set(value) = prefs.edit().putBoolean("lockX", value).apply()
 
     fun pageCount(noteId: String): Int = prefs.getInt("pages.$noteId", 1)
 

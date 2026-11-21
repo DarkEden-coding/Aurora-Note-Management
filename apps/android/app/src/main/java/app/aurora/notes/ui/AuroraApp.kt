@@ -83,7 +83,7 @@ private val LocalModalCount = androidx.compose.runtime.compositionLocalOf { muta
 
 @Composable
 fun AuroraApp(state: AppState) {
-    var collapsed by remember { mutableStateOf(false) }
+    var collapsed by remember { mutableStateOf(state.settings.sidebarCollapsed) }
     val sidebarWidth = remember { mutableStateOf(state.settings.sidebarWidth) }
     // 0 = collapsed, 1 = open. Read only in layout and draw, so the animation never recomposes the shell.
     val openness = androidx.compose.animation.core.animateFloatAsState(
@@ -101,7 +101,7 @@ fun AuroraApp(state: AppState) {
         Row(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp),
         ) {
-            Sidebar(state, collapsed, sidebarWidth, openness, onToggle = { collapsed = !collapsed })
+            Sidebar(state, collapsed, sidebarWidth, openness, onToggle = { collapsed = !collapsed; state.settings.sidebarCollapsed = collapsed })
             SidebarResizer(
                 enabled = !collapsed,
                 onDrag = { dx -> sidebarWidth.value = (sidebarWidth.value + dx).coerceIn(220f, 520f) },
@@ -174,7 +174,11 @@ private fun Sidebar(
     state: AppState, collapsed: Boolean, openWidth: androidx.compose.runtime.State<Float>,
     openness: androidx.compose.runtime.State<Float>, onToggle: () -> Unit,
 ) {
-    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    val expanded = remember { mutableStateMapOf<String, Boolean>().apply { state.settings.expandedTreeItems.forEach { put(it, true) } } }
+    val toggleOpen = { id: String ->
+        expanded[id] = !(expanded[id] ?: false)
+        state.settings.expandedTreeItems = expanded.filterValues { it }.keys
+    }
     var dialog by remember { mutableStateOf<LibraryDialogKind?>(null) }
     var overlay by remember { mutableStateOf<String?>(null) }
     val tree = state.library
@@ -221,7 +225,7 @@ private fun Sidebar(
             for (project in tree.projects.sortedBy { it.order }) {
                 val open = expanded[project.id] ?: false
                 item(project.id) {
-                    TreeItem(selected = false, onClick = { expanded[project.id] = !open }, actions = {
+                    TreeItem(selected = false, onClick = { toggleOpen(project.id) }, actions = {
                         IconButton(Lucide.FolderPlus, 15) { dialog = LibraryDialogKind.Folder(project.id) }
                         IconButton(Lucide.Plus, 15) { dialog = LibraryDialogKind.Note(project.id, null) }
                     }) {
@@ -234,7 +238,7 @@ private fun Sidebar(
                     Reveal(open) {
                         TreeChildren {
                             for (folder in tree.folders.filter { it.projectId == project.id && it.parentId == null }) {
-                                FolderTree(state, folder, tree.folders, notes, expanded) { folderId -> dialog = LibraryDialogKind.Note(project.id, folderId) }
+                                FolderTree(state, folder, tree.folders, notes, expanded, toggleOpen) { folderId -> dialog = LibraryDialogKind.Note(project.id, folderId) }
                             }
                             for (note in notes.filter { it.projectId == project.id && it.folderId == null }) NoteItem(state, note)
                         }
@@ -338,17 +342,17 @@ internal fun TreeItem(selected: Boolean, onClick: () -> Unit, actions: (@Composa
 @Composable
 private fun FolderTree(
     state: AppState, folder: LibraryFolder, folders: List<LibraryFolder>, notes: List<LibraryNote>,
-    expanded: MutableMap<String, Boolean>, onAddNote: (folderId: String) -> Unit,
+    expanded: Map<String, Boolean>, onToggleOpen: (id: String) -> Unit, onAddNote: (folderId: String) -> Unit,
 ) {
     val open = expanded[folder.id] ?: false
-    TreeItem(selected = false, onClick = { expanded[folder.id] = !open }, actions = { IconButton(Lucide.Plus, 15) { onAddNote(folder.id) } }) {
+    TreeItem(selected = false, onClick = { onToggleOpen(folder.id) }, actions = { IconButton(Lucide.Plus, 15) { onAddNote(folder.id) } }) {
         Chevron(open)
         LucideIcon(if (open) Lucide.FolderOpen else Lucide.Folder, 16, Neo.muted)
         Label(folder.name)
     }
     Reveal(open) {
         TreeChildren {
-            for (child in folders.filter { it.parentId == folder.id }) FolderTree(state, child, folders, notes, expanded, onAddNote)
+            for (child in folders.filter { it.parentId == folder.id }) FolderTree(state, child, folders, notes, expanded, onToggleOpen, onAddNote)
             for (note in notes.filter { it.folderId == folder.id }) NoteItem(state, note)
         }
     }

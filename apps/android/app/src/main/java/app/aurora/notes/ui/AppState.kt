@@ -57,10 +57,10 @@ class AppState(context: Context) {
     /** Bumped whenever floating canvas chrome (the selection bar) must be repositioned. */
     var chromeTick by mutableStateOf(0)
         private set
-    private var lockXState by mutableStateOf(false)
+    private var lockXState by mutableStateOf(settings.lockX)
     var lockX: Boolean
         get() = lockXState
-        set(value) { lockXState = value; canvas?.lockX = value }
+        set(value) { lockXState = value; settings.lockX = value; canvas?.lockX = value }
 
     val openNote: LibraryNote? get() = library.notes.firstOrNull { it.id == openNoteId }
 
@@ -84,6 +84,7 @@ class AppState(context: Context) {
 
     fun attach(view: CanvasView) {
         canvas = view
+        view.lockX = lockX
         if (images.snapshotter == null) view.context.activity()?.let { images.snapshotter = app.aurora.notes.canvas.HtmlSnapshotter(it) }
         view.images = images
         view.onSelectionChanged = { selectionCount = it; refreshChrome() }
