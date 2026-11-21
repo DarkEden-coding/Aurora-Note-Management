@@ -1,12 +1,18 @@
 // Practice card base stylesheet and the standalone HTML preview document (KaTeX from CDN) returned to Claude.
 import { PRACTICE_CARD_CSS } from "@aurora/shared";
-import { PAGE_WIDTH } from "./page.js";
+import { CARD_WIDTH, CARD_X, PAGE_WIDTH } from "./page.js";
 
 const KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist";
 const CARD_PLACEHOLDER = "<!-- card html goes here -->";
 
-/** Full HTML document that previews one card at the page width the canvas uses. */
-export function practiceHtmlTemplate(cardHtml?: string): string {
+/** Full HTML document that previews one card (a practice card or a bare HTML block) at its width on the page. */
+export function practiceHtmlTemplate(
+  cardHtml?: string,
+  {
+    variant = "prompt",
+    width = CARD_WIDTH,
+  }: { variant?: "prompt" | "html"; width?: number } = {},
+): string {
   return `<!doctype html>
 <html>
 <head>
@@ -23,13 +29,13 @@ export function practiceHtmlTemplate(cardHtml?: string): string {
   ]})"></script>
 <style>
 html, body { margin: 0; background: #1b1d21; }
-body { width: ${PAGE_WIDTH}px; padding: 32px; box-sizing: border-box; }
+body { width: ${PAGE_WIDTH}px; padding: ${CARD_X}px; box-sizing: border-box; }
 ${PRACTICE_CARD_CSS}
-.card { height: auto; }
+.card { height: auto; width: ${width}px; }
 </style>
 </head>
 <body>
-<div class="card" data-variant="prompt">
+<div class="card" data-variant="${variant}">
 ${cardHtml ?? CARD_PLACEHOLDER}
 </div>
 </body>

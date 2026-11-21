@@ -120,6 +120,13 @@ svg {
   border-left: 4px solid rgba(255, 92, 92, 0.65);
 }
 
+/* Free-form HTML blocks (agent inserts and practice reference cards): the HTML brings its own background and spacing. */
+.card[data-variant="html"] {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .card[data-variant="label"] {
   overflow: visible;
   padding: 0;

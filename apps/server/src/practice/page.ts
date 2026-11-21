@@ -1,5 +1,6 @@
 // Paged-note geometry for practice: page size, world frames, and page-relative to world conversion (mirrors the web page layout).
 import type { Bounds } from "@aurora/shared";
+import { invalid } from "../errors.js";
 
 export const PAGE_WIDTH = 816;
 export const PAGE_HEIGHT = 1056;
@@ -26,4 +27,14 @@ export function boundsIntersect(a: Bounds, b: Bounds): boolean {
     a.y < b.y + b.height &&
     a.y + a.height > b.y
   );
+}
+
+/** Rejects page-relative bounds that leave the page, so a card never spills into the next one. */
+export function checkFitsPage(bounds: Bounds): void {
+  if (bounds.x + bounds.width > PAGE_WIDTH + 0.5) {
+    throw invalid(`x + width must be at most ${PAGE_WIDTH}`);
+  }
+  if (bounds.y + bounds.height > PAGE_HEIGHT + 0.5) {
+    throw invalid(`y + height must be at most ${PAGE_HEIGHT}`);
+  }
 }

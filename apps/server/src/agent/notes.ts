@@ -50,7 +50,7 @@ const TEXT_KINDS = ["rich-text", "sticky-note", "practice-card"];
 // Searchable text of one canvas_objects row (alias o): sticky text, card HTML, and every Tiptap text node.
 const OBJECT_TEXT_SQL = `concat_ws(' ', o.payload ->> 'text', o.payload ->> 'html',
   jsonb_path_query_array(o.payload -> 'doc', 'lax $.**.text')::text)`;
-// Agent-typed text sits above existing content, like practice marks.
+// Agent-typed text, pictures and HTML blocks sit above existing content, like practice marks.
 const AGENT_Z_INDEX = 100_000;
 // Agent text boxes read in a plain sans-serif at this size unless asked otherwise.
 const AGENT_TEXT_STYLE = { fontFamily: "sans", fontSize: 18 } as const;
@@ -293,7 +293,7 @@ export async function readNote(
       // Each object is listed on the page that holds its top-left corner.
       objects: objects
         .filter((object) => pageOf(pages, object.bounds) === page)
-        .map((object) => describeObject(object, page)),
+        .map((object) => describeObject(object, page, { fullHtml: false })),
     };
   });
 
@@ -469,34 +469,57 @@ function textHeight(text: string, width: number, fontSize: number): number {
   return Math.ceil(lines * fontSize * 1.2 + 8);
 }
 
+/** A new unlocked object of the agent's, placed in page-relative bounds. */
+export function agentObject(
+  ownerId: string,
+  noteId: string,
+  page: NotePage,
+  kind: CanvasObject["kind"],
+  bounds: Bounds,
+  payload: Record<string, unknown>,
+): CanvasObject {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    ownerId,
+    noteId,
+    pageId: null,
+    kind,
+    bounds: {
+      ...bounds,
+      x: page.origin.x + bounds.x,
+      y: page.origin.y + bounds.y,
+    },
+    rotation: 0,
+    zIndex: AGENT_Z_INDEX,
+    locked: false,
+    groupId: null,
+    payload: { ...payload, author: "agent" },
+    revision: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function textBlockObject(
   ownerId: string,
   noteId: string,
   page: NotePage,
   block: TextBlock,
 ): CanvasObject {
-  const now = new Date().toISOString();
   const { x, y, width, height: givenHeight, text, ...style } = block;
   const textStyle = { ...AGENT_TEXT_STYLE, ...style };
   const height =
     givenHeight ??
     textHeight(text, width, style.fontSize ?? AGENT_TEXT_STYLE.fontSize);
-  return {
-    id: crypto.randomUUID(),
+  return agentObject(
     ownerId,
     noteId,
-    pageId: null,
-    kind: "rich-text",
-    bounds: { x: page.origin.x + x, y: page.origin.y + y, width, height },
-    rotation: 0,
-    zIndex: AGENT_Z_INDEX,
-    locked: false,
-    groupId: null,
-    payload: { doc: textToDoc(text), ...textStyle, author: "agent" },
-    revision: 0,
-    createdAt: now,
-    updatedAt: now,
-  };
+    page,
+    "rich-text",
+    { x, y, width, height },
+    { doc: textToDoc(text), ...textStyle },
+  );
 }
 
 /**
@@ -519,27 +542,24 @@ export function annotationObjects(
   ];
 }
 
-export async function annotatePage(
+/**
+ * Adds objects built for one page of a note (unless dryRun), tells the user's devices, and
+ * returns the new ids with an image of the page including them.
+ */
+export async function addToPage(
   ownerId: string,
   input: {
     noteId: string;
     pageIndex: number;
-    marks: Mark[];
-    texts: TextBlock[];
     dryRun: boolean;
     image: PageImageOptions;
   },
+  build: (page: NotePage) => CanvasObject[] | Promise<CanvasObject[]>,
 ) {
   const { note, pages } = await notePages(ownerId, input.noteId);
   if (note.trashedAt) throw conflict("Note is in the trash");
   const page = pageAt(pages, input.pageIndex);
-  const inserts = annotationObjects(
-    ownerId,
-    note.id,
-    page,
-    input.marks,
-    input.texts,
-  );
+  const inserts = await build(page);
   if (inserts.length === 0) throw conflict("Nothing to add");
   const existing = await pageObjects(ownerId, note.id, page);
   if (!input.dryRun) {
@@ -563,4 +583,20 @@ export async function annotatePage(
       input.image,
     ),
   };
+}
+
+export function annotatePage(
+  ownerId: string,
+  input: {
+    noteId: string;
+    pageIndex: number;
+    marks: Mark[];
+    texts: TextBlock[];
+    dryRun: boolean;
+    image: PageImageOptions;
+  },
+) {
+  return addToPage(ownerId, input, (page) =>
+    annotationObjects(ownerId, input.noteId, page, input.marks, input.texts),
+  );
 }

@@ -7,9 +7,11 @@ import { resolveOwnerId } from "../account/owner.js";
 import { markSchema } from "./marks.js";
 import { CARD_WIDTH, PAGE_HEIGHT, PAGE_WIDTH } from "./page.js";
 import { practiceHtmlTemplate } from "./template.js";
+import { HTML_BLOCK_RULES } from "../agent/mcp-tools.js";
 import { listLocations } from "./location.js";
 import {
   finishSession,
+  postCard,
   getSession,
   gradeQuestion,
   listSessions,
@@ -30,7 +32,7 @@ const DEFAULT_WAIT_SECONDS = 50;
 // With a progress token, practice_wait streams a progress notification this often as a keepalive.
 const KEEPALIVE_MS = 15_000;
 
-const HTML_RULES = `Card HTML: plain HTML + inline CSS only (no <script>, no event handlers, no external URLs; data: images are fine). Math: $...$ inline, $$...$$ display (also \\(...\\), \\[...\\]), rendered with KaTeX. Cards are ${CARD_WIDTH}px wide on a dark background (#23262d, text #e6e8ec, 18px/1.5 system-ui); use class "muted" for secondary text. Labelled elements: give each multiple-choice option data-option="A" (B, C, ...) and any other part you want located data-region="name"; add <div class="final-answer"></div> (a dashed, empty box labelled "Final answer"; set a height with style if 96px is too small) for the user to write the final answer in. The submission returns each labelled element's page bounds in regions, draws them on the image, and adds a close-up image of the final-answer box. Include the box and options in the card height.`;
+const HTML_RULES = `Card HTML: plain HTML + inline CSS only (no <script>, no event handlers, no external URLs; data: images are fine). Math: $...$ inline, $$...$$ display (also \\(...\\), \\[...\\]), rendered with KaTeX. Question cards are ${CARD_WIDTH}px wide by default, on a dark background (#23262d, text #e6e8ec, 18px/1.5 system-ui); use class "muted" for secondary text. Labelled elements: give each multiple-choice option data-option="A" (B, C, ...) and any other part you want located data-region="name"; add <div class="final-answer"></div> (a dashed, empty box labelled "Final answer"; set a height with style if 96px is too small) for the user to write the final answer in. The submission returns each labelled element's page bounds in regions, draws them on the image, and adds a close-up image of the final-answer box. Include the box and options in the card height.`;
 
 const SUBMISSION_FIELDS = `Submission metadata (practice_wait "submitted", practice_get_submission, practice_grade dryRun), all page-relative: card = question card bounds; regions = [{ kind: "option" | "finalAnswer" | "region", label, x, y, width, height, text? }] measured in the user's browser on Done (empty for older app versions), also drawn as dashed blue labelled boxes on the image; ink = { bounds, clusters[] } of the user's writing; freeRegions = empty rectangles near the work, good spots for text marks or a feedback card; grading = the session's grading policy; image = { x, y, width, height, scale } the page area the first image shows; finalAnswerImage = the area of the second image (close-up of the final-answer box), when there is one.`;
 
@@ -40,14 +42,14 @@ const INSTRUCTIONS = `Aurora guided practice: you run a handwritten practice ses
 
 Checklist:
 1. Decide where the note goes. If the user has not named a project (and optional folder), call practice_list_locations, ask the user where to put it (offer the existing places), and wait for the answer before starting. Then practice_start with that location and the options the user asked for, and tell the user where the note is.
-2. Write the question HTML. When layout matters, preview it with practice_html_template (+ html_preview at ${PAGE_WIDTH}px). Then practice_post_question with a height that fits the content.
+2. Write the question HTML. When layout matters, preview it with practice_html_template (+ html_preview at ${PAGE_WIDTH}px). Then practice_post_question with a height that fits the content (optionally x, y, width and page to lay the page out yourself). Reference material that is not a question (an equation sheet, a diagram to use for several questions) goes on a practice_post_card card, e.g. on page 0 before the first question (then post that question with page "new").
 3. practice_wait until event "submitted" (on "timeout", just call it again). Waiting is cheap: if your MCP client allows long tool calls, pass timeoutSeconds up to the server maximum (see the tool) instead of re-calling every 50 s; send a progressToken to get keepalive progress notifications every 15 s.
 4. Look at the image and call practice_grade with points and marks. Apply the session's grading policy (returned as grading). To check placement first, call practice_grade with dryRun: true. If a mark lands badly, call practice_grade again: it replaces the question's marks until the user presses Next or Retry.
 5. practice_wait again: "next" -> post the next question (adapt difficulty to performance); "retry" -> wait for the next "submitted".
 6. After the last question's "next", practice_finish with a summary card.
 If the chat was interrupted, practice_get_session recovers the current state.
 
-Coordinates: every x/y you send or see is page-relative: origin at the page's top-left, page is ${PAGE_WIDTH} x ${PAGE_HEIGHT} units, y grows downward. The submission image is drawn at 1.5x by default with a faint grid every 50 units, labelled every 100 units; read positions off the grid labels, not image pixels. The question card sits at (32, 32), ${CARD_WIDTH} wide, drawn as a grey box with its labelled elements outlined; the user's writing is below/around it (and may be on it, e.g. a circled option). Place marks with the returned ink bounds/clusters and freeRegions rather than guessing.
+Coordinates: every x/y you send or see is page-relative: origin at the page's top-left, page is ${PAGE_WIDTH} x ${PAGE_HEIGHT} units, y grows downward. The submission image is drawn at 1.5x by default with a faint grid every 50 units, labelled every 100 units; read positions off the grid labels, not image pixels. The question card sits at (32, 32), ${CARD_WIDTH} wide unless you placed it elsewhere (the submission's card gives its bounds), drawn as a grey box with its labelled elements outlined; the user's writing is below/around it (and may be on it, e.g. a circled option). Place marks with the returned ink bounds/clusters and freeRegions rather than guessing.
 
 ${SUBMISSION_FIELDS}
 
@@ -70,6 +72,36 @@ const cardHeight = z
   .min(40)
   .max(PAGE_HEIGHT - 64)
   .describe("Card height in page units; size it to fit the content");
+// Optional placement of a question or reference card; omitted fields keep the default spot.
+const cardPlacementShape = {
+  x: z
+    .number()
+    .min(0)
+    .max(PAGE_WIDTH)
+    .optional()
+    .describe("Left edge, default 32"),
+  y: z
+    .number()
+    .min(0)
+    .max(PAGE_HEIGHT)
+    .optional()
+    .describe("Top edge, default 32"),
+  width: z
+    .number()
+    .min(40)
+    .max(PAGE_WIDTH)
+    .optional()
+    .describe(
+      `Default ${CARD_WIDTH}; x + width must stay within ${PAGE_WIDTH}`,
+    ),
+  height: z
+    .number()
+    .min(20)
+    .max(PAGE_HEIGHT)
+    .describe(
+      `Card height in page units; size it to fit the content (y + height must stay within ${PAGE_HEIGHT})`,
+    ),
+};
 const placedCardSchema = z
   .object({
     html: z.string().min(1).max(200_000),
@@ -123,24 +155,28 @@ export function buildPracticeMcpServer(
   uploadDir: string,
 ): McpServer {
   const server = new McpServer(
-    { name: "aurora-practice", version: "1.2.0" },
+    { name: "aurora-practice", version: "1.3.0" },
     { instructions: INSTRUCTIONS },
   );
 
   server.registerTool(
     "practice_html_template",
     {
-      description: `Returns a standalone HTML document (Aurora's card CSS + KaTeX from CDN) for previewing a card at the page width before sending it. Pass html to embed it, or omit it to get the wrapper with a placeholder comment. The .final-answer class is included. Example multiple-choice card: <p>Which is $f'(x)$ for $f(x)=x^3$?</p><p data-option="A">A. $3x^2$</p><p data-option="B">B. $x^2$</p><div class="final-answer" style="height:80px"></div>. ${HTML_RULES}`,
+      description: `Returns a standalone HTML document (Aurora's card CSS + KaTeX from CDN) for previewing a card before sending it. Pass html to embed it, or omit it to get the wrapper with a placeholder comment. variant "prompt" (default) previews a practice card; "html" previews a bare HTML block (notes_insert_html, practice_post_card). width defaults to ${CARD_WIDTH}. The .final-answer class is included. Example multiple-choice card: <p>Which is $f'(x)$ for $f(x)=x^3$?</p><p data-option="A">A. $3x^2$</p><p data-option="B">B. $x^2$</p><div class="final-answer" style="height:80px"></div>. ${HTML_RULES}`,
       inputSchema: {
         html: z
           .string()
           .max(200_000)
           .optional()
           .describe("Card body HTML to embed"),
+        variant: z.enum(["prompt", "html"]).default("prompt"),
+        width: z.number().min(40).max(PAGE_WIDTH).default(CARD_WIDTH),
       },
     },
-    async ({ html }) => ({
-      content: [{ type: "text", text: practiceHtmlTemplate(html) }],
+    async ({ html, variant, width }) => ({
+      content: [
+        { type: "text", text: practiceHtmlTemplate(html, { variant, width }) },
+      ],
     }),
   );
 
@@ -199,11 +235,12 @@ export function buildPracticeMcpServer(
   server.registerTool(
     "practice_post_question",
     {
-      description: `Posts the next question as a prompt card at page (32, 32), width ${CARD_WIDTH}, on the next page. Allowed only when every earlier question is closed (after its "next" event). Returns { questionId, session }. ${HTML_RULES}`,
+      description: `Posts the next question as a prompt card, by default at page (32, 32), width ${CARD_WIDTH}; pass x, y, width (and height) to place it anywhere on the page. page: "next" (default: page 0 for the first question, then a new page per question), "new" (always a new page, e.g. after a reference card on page 0) or "last" (the note's last page, e.g. one you put a reference card on with page "new"; never a page that already holds a question). Labelled elements (data-option, data-region, .final-answer) are measured wherever the card sits. Allowed only when every earlier question is closed (after its "next" event). Returns { questionId, session }. ${HTML_RULES}`,
       inputSchema: {
         sessionId,
         html: z.string().min(1).max(200_000).describe("Question card HTML"),
-        height: cardHeight,
+        ...cardPlacementShape,
+        page: z.enum(["next", "new", "last"]).default("next"),
         maxPoints: z.number().positive().max(1000),
         topics: z
           .array(z.string().min(1).max(80))
@@ -212,6 +249,20 @@ export function buildPracticeMcpServer(
       },
     },
     async (input) => json(await postQuestion(await ownerId(), input)),
+  );
+
+  server.registerTool(
+    "practice_post_card",
+    {
+      description: `Posts a reference card that is not a question (an equation sheet, a table of constants, a diagram, instructions) onto the practice note: it is never graded, never counted in the score or progress, and stays when questions are graded. Place it with x, y, width, height (default x 32, y 32, width ${CARD_WIDTH}); page "last" (default) puts it on the note's last page (page 0 before the first question, or the current question's page), "new" on a new page. Several cards may share a page. Allowed any time while the session is active; edit or delete it later with notes_edit_objects / notes_delete_objects. Returns { objectId, pageIndex, session }. ${HTML_BLOCK_RULES}`,
+      inputSchema: {
+        sessionId,
+        html: z.string().min(1).max(200_000).describe("Card HTML"),
+        ...cardPlacementShape,
+        page: z.enum(["last", "new"]).default("last"),
+      },
+    },
+    async (input) => json(await postCard(await ownerId(), input)),
   );
 
   server.registerTool(

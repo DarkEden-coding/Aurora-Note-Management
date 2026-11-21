@@ -394,6 +394,18 @@ export async function claimNextEvent(
 }
 
 /** Appends a page after the note's last page, copying its size and background; returns the new index. */
+export async function lastNotePageIndex(
+  db: Db,
+  ownerId: string,
+  noteId: string,
+): Promise<number> {
+  const result = await db.query<{ last: number | null }>(
+    "SELECT max(page_index) AS last FROM pages WHERE owner_id = $1 AND note_id = $2",
+    [ownerId, noteId],
+  );
+  return result.rows[0]?.last ?? 0;
+}
+
 export async function appendNotePage(
   db: Db,
   ownerId: string,

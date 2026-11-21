@@ -10,7 +10,7 @@ import type {
   PracticeOptions,
   PracticeSession,
 } from "@aurora/shared";
-import { notFound } from "../errors.js";
+import { conflict, notFound } from "../errors.js";
 import { withTransaction, getPool } from "../db/pool.js";
 import { queryRegionalObjects } from "../canvas/objects.js";
 import { resolveLocation, type PracticeLocation } from "./location.js";
@@ -26,6 +26,7 @@ import {
   CARD_WIDTH,
   CARD_X,
   CARD_Y,
+  checkFitsPage,
   PAGE_HEIGHT,
   PAGE_WIDTH,
   pageFrame,
@@ -48,8 +49,10 @@ import {
   checkFeedbackAllowed,
   nextQuestionIndex,
   planAction,
+  planCardPage,
   planGrade,
   planSubmit,
+  type CardPage,
   type QuestionFacts,
   type SessionFacts,
   type Transition,
@@ -60,6 +63,7 @@ import {
   insertEvent,
   appendNotePage,
   insertQuestion,
+  lastNotePageIndex,
   insertSession,
   listQuestions,
   listSessionSummaries,
@@ -289,17 +293,58 @@ async function commitObjects(
   return result;
 }
 
+// Where a question or reference card sits on its page; defaults to the original prompt card spot.
+export type CardPlacement = {
+  x?: number | undefined;
+  y?: number | undefined;
+  width?: number | undefined;
+  height: number;
+  page: CardPage;
+};
+
+function cardBounds(placement: CardPlacement): Bounds {
+  const bounds = {
+    x: placement.x ?? CARD_X,
+    y: placement.y ?? CARD_Y,
+    width: placement.width ?? CARD_WIDTH,
+    height: placement.height,
+  };
+  checkFitsPage(bounds);
+  return bounds;
+}
+
+/** Resolves the card's page (appending one when needed) inside the session transaction. */
+async function cardPageIndex(
+  client: pg.PoolClient,
+  ownerId: string,
+  session: SessionRow,
+  page: CardPage,
+  questionIndex: number | null,
+): Promise<{ pageIndex: number; pageAdded: boolean }> {
+  const questions = await listQuestions(client, session.id);
+  const planned = planCardPage(page, {
+    questionIndex,
+    lastPageIndex: await lastNotePageIndex(client, ownerId, session.note_id),
+    questionPages: questions.map((q) => q.page_index),
+  });
+  if (planned !== "append") return { pageIndex: planned, pageAdded: false };
+  return {
+    pageIndex: await appendNotePage(client, ownerId, session.note_id),
+    pageAdded: true,
+  };
+}
+
 export async function postQuestion(
   ownerId: string,
-  input: {
+  input: CardPlacement & {
     sessionId: string;
     html: string;
-    height: number;
     maxPoints: number;
     topics: string[];
   },
 ): Promise<{ questionId: string; session: PracticeSession }> {
   const questionId = crypto.randomUUID();
+  const bounds = cardBounds(input);
   const session = await commitObjects(
     ownerId,
     input.sessionId,
@@ -309,16 +354,18 @@ export async function postQuestion(
         sessionFacts(session),
         questions.map(questionFacts),
       );
-      // The note starts with one page; later questions each get a new last page.
-      const pageIndex =
-        index === 0
-          ? 0
-          : await appendNotePage(client, ownerId, session.note_id);
+      const { pageIndex, pageAdded } = await cardPageIndex(
+        client,
+        ownerId,
+        session,
+        input.page,
+        index,
+      );
       const prompt = cardObject(
         { ownerId, noteId: session.note_id, pageIndex },
         "prompt",
         input.html,
-        { x: CARD_X, y: CARD_Y, width: CARD_WIDTH, height: input.height },
+        bounds,
         { questionId, attempt: 1, role: "prompt" },
       );
       const changes = await writeObjects(client, ownerId, session.note_id, [
@@ -338,11 +385,56 @@ export async function postQuestion(
       return {
         result: await sessionState(client, session),
         changes,
-        pageAdded: index > 0,
+        pageAdded,
       };
     },
   );
   return { questionId, session };
+}
+
+/**
+ * Places a reference card (e.g. an equation sheet) on the practice note: not a question, never
+ * graded or replaced by grading, and allowed at any time while the session is active.
+ */
+export async function postCard(
+  ownerId: string,
+  input: CardPlacement & { sessionId: string; html: string },
+): Promise<{ objectId: string; pageIndex: number; session: PracticeSession }> {
+  const bounds = cardBounds(input);
+  let placed = { objectId: "", pageIndex: 0 };
+  const session = await commitObjects(
+    ownerId,
+    input.sessionId,
+    async (client, session) => {
+      if (session.status !== "active") {
+        throw conflict("This practice session is already complete");
+      }
+      const { pageIndex, pageAdded } = await cardPageIndex(
+        client,
+        ownerId,
+        session,
+        input.page,
+        null,
+      );
+      const card = cardObject(
+        { ownerId, noteId: session.note_id, pageIndex },
+        "html",
+        input.html,
+        bounds,
+        { questionId: null, attempt: 1, role: "info" },
+      );
+      placed = { objectId: card.id, pageIndex };
+      const changes = await writeObjects(client, ownerId, session.note_id, [
+        card,
+      ]);
+      return {
+        result: await sessionState(client, session),
+        changes,
+        pageAdded,
+      };
+    },
+  );
+  return { ...placed, session };
 }
 
 export type GradeInput = {

@@ -31,9 +31,10 @@ function docText(node: DocNode): string {
     : inner;
 }
 
-/** Recovers readable text from stored card or label HTML (tags dropped, <br> and blocks become newlines). */
+/** Recovers readable text from stored card or label HTML (tags and stylesheets dropped, <br> and blocks become newlines). */
 export function htmlToText(html: string): string {
   return html
+    .replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, "")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
     .replace(/<[^>]*>/g, "")

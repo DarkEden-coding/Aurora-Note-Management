@@ -237,6 +237,25 @@ function textBlockSvg(
     .join("");
 }
 
+// HTML blocks can't be laid out without a browser: draw a dashed outline, a corner label and the
+// block's text, clipped to the block by a nested <svg> viewport.
+function htmlBlockSvg(object: CanvasObject, label: string): string {
+  const b = object.bounds;
+  const pad = 8;
+  const text = textBlockSvg(
+    { x: pad, y: 14, width: Math.max(1, b.width - 2 * pad), height: b.height },
+    objectText(object) ?? "",
+    "#374151",
+    14,
+  );
+  return (
+    `<rect x="${r(b.x)}" y="${r(b.y)}" width="${r(b.width)}" height="${r(b.height)}" rx="6" fill="#fafafa" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6 4"/>` +
+    `<svg x="${r(b.x)}" y="${r(b.y)}" width="${r(b.width)}" height="${r(b.height)}">` +
+    `<text x="${r(b.width - pad)}" y="13" ${FONT} font-size="10" fill="#6b7280" text-anchor="end">${escapeXml(label)}</text>` +
+    `${text}</svg>`
+  );
+}
+
 const CARD_LABELS: Record<string, string> = {
   prompt: "Question card",
   feedback: "Feedback card",
@@ -246,8 +265,12 @@ const CARD_LABELS: Record<string, string> = {
 
 function objectSvg(object: CanvasObject, target: RenderTarget): string {
   const tag = practiceTagOf(object);
+  // Only a question's own marks fade; reference cards (no question) never do.
   const faded =
-    tag !== null && tag.role !== "prompt" && tag.attempt < target.attempt;
+    tag !== null &&
+    tag.questionId !== null &&
+    tag.role !== "prompt" &&
+    tag.attempt < target.attempt;
   // Agent marks keep the color they were given; user ink is darkened for the white page.
   const color = tag
     ? typeof object.payload.color === "string"
@@ -276,28 +299,30 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
     case "practice-card": {
       const variant = String(object.payload.variant ?? "");
       svg =
-        variant === "label"
-          ? textBlockSvg(
-              object.bounds,
-              objectText(object) ?? "",
-              style.color ?? MARK_COLOR,
-              style.fontSize ?? 20,
-              style,
-            )
-          : variant === "prompt"
-            ? labelledBox(
-                object,
-                "Question card",
-                "#e5e7eb",
-                "#9ca3af",
-                (target.regions?.length ?? 0) > 0,
+        variant === "html"
+          ? htmlBlockSvg(object, tag ? "Reference card" : "HTML block")
+          : variant === "label"
+            ? textBlockSvg(
+                object.bounds,
+                objectText(object) ?? "",
+                style.color ?? MARK_COLOR,
+                style.fontSize ?? 20,
+                style,
               )
-            : labelledBox(
-                object,
-                CARD_LABELS[variant] ?? "Card",
-                "none",
-                "#f0a8a8",
-              );
+            : variant === "prompt"
+              ? labelledBox(
+                  object,
+                  "Question card",
+                  "#e5e7eb",
+                  "#9ca3af",
+                  (target.regions?.length ?? 0) > 0,
+                )
+              : labelledBox(
+                  object,
+                  CARD_LABELS[variant] ?? "Card",
+                  "none",
+                  "#f0a8a8",
+                );
       break;
     }
     case "rich-text":

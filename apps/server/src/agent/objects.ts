@@ -17,6 +17,17 @@ import {
 } from "../practice/marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH } from "../practice/page.js";
 import { toPageBounds, type NotePage } from "./pages.js";
+import { MAX_AGENT_IMAGE_BASE64 } from "./images.js";
+
+// HTML of a card: sanitized when rendered (no scripts, handlers or external URLs).
+export const cardHtmlSchema = z.string().min(1).max(200_000);
+export const agentImageSchema = z
+  .string()
+  .min(16)
+  .max(MAX_AGENT_IMAGE_BASE64)
+  .describe(
+    "Base64 PNG, JPEG, WebP, GIF or SVG (a data: URL is fine), up to 5 MB; SVG is stored as a PNG",
+  );
 
 // Font fields apply to typed text; color applies to text and drawn objects; strokeWidth to drawn objects.
 export const objectStyleSchema = textStyleSchema.extend({
@@ -87,9 +98,38 @@ export function currentStyle(object: CanvasObject): Record<string, unknown> {
   return {};
 }
 
-/** One object as the agent sees it, in the page's coordinates. */
-export function describeObject(object: CanvasObject, page: NotePage) {
+// notes_read lists card HTML up to this length (data: images make it large); notes_get_objects always returns it.
+const LISTED_HTML_LENGTH = 4000;
+
+/** HTML cards (every practice card except text marks) carry their HTML; text marks carry text. */
+function cardHtml(object: CanvasObject): string | null {
+  if (object.kind !== "practice-card" || hasFont(object)) return null;
+  return typeof object.payload.html === "string" ? object.payload.html : "";
+}
+
+/** Content fields of an object: html for HTML cards (or its length when `fullHtml` is off and it is long), else text. */
+function objectContent(object: CanvasObject, fullHtml: boolean) {
+  const html = cardHtml(object);
+  if (html !== null) {
+    return fullHtml || html.length <= LISTED_HTML_LENGTH
+      ? { html }
+      : { htmlLength: html.length, text: objectText(object) ?? "" };
+  }
+  if (object.kind === "image") {
+    return {
+      alt: typeof object.payload.alt === "string" ? object.payload.alt : "",
+    };
+  }
   const text = objectText(object);
+  return text ? { text } : {};
+}
+
+/** One object as the agent sees it, in the page's coordinates. */
+export function describeObject(
+  object: CanvasObject,
+  page: NotePage,
+  { fullHtml = true }: { fullHtml?: boolean } = {},
+) {
   return {
     id: object.id,
     kind: object.kind,
@@ -101,7 +141,7 @@ export function describeObject(object: CanvasObject, page: NotePage) {
     pageIndex: page.index,
     ...toPageBounds(page, object.bounds),
     style: currentStyle(object),
-    ...(text ? { text } : {}),
+    ...objectContent(object, fullHtml),
   };
 }
 
@@ -198,21 +238,52 @@ export const objectEditSchema = z.object({
       "New text (rich-text, sticky-note, text mark); replaces it as plain paragraphs",
     ),
   style: objectStyleSchema.optional(),
+  html: cardHtmlSchema
+    .optional()
+    .describe(
+      "New HTML of an HTML card (notes_insert_html block or practice card)",
+    ),
+  image: agentImageSchema
+    .optional()
+    .describe(
+      "New picture for an image object (base64, as in notes_insert_image)",
+    ),
 });
 export type ObjectEdit = z.infer<typeof objectEditSchema>;
 
+/** Replaces the HTML of an HTML card. */
+export function replaceHtml(object: CanvasObject, html: string): CanvasObject {
+  if (cardHtml(object) === null) {
+    throw conflict(`${object.kind} ${object.id} has no HTML`);
+  }
+  return { ...object, payload: { ...object.payload, html } };
+}
+
 /**
  * Applies one edit. `page` holds the object now; `target` is where it goes (the same page unless
- * the edit moves it). Position, size, text and style each change only when given.
+ * the edit moves it). Position, size, text, html, picture and style each change only when given;
+ * `imageFileId` is the stored upload of `edit.image` (absent on a dry run).
  */
 export function editObject(
   object: CanvasObject,
   page: NotePage,
   target: NotePage,
   edit: ObjectEdit,
+  imageFileId?: string,
 ): CanvasObject {
   let next = object;
   if (edit.text !== undefined) next = replaceText(next, edit.text);
+  if (edit.html !== undefined) next = replaceHtml(next, edit.html);
+  if (edit.image !== undefined) {
+    if (next.kind !== "image") {
+      throw conflict(`${next.kind} ${next.id} is not an image`);
+    }
+    if (imageFileId) {
+      // The stored file replaces any legacy src URL.
+      const { src: _src, ...payload } = next.payload;
+      next = { ...next, payload: { ...payload, fileId: imageFileId } };
+    }
+  }
   if (edit.style) next = applyStyle(next, edit.style);
   let height = edit.height ?? object.bounds.height;
   // A label card grows or shrinks with its text unless a height is given.

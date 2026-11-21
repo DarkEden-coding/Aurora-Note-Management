@@ -17,6 +17,8 @@ import {
   type ObjectStyle,
 } from "./objects.js";
 import { pageOf, type NotePage } from "./pages.js";
+import { decodeAgentImage, storeAgentImage } from "./images.js";
+import { PAGE_WIDTH } from "../practice/page.js";
 import {
   noteObjects,
   notePages,
@@ -118,6 +120,24 @@ export async function getObjects(
     .map((item) => describeObject(item.object, item.page));
 }
 
+/** Decodes every replacement picture (so bad data fails before anything is saved) and stores it unless dryRun. */
+async function storeEditImages(
+  ownerId: string,
+  input: { edits: ObjectEdit[]; dryRun: boolean; image: PageImageOptions },
+): Promise<Map<string, string>> {
+  const fileIds = new Map<string, string>();
+  for (const edit of input.edits) {
+    if (edit.image === undefined) continue;
+    const decoded = decodeAgentImage(edit.image, edit.width ?? PAGE_WIDTH);
+    if (input.dryRun) continue;
+    fileIds.set(
+      edit.id,
+      await storeAgentImage(ownerId, input.image.uploadDir, decoded),
+    );
+  }
+  return fileIds;
+}
+
 export async function editObjects(
   ownerId: string,
   input: {
@@ -132,6 +152,7 @@ export async function editObjects(
   if (byId.size !== input.edits.length) {
     throw conflict("Each object can be edited once per call");
   }
+  const imageFileIds = await storeEditImages(ownerId, input);
   const { after } = await commit(
     ownerId,
     note.id,
@@ -143,7 +164,13 @@ export async function editObjects(
         const page = pageOf(pages, object.bounds);
         const target =
           edit.pageIndex === undefined ? page : pageAt(pages, edit.pageIndex);
-        return editObject(object, page, target, edit);
+        return editObject(
+          object,
+          page,
+          target,
+          edit,
+          imageFileIds.get(edit.id),
+        );
       }),
   );
   const touched = [

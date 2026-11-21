@@ -5,7 +5,7 @@ import { buildCardContent } from "./cardContent";
 import hostCss from "./practiceCard.css?inline";
 
 export type CardVariant =
-  "prompt" | "feedback" | "solution" | "label" | "summary";
+  "prompt" | "feedback" | "solution" | "label" | "summary" | "html";
 
 const VARIANTS: readonly string[] = [
   "prompt",
@@ -13,6 +13,7 @@ const VARIANTS: readonly string[] = [
   "solution",
   "label",
   "summary",
+  "html",
 ];
 
 export function cardVariant(payload: Record<string, unknown>): CardVariant {

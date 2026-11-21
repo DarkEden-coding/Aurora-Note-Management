@@ -23,7 +23,8 @@ export interface StrokePoint {
 // image:              { fileId: string, alt: string } (legacy: { src, alt })
 // attachment:         { name: string, size: number, fileId: string }
 // pdf-page-reference: { sourceNoteId: string, pageNumber: number, pdfUrl?: string }
-// practice-card:      { variant, html, practice } (server-created and locked; see features/practice)
+// practice-card:      { variant, html, practice } (server-created and locked; see features/practice);
+//                     variant "html" without a practice tag is an unlocked agent HTML block { html, author: "agent" }
 
 export function getRichTextDoc(
   o: CanvasObject,

@@ -6,7 +6,13 @@ import { canvasModeSchema, textStyleSchema } from "@aurora/shared";
 import { resolveOwnerId } from "../account/owner.js";
 import { markSchema } from "../practice/marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH } from "../practice/page.js";
-import { objectEditSchema, objectStyleSchema } from "./objects.js";
+import {
+  agentImageSchema,
+  cardHtmlSchema,
+  objectEditSchema,
+  objectStyleSchema,
+} from "./objects.js";
+import { insertHtml, insertImage, placementShape } from "./inserts.js";
 import {
   deleteObjects,
   editObjects,
@@ -28,8 +34,12 @@ const FONT_LIST = textStyleSchema.shape.fontFamily
   .options.map((font) => (font === "sans" ? "sans (default)" : font))
   .join(", ");
 
+// How HTML blocks (notes_insert_html, practice_post_card) render; practice cards follow the same sanitizing and math rules.
+export const HTML_BLOCK_RULES = `HTML blocks: plain HTML + CSS (inline style attributes and <style> elements, scoped to the block) with no <script>, event handlers or external URLs (links, src and url() may only use data: images or #ids). Tables, grid/flexbox, multi-column, borders, colors, fonts, inline <svg> and data: images all work. Math: $...$ inline, $$...$$ display (also \\(...\\), \\[...\\]), rendered with KaTeX. A block has no background or padding of its own: text is #e6e8ec, 18px/1.5 system-ui, on the note's dark page (#1b1d21), and content beyond its height is clipped; wrap it in your own styled element for a card look (the practice card look is background:#23262d; padding:20px 24px; border-radius:12px). Preview with practice_html_template (variant "html", your width). Server page images (notes_read, practice submissions) draw a block as a labelled outline with its text, not the full layout.`;
+
 export const NOTES_INSTRUCTIONS = `Library access: notes_list, notes_search and notes_read let you read everything the user has written, not just practice sessions. Every note is read as pages of ${PAGE_WIDTH} x ${PAGE_HEIGHT} units with the same page-relative coordinates and grid as practice images. Paged notes use their real pages; infinite and fixed canvases are cut into page-sized tiles that hold content (each page's origin gives its world position). notes_read returns each page's objects (id, kind, author, page-relative bounds, current style, typed text) plus PNG images of the pages showing everything on them (handwriting, imported PDF pages, pictures); handwriting is only in the images, so read it there (its strokes are counted, and listed with includeInk or notes_get_objects). Search matches titles and typed text, not handwriting. practice_list_sessions lists every past practice session; practice_get_session and practice_get_submission read any of them.
-Editing: notes_create, notes_rename, notes_add_page and notes_annotate add things (marks, comments and typed text boxes, with optional font and color). notes_edit_objects moves, resizes, retexts or restyles objects by id; notes_restyle sets one style on all text and/or agent marks of a note; notes_delete_objects deletes objects by explicit id only (it saves a restore snapshot first). Fonts: ${FONT_LIST}; any six-digit hex color. Use dryRun first, never delete or change the user's own handwriting or text unless the user asked for that, and only edit when the user asks you to.`;
+Editing: notes_create, notes_rename, notes_add_page and notes_annotate add things (marks, comments and typed text boxes, with optional font and color). notes_insert_image places a picture and notes_insert_html an HTML+CSS block at any x, y, width, height on any page, so you can build any layout. notes_edit_objects moves, resizes, retexts, restyles, re-HTMLs or replaces pictures of objects by id; notes_restyle sets one style on all text and/or agent marks of a note; notes_delete_objects deletes objects by explicit id only (it saves a restore snapshot first). Fonts: ${FONT_LIST}; any six-digit hex color. Use dryRun first, never delete or change the user's own handwriting or text unless the user asked for that, and only edit when the user asks you to.
+${HTML_BLOCK_RULES}`;
 
 const noteId = z
   .string()
@@ -199,10 +209,53 @@ export function registerNoteTools(server: McpServer, uploadDir: string): void {
   );
 
   server.registerTool(
+    "notes_insert_image",
+    {
+      description: `Places a picture on one page of a note (page index as in notes_read) at page-relative x, y, width, height (the picture is stretched to that box, so keep its aspect ratio). data is base64 PNG, JPEG, WebP, GIF or SVG (a data: URL is fine), up to 5 MB; SVG is rasterized to PNG (it may only link to #ids and embedded data: images). The picture is stored as an ordinary upload, syncs to the user's devices and shows in page images. Move, resize or replace it later with notes_edit_objects (image), remove it with notes_delete_objects. Returns { objectId, fileId, pageIndex } and the page image.`,
+      inputSchema: {
+        noteId,
+        pageIndex: z.number().int().min(0),
+        ...placementShape,
+        data: agentImageSchema,
+        alt: z.string().max(200).optional().describe("Short description"),
+        scale: imageScale,
+      },
+    },
+    async ({ scale, ...input }) => {
+      const { meta, image } = await insertImage(await ownerId(), uploadDir, {
+        ...input,
+        image: { scale, uploadDir },
+      });
+      return withImages(meta, [image]);
+    },
+  );
+
+  server.registerTool(
+    "notes_insert_html",
+    {
+      description: `Places an HTML+CSS block on one page of any note at page-relative x, y, width, height (must stay on the page): tables, grids, diagrams (inline SVG), equation sheets, multi-column layouts, styled headings. It renders in the web and Android apps like a practice card; the user can move, resize or delete it. Change its html, position or size later with notes_edit_objects; notes_get_objects returns its html. Returns { objectId, pageIndex } and the page image. ${HTML_BLOCK_RULES}`,
+      inputSchema: {
+        noteId,
+        pageIndex: z.number().int().min(0),
+        ...placementShape,
+        html: cardHtmlSchema,
+        scale: imageScale,
+      },
+    },
+    async ({ scale, ...input }) => {
+      const { meta, image } = await insertHtml(await ownerId(), {
+        ...input,
+        image: { scale, uploadDir },
+      });
+      return withImages(meta, [image]);
+    },
+  );
+
+  server.registerTool(
     "notes_get_objects",
     {
       description:
-        'Details of objects in a note, in page-relative coordinates: pass ids (from notes_read), or pageIndex for everything on that page, the user\'s handwriting strokes included. Each object has id, kind (variant for practice cards; a text mark is a practice-card with variant "label"), author, locked, pageIndex, x/y/width/height, style and text.',
+        'Details of objects in a note, in page-relative coordinates: pass ids (from notes_read), or pageIndex for everything on that page, the user\'s handwriting strokes included. Each object has id, kind (variant for practice cards: a text mark is variant "label", an HTML block variant "html"), author, locked, pageIndex, x/y/width/height, style, and its content: text, html for HTML and practice cards, alt for images. notes_read gives long card HTML as htmlLength plus text; read it here.',
       inputSchema: {
         noteId,
         ids: z.array(z.string().uuid()).min(1).max(500).optional(),
@@ -215,7 +268,7 @@ export function registerNoteTools(server: McpServer, uploadDir: string): void {
   server.registerTool(
     "notes_edit_objects",
     {
-      description: `Edits existing objects by id (any author). Each edit changes only what it gives: x/y (page-relative; pageIndex moves it to another page), width/height (resizes; ink and lines scale with it), text (rich-text box, sticky note or text mark; replaced as plain paragraphs, so formatting inside a rich-text box is lost), and style: fontFamily (${FONT_LIST}), fontSize (8-96), fontWeight, fontStyle and color for text boxes and text marks; color and strokeWidth for ink, lines, arrows, boxes and ellipses. A style field an object cannot take is an error. Changes the user's own objects only when the user asked. dryRun: true checks the edits and returns the result without saving. Returns the edited objects and images of their pages.`,
+      description: `Edits existing objects by id (any author). Each edit changes only what it gives: x/y (page-relative; pageIndex moves it to another page), width/height (resizes; ink and lines scale with it), text (rich-text box, sticky note or text mark; replaced as plain paragraphs, so formatting inside a rich-text box is lost), html (HTML blocks and practice cards; same rules as notes_insert_html), image (a new picture for an image object, base64 like notes_insert_image; it keeps its bounds unless you pass x/y/width/height), and style: fontFamily (${FONT_LIST}), fontSize (8-96), fontWeight, fontStyle and color for text boxes and text marks; color and strokeWidth for ink, lines, arrows, boxes and ellipses. A style field an object cannot take is an error. Changes the user's own objects only when the user asked. dryRun: true checks the edits and returns the result without saving. Returns the edited objects and images of their pages.`,
       inputSchema: {
         noteId,
         edits: z.array(objectEditSchema).min(1).max(100),

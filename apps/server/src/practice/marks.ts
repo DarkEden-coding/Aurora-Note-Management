@@ -15,11 +15,13 @@ const MARK_WIDTH = 3;
 // Practice objects stay above the user's handwriting.
 const PRACTICE_Z_INDEX = 100_000;
 
+// info: a reference card (e.g. an equation sheet) that is not a question.
 export type PracticeRole =
-  "prompt" | "mark" | "label" | "feedback" | "solution" | "summary";
+  "prompt" | "mark" | "label" | "feedback" | "solution" | "summary" | "info";
 
+// html: a free-form HTML block (agent inserts in any note, practice reference cards).
 export type CardVariant =
-  "prompt" | "feedback" | "solution" | "label" | "summary";
+  "prompt" | "feedback" | "solution" | "label" | "summary" | "html";
 
 export type PracticeTag = {
   questionId: string | null;

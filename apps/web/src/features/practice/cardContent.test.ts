@@ -10,6 +10,29 @@ function render(html: string): HTMLDivElement {
 }
 
 describe("practice card content", () => {
+  it("keeps rich layouts: styles, grids, tables, columns, inline SVG and data: images", () => {
+    const card = render(
+      `<style>.grid { display: grid; grid-template-columns: 1fr 1fr }</style>` +
+        `<div class="grid" style="columns: 2; border: 1px solid #fff; font-family: serif">` +
+        `<table><tr><th>F</th><td>$F=ma$</td></tr></table>` +
+        `<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#1f6feb"/></svg>` +
+        `<img src="data:image/png;base64,AAAA"></div>`,
+    );
+    expect(card.querySelector("style")?.textContent).toContain(
+      "grid-template-columns",
+    );
+    expect(card.querySelector(".grid")?.getAttribute("style")).toContain(
+      "columns: 2",
+    );
+    expect(card.querySelector("td .katex")).not.toBeNull();
+    expect(card.querySelector("svg circle")?.getAttribute("fill")).toBe(
+      "#1f6feb",
+    );
+    expect(card.querySelector("img")?.getAttribute("src")).toMatch(
+      /^data:image/,
+    );
+  });
+
   it("strips scripts, event handlers, embeds, and external URLs", () => {
     const card = render(
       `<style>@import url(https://evil.test/a.css); .x { background: url(https://evil.test/b.png) }</style>` +

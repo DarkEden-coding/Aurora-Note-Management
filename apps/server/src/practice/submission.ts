@@ -79,8 +79,9 @@ export function describePage(
   const card = prompt
     ? onPageBounds(prompt, frame.y)
     : { x: CARD_X, y: CARD_Y, width: CARD_WIDTH, height: 0 };
+  // The user's work: everything except practice objects and the agent's own inserts.
   const inkBoxes = onPage
-    .filter((o) => practiceTagOf(o) === null)
+    .filter((o) => practiceTagOf(o) === null && o.payload.author !== "agent")
     .map((o) => onPageBounds(o, frame.y));
   const occupied = onPage.map((o) => onPageBounds(o, frame.y));
   const regions = cardRegions.map((region) => ({
@@ -114,7 +115,7 @@ function imageArea(
     .filter((o) => boundsIntersect(o.bounds, frame))
     .filter((o) => {
       const tag = practiceTagOf(o);
-      return tag !== null && tag.role !== "prompt" && tag.role !== "summary";
+      return tag !== null && tag.questionId !== null && tag.role !== "prompt";
     })
     .map((o) => onPageBounds(o, frame.y));
   const content = unionBounds([

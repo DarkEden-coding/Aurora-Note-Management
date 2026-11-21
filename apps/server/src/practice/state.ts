@@ -109,6 +109,40 @@ export function nextQuestionIndex(
 }
 
 /**
+ * Where a practice card goes: "next" = page 0 for the first question, else a new page (the
+ * original rule); "new" = a new last page; "last" = the note's last page.
+ */
+export type CardPage = "next" | "new" | "last";
+
+/**
+ * The page for a card: an existing page index, or "append". Questions never share a page,
+ * because each submission is the whole page's ink; reference cards may go anywhere.
+ */
+export function planCardPage(
+  page: CardPage,
+  facts: {
+    questionIndex: number | null;
+    lastPageIndex: number;
+    questionPages: number[];
+  },
+): number | "append" {
+  if (page === "new") return "append";
+  if (page === "next") {
+    if (facts.questionIndex === null) return facts.lastPageIndex;
+    return facts.questionIndex === 0 ? 0 : "append";
+  }
+  if (
+    facts.questionIndex !== null &&
+    facts.questionPages.includes(facts.lastPageIndex)
+  ) {
+    throw conflict(
+      'The last page already holds a question; use page "new" or "next"',
+    );
+  }
+  return facts.lastPageIndex;
+}
+
+/**
  * Score columns after grading: `points` is fixed by the first attempt, `latestPoints` follows every attempt.
  * A graded question can be re-graded (marks replaced, score corrected) until the user presses Next or Retry.
  */
