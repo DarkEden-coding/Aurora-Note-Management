@@ -149,8 +149,12 @@ class SceneRenderer {
                     else c.drawBitmap(bitmap, null, containIn(bitmap, rect), bitmapPaint)
                 }
             }
+            "practice-card", "rich-text" -> {
+                val rect = RectF(b.x.toFloat(), b.y.toFloat(), b.right.toFloat(), b.bottom.toFloat())
+                Prepared(o) { c -> images?.html(o)?.let { c.drawBitmap(it, null, rect, bitmapPaint) } }
+            }
             else -> {
-                // Rich text and practice cards are not drawn natively yet.
+                // Kinds the native canvas does not draw yet show their frame.
                 val rect = RectF(b.x.toFloat(), b.y.toFloat(), b.right.toFloat(), b.bottom.toFloat())
                 Prepared(o) { c -> c.drawRect(rect, placeholderPaint); c.drawText(o.kind, rect.left + 6, rect.top + 16, labelPaint) }
             }

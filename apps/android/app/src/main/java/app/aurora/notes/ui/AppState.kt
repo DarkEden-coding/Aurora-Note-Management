@@ -84,6 +84,7 @@ class AppState(context: Context) {
 
     fun attach(view: CanvasView) {
         canvas = view
+        if (images.snapshotter == null) view.context.activity()?.let { images.snapshotter = app.aurora.notes.canvas.HtmlSnapshotter(it) }
         view.images = images
         view.onSelectionChanged = { selectionCount = it; refreshChrome() }
         view.onChromeChanged = { refreshChrome() }
@@ -181,4 +182,10 @@ class AppState(context: Context) {
     fun launch(block: suspend () -> Unit) = scope.launch {
         try { block(); refreshLibrary() } catch (e: Exception) { error = e.message }
     }
+}
+
+private tailrec fun android.content.Context.activity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.activity()
+    else -> null
 }

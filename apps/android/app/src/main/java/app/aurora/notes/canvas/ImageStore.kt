@@ -12,6 +12,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.LruCache
 import app.aurora.notes.data.AuroraApi
+import app.aurora.notes.data.CanvasObject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +38,9 @@ class ImageStore(context: Context, private val api: AuroraApi) {
     private val loading = HashSet<String>()
     private val failedAt = HashMap<String, Long>()
 
+    /** Draws practice cards and rich text; set once the activity window exists. */
+    var snapshotter: HtmlSnapshotter? = null
+
     /** Called on the main thread when a picture finishes loading. */
     var onLoaded: (() -> Unit)? = null
 
@@ -49,6 +53,13 @@ class ImageStore(context: Context, private val api: AuroraApi) {
     fun pdfPage(fileId: String, pageNumber: Int, widthUnits: Double): Bitmap? = cached("$fileId#$pageNumber") {
         val file = withContext(Dispatchers.IO) { download(fileId) }
         withContext(pdfWorker) { renderPage(fileId, file, pageNumber, widthUnits) }
+    }
+
+    /** A practice card or rich-text block rendered by the web renderer, or null while it renders. */
+    fun html(o: CanvasObject): Bitmap? {
+        val renderer = snapshotter ?: return null
+        val key = "html:${o.id}:${o.payload.hashCode()}:${o.bounds.width}x${o.bounds.height}"
+        return cached(key) { renderer.render(o.kind, o.payload, o.bounds.width, o.bounds.height) }
     }
 
     private fun cached(key: String, load: suspend () -> Bitmap?): Bitmap? {

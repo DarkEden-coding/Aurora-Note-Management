@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Offscreen renderer for practice cards and rich text; the script is built from apps/web (npm run build:native). -->
+<html data-theme="neomorphic">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="build/render.css" />
+    <style>
+      html, body { margin: 0; background: transparent; }
+      body { font-family: var(--font); color: #e6e8ec; }
+      #frame { position: relative; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <div id="frame"></div>
+    <script src="build/render.js"></script>
+  </body>
+</html>
