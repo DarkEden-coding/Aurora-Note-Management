@@ -16,7 +16,7 @@ import {
   searchNotes,
 } from "./notes.js";
 
-export const NOTES_INSTRUCTIONS = `Library access: notes_list, notes_search and notes_read let you read everything the user has written, not just practice sessions. Every note is read as pages of ${PAGE_WIDTH} x ${PAGE_HEIGHT} units with the same page-relative coordinates and grid as practice images. Paged notes use their real pages; infinite and fixed canvases are cut into page-sized tiles that hold content (each page's origin gives its world position). notes_read returns each page's typed text (rich text, sticky notes, cards) as text plus PNG images of the pages, handwriting included; handwriting is only in the images, so read it there. Search matches titles and typed text, not handwriting. practice_list_sessions lists every past practice session; practice_get_session and practice_get_submission read any of them. Edits are additive only (nothing is ever deleted): notes_create, notes_rename, notes_add_page, and notes_annotate (red marks, red comments and typed text on a page; use dryRun first to check placement). Only edit when the user asks you to.`;
+export const NOTES_INSTRUCTIONS = `Library access: notes_list, notes_search and notes_read let you read everything the user has written, not just practice sessions. Every note is read as pages of ${PAGE_WIDTH} x ${PAGE_HEIGHT} units with the same page-relative coordinates and grid as practice images. Paged notes use their real pages; infinite and fixed canvases are cut into page-sized tiles that hold content (each page's origin gives its world position). notes_read returns each page's typed text (rich text, sticky notes, cards) as text plus PNG images of the pages showing everything on them (handwriting, imported PDF pages, pictures); handwriting is only in the images, so read it there. Search matches titles and typed text, not handwriting. practice_list_sessions lists every past practice session; practice_get_session and practice_get_submission read any of them. Edits are additive only (nothing is ever deleted): notes_create, notes_rename, notes_add_page, and notes_annotate (red marks, red comments and typed text on a page; use dryRun first to check placement). Only edit when the user asks you to.`;
 
 const noteId = z
   .string()
@@ -48,7 +48,7 @@ function withImages(meta: unknown, images: Buffer[]): CallToolResult {
 
 const ownerId = resolveOwnerId;
 
-export function registerNoteTools(server: McpServer): void {
+export function registerNoteTools(server: McpServer, uploadDir: string): void {
   server.registerTool(
     "notes_list",
     {
@@ -103,7 +103,7 @@ export function registerNoteTools(server: McpServer): void {
     async ({ noteId, pages, scale }) => {
       const { meta, images } = await readNote(await ownerId(), noteId, {
         pages,
-        image: { scale },
+        image: { scale, uploadDir },
       });
       return withImages(meta, images);
     },
@@ -171,7 +171,7 @@ export function registerNoteTools(server: McpServer): void {
     async ({ scale, ...input }) => {
       const { meta, image } = await annotatePage(await ownerId(), {
         ...input,
-        image: { scale },
+        image: { scale, uploadDir },
       });
       return withImages(meta, [image]);
     },

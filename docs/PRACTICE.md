@@ -162,7 +162,9 @@ page-relative coordinates and grid as submission images: paged notes use their
 pages; infinite and fixed canvases are cut into page-sized tiles on a grid
 anchored at the world origin, keeping only tiles with content, in reading
 order. Each page reports its world `origin`. Typed text and cards are drawn as
-plain text in the images; images and PDF pages are drawn as labelled boxes.
+plain text in the images. Uploaded images are embedded, and imported PDF pages
+are rasterized with poppler's `pdftoppm` (installed in the Docker image; where
+it is missing they are drawn as labelled boxes).
 
 ## Submission image
 

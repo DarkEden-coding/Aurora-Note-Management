@@ -120,6 +120,7 @@ const ownerId = resolveOwnerId;
 export function buildPracticeMcpServer(
   appUrl: string,
   maxWaitSeconds: number,
+  uploadDir: string,
 ): McpServer {
   const server = new McpServer(
     { name: "aurora-practice", version: "1.2.0" },
@@ -371,7 +372,7 @@ export function buildPracticeMcpServer(
     async (filters) => json(await listSessions(await ownerId(), filters)),
   );
 
-  registerNoteTools(server);
+  registerNoteTools(server, uploadDir);
 
   return server;
 }

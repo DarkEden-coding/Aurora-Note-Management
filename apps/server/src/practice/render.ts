@@ -17,6 +17,8 @@ export type RenderTarget = {
   attempt: number;
   // World frame of the page; defaults to the paged-note frame of pageIndex (canvas notes pass a tile).
   frame?: Bounds;
+  // Data URIs for image and PDF-page objects by object id; objects without one are drawn as boxes.
+  rasters?: Map<string, string>;
   // Card elements the browser measured, already moved to page coordinates; drawn on the grey question card.
   regions?: PracticeCardRegion[];
 };
@@ -232,6 +234,11 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
     tag !== null && tag.role !== "prompt" && tag.attempt < target.attempt;
   const color = tag ? MARK_COLOR : inkColor(object.payload.color);
   let svg: string;
+  const raster = target.rasters?.get(object.id);
+  if (raster) {
+    const b = object.bounds;
+    return `<image href="${raster}" x="${r(b.x)}" y="${r(b.y)}" width="${r(b.width)}" height="${r(b.height)}" preserveAspectRatio="none"/>`;
+  }
   switch (object.kind) {
     case "stroke":
       svg = strokeSvg(object, color);

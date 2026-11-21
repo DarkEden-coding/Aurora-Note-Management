@@ -1,10 +1,15 @@
 // Agent library tools: page layout for any note, typed-text extraction, annotation placement, rendering, and tool discovery.
+import { spawnSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CanvasObject } from "@aurora/shared";
 import { canvasTiles, pagedNotePages } from "../src/agent/pages.js";
 import { annotationObjects } from "../src/agent/notes.js";
+import { pdfPagePng } from "../src/agent/rasters.js";
 import { objectText, textToDoc } from "../src/canvas/text.js";
 import { buildPageSvg } from "../src/practice/render.js";
 import { practiceTagOf } from "../src/practice/marks.js";
@@ -142,7 +147,11 @@ describe("annotations", () => {
 
 describe("MCP discovery", () => {
   it("lists the library tools next to the practice tools", async () => {
-    const server = buildPracticeMcpServer("https://aurora.test", 900);
+    const server = buildPracticeMcpServer(
+      "https://aurora.test",
+      900,
+      "/tmp/uploads",
+    );
     const client = new Client({ name: "test", version: "1.0.0" });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
@@ -164,3 +173,41 @@ describe("MCP discovery", () => {
     await client.close();
   });
 });
+
+// A one-page PDF with a black square; pdftoppm rebuilds the missing xref table.
+const TINY_PDF = `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >> endobj
+4 0 obj << /Length 24 >> stream
+0 0 0 rg 50 50 100 100 re f
+endstream endobj
+trailer << /Root 1 0 R >>
+%%EOF`;
+
+describe.skipIf(spawnSync("pdftoppm", ["-v"]).error !== undefined)(
+  "imported PDF pages",
+  () => {
+    it("rasterizes the referenced page and embeds it in the page image", async () => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "aurora-test-"));
+      const file = path.join(dir, "doc.pdf");
+      await fs.writeFile(file, TINY_PDF);
+      const png = await pdfPagePng(file, 1, 300);
+      await fs.rm(dir, { recursive: true, force: true });
+      expect(png?.subarray(1, 4).toString()).toBe("PNG");
+      expect(await pdfPagePng(file, 1, 300)).toBeNull();
+
+      const ref = object(
+        "pdf-page-reference",
+        { x: 0, y: 0, width: 400, height: 400 },
+        { pageNumber: 1 },
+      );
+      const rasters = new Map([
+        [ref.id, `data:image/png;base64,${png!.toString("base64")}`],
+      ]);
+      const svg = buildPageSvg([ref], { pageIndex: 0, attempt: 1, rasters });
+      expect(svg).toContain('<image href="data:image/png;base64,');
+      expect(svg).not.toContain("pdf-page-reference");
+    });
+  },
+);

@@ -212,7 +212,11 @@ describe("practice MCP surface", () => {
   });
 
   it("advertises the new tool parameters", async () => {
-    const server = buildPracticeMcpServer("https://aurora.test", 900);
+    const server = buildPracticeMcpServer(
+      "https://aurora.test",
+      900,
+      "/tmp/uploads",
+    );
     const client = new Client({ name: "test", version: "1" });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverSide), client.connect(clientSide)]);

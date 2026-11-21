@@ -24,6 +24,7 @@ import {
 import { markToObjects, practiceTagOf, type Mark } from "../practice/marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect } from "../practice/page.js";
 import { renderPagePng } from "../practice/render.js";
+import { objectRasters } from "./rasters.js";
 import { broadcastObjectChanges, writeObjects } from "../practice/publish.js";
 import { listQuestions, loadSessionByNote } from "../practice/store.js";
 import {
@@ -43,7 +44,8 @@ const OBJECT_TEXT_SQL = `concat_ws(' ', o.payload ->> 'text', o.payload ->> 'htm
 const AGENT_Z_INDEX = 100_000;
 const TEXT_LINE_HEIGHT = 24;
 
-export type PageImageOptions = { scale: number };
+// uploadDir locates image and PDF files so page images show them.
+export type PageImageOptions = { scale: number; uploadDir: string };
 
 function broadcastLibraryChanged(ownerId: string): void {
   broadcastToOwner(ownerId, {
@@ -178,13 +180,20 @@ async function pageObjects(
 }
 
 async function renderNotePage(
+  ownerId: string,
   objects: CanvasObject[],
   page: NotePage,
   options: PageImageOptions,
 ): Promise<Buffer> {
+  const rasters = await objectRasters(
+    ownerId,
+    objects.filter((o) => boundsIntersect(o.bounds, pageWorldFrame(page))),
+    options.uploadDir,
+    options.scale,
+  );
   return renderPagePng(
     objects,
-    { pageIndex: page.index, attempt: 1, frame: pageWorldFrame(page) },
+    { pageIndex: page.index, attempt: 1, frame: pageWorldFrame(page), rasters },
     { scale: options.scale },
   );
 }
@@ -255,7 +264,7 @@ export async function readNote(
     const objects = await pageObjects(ownerId, noteId, page);
     images.push({
       pageIndex: index,
-      png: await renderNotePage(objects, page, input.image),
+      png: await renderNotePage(ownerId, objects, page, input.image),
     });
   }
 
@@ -265,12 +274,6 @@ export async function readNote(
       pageSize: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
       pageCount: pages.length,
       practiceSessionId: session?.id ?? null,
-      ...(note.kind === "pdf"
-        ? {
-            pdfNote:
-              "The PDF's own pages are not drawn in the images; only ink and objects placed on the note are.",
-          }
-        : {}),
       pages: pageInfo,
       images: images.map((image) => ({
         pageIndex: image.pageIndex,
@@ -503,6 +506,11 @@ export async function annotatePage(
       origin: page.origin,
       objectIds: input.dryRun ? [] : inserts.map((object) => object.id),
     },
-    image: await renderNotePage([...existing, ...inserts], page, input.image),
+    image: await renderNotePage(
+      ownerId,
+      [...existing, ...inserts],
+      page,
+      input.image,
+    ),
   };
 }

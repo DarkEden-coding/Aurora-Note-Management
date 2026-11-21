@@ -35,6 +35,7 @@ export function registerPracticeMcpRoute(
     const server = buildPracticeMcpServer(
       env.AURORA_ORIGIN,
       env.AURORA_PRACTICE_WAIT_MAX_SECONDS,
+      env.AURORA_UPLOAD_DIR,
     );
     // Plain JSON keeps simple clients working; a progress token switches this response to SSE
     // so practice_wait can stream keepalive progress notifications during a long wait.
