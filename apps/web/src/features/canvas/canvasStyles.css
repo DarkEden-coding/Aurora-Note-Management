@@ -131,7 +131,8 @@
   position: absolute;
   z-index: 8;
   left: 50%;
-  bottom: 22px;
+  /* Sits above the zoom readout (.canvas-statusbar, bottom 24px, about 24px tall). */
+  bottom: 58px;
   display: flex;
   align-items: center;
   gap: 6px;

@@ -663,7 +663,8 @@ private fun CanvasArea(state: AppState, modifier: Modifier) {
         val note = state.openNote
         if (note?.canvasMode == "paged" && !state.importedPdf && state.selectionCount == 0) {
             Row(
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 22.dp).heightIn(min = 38.dp)
+                // Above the zoom readout, which sits at the bottom centre.
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 58.dp).heightIn(min = 38.dp)
                     .panel(radius = 999.dp, fill = Neo.surfaceRaised).clickable { state.addPageBelow() }.padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
