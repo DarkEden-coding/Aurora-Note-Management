@@ -443,12 +443,19 @@ export function CanvasWorkspace({
   const importedPdfRef = useRef<File | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [placementPropertiesOpen, setPlacementPropertiesOpen] = useState(false);
-  const changeTool = useCallback((nextTool: CanvasTool): void => {
-    setTool(nextTool);
-    setPlacementPropertiesOpen(
-      isInkTool(nextTool) || nextTool === "text" || isVectorTool(nextTool),
-    );
-  }, []);
+  const selection = useSelection();
+  const { clear: clearSelection } = selection;
+  const changeTool = useCallback(
+    (nextTool: CanvasTool): void => {
+      setTool(nextTool);
+      setPlacementPropertiesOpen(
+        isInkTool(nextTool) || nextTool === "text" || isVectorTool(nextTool),
+      );
+      // Picking a drawing or pan tool ends the current selection; select and lasso keep it.
+      if (nextTool !== "select" && nextTool !== "lasso") clearSelection();
+    },
+    [clearSelection],
+  );
   const palette = drawingPalette ?? (["#000000"] as DrawingPalette);
   const [drawingStyle, setDrawingStyle] = useState<DrawingStyle>(() => ({
     strokeColor: palette[0] ?? "#000000",
@@ -476,7 +483,6 @@ export function CanvasWorkspace({
   const [history, setHistory] = useState<HistoryState>(EMPTY_HISTORY);
   const historyRef = useRef(history);
   historyRef.current = history;
-  const selection = useSelection();
   const deviceIdRef = useRef(getDeviceId());
   const pinchRef = useRef<Map<number, Point>>(new Map());
   const pinchSpanRef = useRef<{
@@ -2211,7 +2217,10 @@ export function CanvasWorkspace({
         setViewport((current) => ({ ...current, ...saved }));
       } else if (activeMode === "infinite") {
         restoredViewportRef.current = null;
-        setViewport((current) => ({ ...current, ...DEFAULT_INFINITE_VIEWPORT }));
+        setViewport((current) => ({
+          ...current,
+          ...DEFAULT_INFINITE_VIEWPORT,
+        }));
       } else {
         // Centring a new bounded note needs the container size.
         if (scrollBounds === null) return;

@@ -18,6 +18,17 @@ android {
         versionName = "0.1.0"
     }
 
+    buildTypes {
+        release {
+            // Compose is several times slower in a debuggable, unoptimised build; this is the build to install.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Sideloaded: signed with the local debug key so it installs over a debug build and keeps app data.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {
@@ -31,11 +42,12 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.1")
     implementation("androidx.core:core-ktx:1.19.1")
+    // Applies the libraries' baseline profiles at install so Compose starts compiled, not interpreted.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("com.squareup.okhttp3:okhttp:5.5.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")

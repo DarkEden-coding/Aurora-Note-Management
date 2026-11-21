@@ -75,6 +75,8 @@ class CanvasView(context: Context) : View(context) {
             if (value == field) return
             field = value
             cancelGesture()
+            // Picking a drawing or pan tool ends the current selection; select and lasso keep it.
+            if (value != Tool.Select && value != Tool.Lasso) clearSelection()
         }
     var penColor = "#e6e8ec"
     var highlighterColor = "#ffe066"

@@ -2,8 +2,10 @@
 // and inset box shadows, so panels, buttons and wells carry the same raised and pressed depth.
 package app.aurora.notes.ui
 
+import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,6 +25,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
 
@@ -83,23 +86,63 @@ private fun roundRect(scope: DrawScope, radius: Dp, inset: Float = 0f) = Path().
 }
 
 /**
+ * Blurred rounded-rect masks, rendered once per (corner, blur) and drawn as nine slices, so a
+ * shadow costs the same at any size and resizing panels never re-blur anything.
+ */
+private object ShadowMasks {
+    class Mask(val bitmap: Bitmap, val pad: Int, val corner: Int)
+    private val cache = HashMap<Long, Mask>()
+
+    fun get(cornerPx: Int, blurRadiusPx: Float): Mask {
+        val key = (cornerPx.toLong() shl 32) or java.lang.Float.floatToIntBits(blurRadiusPx).toLong().and(0xffffffffL)
+        return cache.getOrPut(key) {
+            // Skia turns a blur radius r into sigma = 0.57735r + 0.5; the blur fades out by 3 sigma.
+            val pad = ceil(3 * (0.57735f * blurRadiusPx + 0.5f)).toInt() + 1
+            val size = 2 * (pad + cornerPx) + 1
+            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ALPHA_8)
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                maskFilter = BlurMaskFilter(blurRadiusPx, BlurMaskFilter.Blur.NORMAL)
+            }
+            android.graphics.Canvas(bitmap).drawRoundRect(
+                RectF(pad.toFloat(), pad.toFloat(), (size - pad).toFloat(), (size - pad).toFloat()),
+                cornerPx.toFloat(), cornerPx.toFloat(), paint,
+            )
+            Mask(bitmap, pad, cornerPx)
+        }
+    }
+
+    /** Stretches [mask] over a w x h element offset by (dx, dy): corners stay as drawn, edges and middle stretch. */
+    fun draw(canvas: android.graphics.Canvas, mask: Mask, dx: Float, dy: Float, w: Float, h: Float, paint: android.graphics.Paint) {
+        val c = mask.pad + mask.corner
+        val n = mask.bitmap.width
+        val xs = intArrayOf(0, c, n - c, n)
+        val left = dx - mask.pad; val top = dy - mask.pad
+        val right = dx + w + mask.pad; val bottom = dy + h + mask.pad
+        val dxs = floatArrayOf(left, left + c, right - c, right)
+        val dys = floatArrayOf(top, top + c, bottom - c, bottom)
+        val src = Rect(); val dst = RectF()
+        for (i in 0..2) for (j in 0..2) {
+            if (dxs[i + 1] <= dxs[i] || dys[j + 1] <= dys[j]) continue
+            src.set(xs[i], xs[j], xs[i + 1], xs[j + 1])
+            dst.set(dxs[i], dys[j], dxs[i + 1], dys[j + 1])
+            canvas.drawBitmap(mask.bitmap, src, dst, paint)
+        }
+    }
+}
+
+/**
  * Draws CSS-like outer box shadows behind the element. As in CSS, nothing is painted under
  * the element itself, so translucent surfaces show the background rather than their shadow.
  */
 fun Modifier.boxShadow(shadows: List<BoxShadow>, radius: Dp = Neo.radius): Modifier = drawBehind {
     val canvas = drawContext.canvas.nativeCanvas
     val shape = roundRect(this, radius)
+    val corner = minOf(radius.toPx(), size.width / 2, size.height / 2).toInt()
     canvas.save()
     canvas.clipOutPath(shape)
     for (s in shadows) {
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = s.color.toArgb()
-            maskFilter = BlurMaskFilter(blurRadius(s.blur), BlurMaskFilter.Blur.NORMAL)
-        }
-        canvas.save()
-        canvas.translate(s.dx.dp.toPx(), s.dy.dp.toPx())
-        canvas.drawPath(shape, paint)
-        canvas.restore()
+        val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply { color = s.color.toArgb() }
+        ShadowMasks.draw(canvas, ShadowMasks.get(corner, blurRadius(s.blur)), s.dx.dp.toPx(), s.dy.dp.toPx(), size.width, size.height, paint)
     }
     canvas.restore()
 }

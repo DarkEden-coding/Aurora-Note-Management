@@ -54,6 +54,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -82,11 +84,11 @@ private val LocalModalCount = androidx.compose.runtime.compositionLocalOf { muta
 @Composable
 fun AuroraApp(state: AppState) {
     var collapsed by remember { mutableStateOf(false) }
-    var sidebarWidth by remember { mutableStateOf(state.settings.sidebarWidth) }
-    var resizing by remember { mutableStateOf(false) }
-    val shownWidth by androidx.compose.animation.core.animateDpAsState(
-        if (collapsed) 48.dp else sidebarWidth.dp,
-        if (resizing) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(180),
+    val sidebarWidth = remember { mutableStateOf(state.settings.sidebarWidth) }
+    // 0 = collapsed, 1 = open. Read only in layout and draw, so the animation never recomposes the shell.
+    val openness = androidx.compose.animation.core.animateFloatAsState(
+        if (collapsed) 0f else 1f,
+        androidx.compose.animation.core.tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing),
         label = "sidebar",
     )
     var settingsOpen by remember { mutableStateOf(false) }
@@ -99,12 +101,12 @@ fun AuroraApp(state: AppState) {
         Row(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp),
         ) {
-            Sidebar(state, collapsed, shownWidth, onToggle = { collapsed = !collapsed })
+            Sidebar(state, collapsed, sidebarWidth, openness, onToggle = { collapsed = !collapsed })
             SidebarResizer(
                 enabled = !collapsed,
-                onDrag = { dx -> resizing = true; sidebarWidth = (sidebarWidth + dx).coerceIn(220f, 520f) },
-                onDone = { resizing = false; state.settings.sidebarWidth = sidebarWidth },
-                onReset = { sidebarWidth = 280f; state.settings.sidebarWidth = 280f },
+                onDrag = { dx -> sidebarWidth.value = (sidebarWidth.value + dx).coerceIn(220f, 520f) },
+                onDone = { state.settings.sidebarWidth = sidebarWidth.value },
+                onReset = { sidebarWidth.value = 280f; state.settings.sidebarWidth = 280f },
             )
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(shellGap)) {
                 TopBar(state, onSettings = { settingsOpen = true })
@@ -168,26 +170,46 @@ private sealed interface LibraryDialogKind {
 }
 
 @Composable
-private fun Sidebar(state: AppState, collapsed: Boolean, width: Dp, onToggle: () -> Unit) {
+private fun Sidebar(
+    state: AppState, collapsed: Boolean, openWidth: androidx.compose.runtime.State<Float>,
+    openness: androidx.compose.runtime.State<Float>, onToggle: () -> Unit,
+) {
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     var dialog by remember { mutableStateOf<LibraryDialogKind?>(null) }
     var overlay by remember { mutableStateOf<String?>(null) }
     val tree = state.library
     val notes = tree.notes.filter { !it.trashed && !it.archived }
 
+    // The panel's width animates in layout only; its contents stay composed at the open width,
+    // clipped by the panel and faded, so opening never rebuilds or re-wraps the tree.
+    Box(
+        Modifier.fillMaxHeight()
+            .layout { measurable, constraints ->
+                val w = (48.dp + (openWidth.value.dp - 48.dp) * openness.value).roundToPx()
+                val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                layout(w, placeable.height) { placeable.place(0, 0) }
+            }
+            .panel(Neo.shell),
+    ) {
     Column(
-        Modifier.width(width).fillMaxHeight().panel(Neo.shell).padding(shellGap),
+        Modifier.wrapContentWidth(Alignment.Start, unbounded = true)
+            .layout { measurable, constraints ->
+                val w = openWidth.value.dp.roundToPx()
+                val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                layout(w, placeable.height) { placeable.place(0, 0) }
+            }
+            .fillMaxHeight()
+            // Contents fade in over the second half of opening and are gone early when closing.
+            .graphicsLayer { alpha = ((openness.value - 0.45f) / 0.55f).coerceIn(0f, 1f) }
+            .padding(shellGap),
         verticalArrangement = Arrangement.spacedBy(shellGap),
     ) {
         Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (!collapsed) {
-                Label("Aurora", 15.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 6.dp))
-                IconButton(Lucide.Search, 16) { overlay = "search" }
-                IconButton(Lucide.Trash2, 16) { overlay = "trash" }
-            }
-            IconButton(if (collapsed) Lucide.PanelLeftOpen else Lucide.PanelLeftClose, 18, onClick = onToggle)
+            Label("Aurora", 15.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 6.dp))
+            IconButton(Lucide.Search, 16) { overlay = "search" }
+            IconButton(Lucide.Trash2, 16) { overlay = "trash" }
+            Spacer(Modifier.width(28.dp)) // the toggle sits here, drawn above
         }
-        if (collapsed) return@Column
 
         val favorites = notes.filter { it.favorite }
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -232,6 +254,17 @@ private fun Sidebar(state: AppState, collapsed: Boolean, width: Dp, onToggle: ()
                 }
             }
         }
+    }
+
+    // Hidden contents must not take taps while collapsed.
+    if (collapsed) Box(Modifier.matchParentSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {})
+    // The toggle rides the panel's right edge: centred in the 48dp rail when closed, at the header's end when open.
+    Box(Modifier.align(Alignment.TopEnd).offset {
+        val inset = (10.dp + 6.dp * openness.value).roundToPx()
+        IntOffset(-inset, (shellGap + 4.dp).roundToPx())
+    }) {
+        IconButton(if (collapsed) Lucide.PanelLeftOpen else Lucide.PanelLeftClose, 18, onClick = onToggle)
+    }
     }
 
     when (overlay) {

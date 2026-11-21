@@ -68,9 +68,14 @@ function richText(frame: HTMLElement, payload: Record<string, unknown>) {
   if (surface) fitText(block, surface, editor.isEmpty);
 }
 
+/** The colour the app looks for to know the page now shows render `token`. */
+function markerColor(token: number): string {
+  return `rgb(${token & 255}, ${(token >> 8) & 255}, 128)`;
+}
+
 window.renderObject = (token, kind, payload, width, height, zoom) => {
-  document.body.style.zoom = String(zoom);
   const frame = document.getElementById("frame")!;
+  frame.style.zoom = String(zoom);
   frame.style.width = `${width}px`;
   frame.style.height = `${height}px`;
   editor?.destroy();
@@ -78,6 +83,8 @@ window.renderObject = (token, kind, payload, width, height, zoom) => {
   frame.replaceChildren();
   if (kind === "practice-card") practiceCard(frame, payload);
   else if (kind === "rich-text") richText(frame, payload);
+  // Painted in the same update as the content, so a matching pixel means the snapshot is current.
+  document.getElementById("marker")!.style.background = markerColor(token);
   void document.fonts.ready.then(() =>
     requestAnimationFrame(() =>
       requestAnimationFrame(() => window.AuroraRender?.done(token)),

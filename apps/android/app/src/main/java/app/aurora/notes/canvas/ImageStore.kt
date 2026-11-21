@@ -16,6 +16,7 @@ import app.aurora.notes.data.CanvasObject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -70,7 +71,13 @@ class ImageStore(context: Context, private val api: AuroraApi) {
         scope.launch {
             val bitmap = runCatching { load() }.getOrNull()
             loading.remove(key)
-            if (bitmap == null) { failedAt[key] = SystemClock.uptimeMillis(); return@launch }
+            if (bitmap == null) {
+                failedAt[key] = SystemClock.uptimeMillis()
+                // Redraw once the retry window has passed, so the next draw actually asks again.
+                delay(RETRY_AFTER_MS)
+                onLoaded?.invoke()
+                return@launch
+            }
             failedAt.remove(key)
             memory.put(key, bitmap)
             onLoaded?.invoke()
