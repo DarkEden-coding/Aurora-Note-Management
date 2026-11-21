@@ -24,6 +24,7 @@ import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 enum class Tool { Select, Lasso, Pan, Pen, Highlighter, Eraser, Line, Rectangle, Ellipse, Arrow, Matrix }
@@ -34,6 +35,11 @@ private const val TOOLBAR_CLEARANCE = 80.0
 private const val ERASER_TOLERANCE_DP = 10.0
 private const val MARQUEE_MIN_DP = 4.0
 private const val PALM_REJECT_MS = 400L
+// Touch-pan momentum, matching the web (viewport.ts decayMomentum): 0.92 per 60Hz frame,
+// stops below 0.02 CSS px/ms, and only starts if the finger moved within 80ms of lifting.
+private const val MOMENTUM_FRICTION = 0.92f
+private const val MOMENTUM_STOP = 0.02f
+private const val MOMENTUM_RELEASE_MS = 80L
 private const val PEN_WIDTH = 2.5
 private const val ACCENT = 0xFF6C9EFF.toInt()
 /** color-mix(in srgb, --bg 78%, --surface-sunken), the web's canvas viewport. */
@@ -95,6 +101,7 @@ class CanvasView(context: Context) : View(context) {
 
     /** Shows a note. A saved camera is restored as-is; otherwise the note opens at its default position. */
     fun open(doc: CanvasDocument, mode: String, pageCount: Int, background: Background, saved: Camera?) {
+        stopMomentum()
         cancelGesture()
         document?.listener = null
         document = doc
@@ -221,6 +228,47 @@ class CanvasView(context: Context) : View(context) {
     private var pinchFocusX = 0f
     private var pinchFocusY = 0f
 
+    // One-finger pan velocity in screen px/ms, smoothed like the web app's touch pan.
+    private var panSampleX = 0f
+    private var panSampleY = 0f
+    private var panSampleTime = 0L
+    private var panVelocityX = 0f
+    private var panVelocityY = 0f
+    private var momentum: android.view.Choreographer.FrameCallback? = null
+
+    /** Ends a coasting pan; any new touch stops it, as on the web. */
+    private fun stopMomentum() {
+        momentum?.let { android.view.Choreographer.getInstance().removeFrameCallback(it) }
+        momentum = null
+    }
+
+    /** Continues a released one-finger pan with the web's frame-rate-independent friction. */
+    private fun startMomentum(vx: Float, vy: Float) {
+        stopMomentum()
+        val stopBelow = MOMENTUM_STOP * density.toFloat()
+        if (hypot(vx, vy) < stopBelow) return
+        var velocityX = vx; var velocityY = vy
+        var previous = 0L
+        val step = object : android.view.Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                val elapsed = if (previous == 0L) 16.67f else min(32f, (frameTimeNanos - previous) / 1_000_000f)
+                previous = frameTimeNanos
+                moveCamera(camera.copy(x = camera.x - velocityX * elapsed / scale, y = camera.y - velocityY * elapsed / scale))
+                val decay = MOMENTUM_FRICTION.pow(elapsed / 16.67f)
+                velocityX *= decay; velocityY *= decay
+                if (hypot(velocityX, velocityY) < stopBelow) { momentum = null; return }
+                android.view.Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+        momentum = step
+        android.view.Choreographer.getInstance().postFrameCallback(step)
+    }
+
+    override fun onDetachedFromWindow() {
+        stopMomentum()
+        super.onDetachedFromWindow()
+    }
+
     private fun cancelGesture() {
         gesture = null
         penPointerId = -1
@@ -238,6 +286,7 @@ class CanvasView(context: Context) : View(context) {
         val index = event.actionIndex
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                stopMomentum()
                 if (isPen(event, index) && penPointerId == -1) {
                     // A pen landing ends any finger navigation in progress.
                     panPointerId = -1; pinchSpan = 0f
@@ -302,6 +351,8 @@ class CanvasView(context: Context) : View(context) {
             pinchSpan = 0f
             panPointerId = event.getPointerId(active[0])
             lastPanX = event.getX(active[0]); lastPanY = event.getY(active[0])
+            panSampleX = lastPanX; panSampleY = lastPanY; panSampleTime = event.eventTime
+            panVelocityX = 0f; panVelocityY = 0f
         } else {
             pinchSpan = 0f; panPointerId = -1
         }
@@ -329,10 +380,24 @@ class CanvasView(context: Context) : View(context) {
         val x = event.getX(index); val y = event.getY(index)
         moveCamera(camera.copy(x = camera.x - (x - lastPanX) / scale, y = camera.y - (y - lastPanY) / scale))
         lastPanX = x; lastPanY = y
+        val elapsed = (event.eventTime - panSampleTime).toFloat()
+        if (elapsed > 0f) {
+            // Newer movement counts more the longer it has been since the last sample.
+            val weight = min(1f, elapsed / 32f)
+            panVelocityX = panVelocityX * (1 - weight) + (x - panSampleX) / elapsed * weight
+            panVelocityY = panVelocityY * (1 - weight) + (y - panSampleY) / elapsed * weight
+            panSampleX = x; panSampleY = y; panSampleTime = event.eventTime
+        }
     }
 
     private fun fingerUp(event: MotionEvent, id: Int) {
-        if (event.actionMasked == MotionEvent.ACTION_UP) { panPointerId = -1; pinchSpan = 0f; invalidate(); return }
+        if (event.actionMasked == MotionEvent.ACTION_UP) {
+            // A pan released while still moving coasts on; a finger that paused first does not.
+            val coast = id == panPointerId && pinchSpan == 0f && event.eventTime - panSampleTime < MOMENTUM_RELEASE_MS
+            panPointerId = -1; pinchSpan = 0f
+            if (coast) startMomentum(panVelocityX, panVelocityY)
+            invalidate(); return
+        }
         if (id == panPointerId || pinchSpan > 0f) resetFingerState(event)
     }
 
