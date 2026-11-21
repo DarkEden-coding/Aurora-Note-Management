@@ -1,5 +1,5 @@
 // This service worker is Aurora's offline shell: it serves the cached app shell when offline, caches hashed build assets cache-first, and passes all API traffic straight to the network.
-const CACHE_NAME = "aurora-shell-v2";
+const CACHE_NAME = "aurora-shell-v3";
 const SHELL_ASSETS = [
   "/",
   "/manifest.webmanifest",

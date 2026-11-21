@@ -11,17 +11,7 @@ import { syncEngine, type SyncStatus } from "../sync/engine.js";
 import { useSyncExternalStore } from "react";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { MainEditor } from "./MainEditor.js";
-import { ChatView } from "../features/chat/ChatView.js";
-import * as chatApi from "../features/chat/api.js";
-import "../features/chat/chatStyles.css";
-import {
-  CHAT_MODELS,
-  type CanvasMode,
-  type ChatConversation,
-  type ChatModel,
-  type ChatReasoning,
-  type DrawingPalette,
-} from "@aurora/shared";
+import type { CanvasMode, DrawingPalette } from "@aurora/shared";
 
 type DrawerKind = "none" | "settings" | "sync";
 
@@ -72,77 +62,6 @@ function canvasModeLabel(mode: CanvasMode): string {
   }
 }
 
-/** Per-conversation model controls shown in the chat top bar. */
-function ChatControls({
-  conversation,
-  onChange,
-}: {
-  conversation: ChatConversation;
-  onChange: (patch: {
-    model?: ChatModel;
-    reasoning?: ChatReasoning;
-  }) => Promise<void>;
-}) {
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState(false);
-  const selectedModel =
-    CHAT_MODELS.find((model) => model.id === conversation.model) ??
-    CHAT_MODELS[1];
-  const change = async (patch: {
-    model?: ChatModel;
-    reasoning?: ChatReasoning;
-  }): Promise<void> => {
-    setSaving(true);
-    setSaveError(false);
-    try {
-      await onChange(patch);
-    } catch {
-      setSaveError(true);
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div className="chat-topbar-controls">
-      <select
-        aria-label="Chat model"
-        value={conversation.model}
-        disabled={saving}
-        onChange={(event) =>
-          void change({ model: event.target.value as ChatModel })
-        }
-      >
-        {CHAT_MODELS.map((model) => (
-          <option key={model.id} value={model.id}>
-            {model.label}
-          </option>
-        ))}
-      </select>
-      <select
-        aria-label="Reasoning level"
-        value={conversation.reasoning}
-        disabled={saving}
-        onChange={(event) =>
-          void change({ reasoning: event.target.value as ChatReasoning })
-        }
-      >
-        {selectedModel.reasoningLevels.map((level) => (
-          <option key={level} value={level}>
-            {level === "xhigh"
-              ? "XHigh"
-              : `${level[0]!.toUpperCase()}${level.slice(1)}`}
-          </option>
-        ))}
-      </select>
-      {saveError ? (
-        <span className="error-text" role="alert">
-          Settings not saved
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
 function SyncPill({ onClick }: { onClick: () => void }) {
   const status: SyncStatus = useSyncExternalStore(
     syncEngine.subscribe,
@@ -183,10 +102,6 @@ export function WorkspaceShell({
     () => window.matchMedia("(max-width: 760px)").matches,
   );
   const [drawer, setDrawer] = useState<DrawerKind>("none");
-  const [view, setView] = useState<"notes" | "chat">("notes");
-  const [conversation, setConversation] = useState<ChatConversation | null>(
-    null,
-  );
 
   // Start the sync engine (WebSocket subscription + outbox loop) once authenticated.
   useEffect(() => {
@@ -215,38 +130,17 @@ export function WorkspaceShell({
   const selectedNote =
     library.notes.find((note) => note.id === library.selectedNoteId) ?? null;
 
-  /** Persists model controls on the selected conversation. */
-  const updateConversationSettings = async (patch: {
-    model?: ChatModel;
-    reasoning?: ChatReasoning;
-  }): Promise<void> => {
-    if (!conversation) return;
-    const updated = await chatApi.updateConversation(conversation.id, patch);
-    setConversation(updated);
-  };
-
   return (
     <div className="app-shell">
       <Sidebar
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((value) => !value)}
-        view={view}
-        onViewChange={setView}
-        selectedConversation={conversation}
-        onSelectConversation={(selected) => {
-          setConversation(selected);
-          if (window.matchMedia("(max-width: 760px)").matches) {
-            setCollapsed(true);
-          }
-        }}
       />
 
       <div className="main-column">
         <div className="topbar">
           <div className="title">
-            {view === "chat" ? (
-              <span>{conversation?.title ?? "No chat selected"}</span>
-            ) : selectedNote ? (
+            {selectedNote ? (
               <NoteTitle
                 noteId={selectedNote.id}
                 title={selectedNote.title || "Untitled"}
@@ -256,15 +150,9 @@ export function WorkspaceShell({
             )}
           </div>
           <div className="connection-status">
-            {view === "chat" && conversation ? (
-              <ChatControls
-                conversation={conversation}
-                onChange={updateConversationSettings}
-              />
-            ) : null}
             <SyncPill onClick={() => setDrawer("sync")} />
             <Calculator />
-            {view === "notes" && selectedNote ? (
+            {selectedNote ? (
               <span className="canvas-mode-indicator">
                 {canvasModeLabel(selectedNote.canvasMode)}
               </span>
@@ -289,12 +177,7 @@ export function WorkspaceShell({
         </div>
 
         <ErrorBoundary label="editor">
-          {view === "chat" ? (
-            <ChatView
-              conversation={conversation}
-              onConversationUpdated={setConversation}
-            />
-          ) : selectedNote ? (
+          {selectedNote ? (
             <MainEditor
               ownerId={ownerId}
               noteId={selectedNote.id}

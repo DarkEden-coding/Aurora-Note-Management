@@ -23,8 +23,6 @@ export interface LibraryState {
   folders: LibraryTree["folders"];
   notes: CachedNote[];
   trashedNotes: CachedNote[];
-  search: string;
-  setSearch: (query: string) => void;
   recents: string[];
   selectedNoteId: string | null;
   selectNote: (noteId: string) => void;
@@ -98,7 +96,6 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [folders, setFolders] = useState<LibraryTree["folders"]>([]);
   const [notes, setNotes] = useState<CachedNote[]>([]);
   const [trashedNotes, setTrashedNotes] = useState<CachedNote[]>([]);
-  const [search, setSearch] = useState("");
   const [recents, setRecents] = useState<string[]>(readRecents);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(
     readSelectedNoteId,
@@ -510,8 +507,6 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       folders,
       notes,
       trashedNotes,
-      search,
-      setSearch,
       recents,
       selectedNoteId,
       selectNote,
@@ -540,7 +535,6 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       folders,
       notes,
       trashedNotes,
-      search,
       recents,
       selectedNoteId,
       selectNote,

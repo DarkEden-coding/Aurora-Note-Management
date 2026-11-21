@@ -263,6 +263,7 @@ export function HtmlObject({
     <div
       className="canvas-html-object"
       data-html-object={object.id}
+      data-move-id={object.id}
       data-interactive={interactive ? "true" : "false"}
       data-pointer-passthrough={
         object.kind === "practice-card" ? "true" : undefined

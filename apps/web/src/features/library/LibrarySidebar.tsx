@@ -1,5 +1,5 @@
 // Aurora's library tree, creation dialogs, and pointer-positioned context menus.
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -12,7 +12,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
-  RotateCcw,
   Search,
   Star,
   Trash2,
@@ -22,17 +21,13 @@ import type { Background, CanvasMode } from "@aurora/shared";
 import type { CachedNote } from "../../sync/db.js";
 import type { LibraryFolder, LibraryProject } from "./types.js";
 import { useLibrary } from "./LibraryContext.js";
-import type { ChatConversation } from "@aurora/shared";
-import { ChatSidebar } from "../chat/ChatSidebar.js";
-import { exportNoteToPdf } from "../chat/noteSnapshot.js";
+import { exportNoteToPdf } from "../export/noteSnapshot.js";
+import { SearchDialog, TrashDialog } from "./LibraryOverlays.js";
+import { useSidebarResize } from "./useSidebarResize.js";
 
 interface SidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  view: "notes" | "chat";
-  onViewChange: (view: "notes" | "chat") => void;
-  selectedConversation: ChatConversation | null;
-  onSelectConversation: (conversation: ChatConversation | null) => void;
 }
 type DialogState =
   | { kind: "project" }
@@ -72,14 +67,7 @@ const MODES: { value: CanvasMode; label: string }[] = [
   { value: "paged", label: "Pages" },
 ];
 
-export function Sidebar({
-  collapsed,
-  onToggleCollapsed,
-  view,
-  onViewChange,
-  selectedConversation,
-  onSelectConversation,
-}: SidebarProps) {
+export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   const library = useLibrary();
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     new Set(),
@@ -89,24 +77,13 @@ export function Sidebar({
   );
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [trashExpanded, setTrashExpanded] = useState(false);
+  const [overlay, setOverlay] = useState<"search" | "trash" | null>(null);
+  const resize = useSidebarResize();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const pdfTargetRef = useRef<{
     projectId: string;
     folderId: string | null;
   } | null>(null);
-  const query = library.search.trim().toLowerCase();
-  const matches = useMemo(
-    () =>
-      query
-        ? new Set(
-            library.notes
-              .filter((n) => n.title.toLowerCase().includes(query))
-              .map((n) => n.id),
-          )
-        : null,
-    [library.notes, query],
-  );
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
@@ -167,18 +144,9 @@ export function Sidebar({
     folder: LibraryFolder,
     projectId: string,
   ): React.JSX.Element => {
-    const expanded = expandedFolders.has(folder.id) || matches !== null;
+    const expanded = expandedFolders.has(folder.id);
     const childFolders = visibleFolders(projectId, folder.id);
-    const childNotes = library.notes.filter(
-      (n) =>
-        n.folderId === folder.id && (matches === null || matches.has(n.id)),
-    );
-    if (
-      matches !== null &&
-      childFolders.length === 0 &&
-      childNotes.length === 0
-    )
-      return <div key={folder.id} />;
+    const childNotes = library.notes.filter((n) => n.folderId === folder.id);
     return (
       <div key={folder.id}>
         <div
@@ -229,12 +197,9 @@ export function Sidebar({
     );
   };
   const renderProject = (project: LibraryProject) => {
-    const expanded = expandedProjects.has(project.id) || matches !== null;
+    const expanded = expandedProjects.has(project.id);
     const rootNotes = library.notes.filter(
-      (n) =>
-        n.projectId === project.id &&
-        n.folderId === null &&
-        (matches === null || matches.has(n.id)),
+      (n) => n.projectId === project.id && n.folderId === null,
     );
     return (
       <div key={project.id} className="sidebar-section">
@@ -375,9 +340,33 @@ export function Sidebar({
   };
   return (
     <>
-      <aside className={`sidebar panel${collapsed ? " collapsed" : ""}`}>
+      <aside
+        ref={resize.sidebarRef}
+        className={`sidebar panel${collapsed ? " collapsed" : ""}`}
+        style={resize.style}
+      >
         <div className="sidebar-header">
-          {collapsed ? null : <h1>Aurora</h1>}
+          {collapsed ? null : (
+            <>
+              <h1>Aurora</h1>
+              <button
+                className="ghost icon-button"
+                onClick={() => setOverlay("search")}
+                title="Search notes"
+                aria-label="Search notes"
+              >
+                <Search size={16} />
+              </button>
+              <button
+                className="ghost icon-button"
+                onClick={() => setOverlay("trash")}
+                title="Trash"
+                aria-label={`Trash (${library.trashedNotes.length})`}
+              >
+                <Trash2 size={16} />
+              </button>
+            </>
+          )}
           <button
             className="ghost icon-button"
             onClick={onToggleCollapsed}
@@ -390,24 +379,6 @@ export function Sidebar({
             )}
           </button>
         </div>
-        {collapsed ? null : (
-          <div className="sidebar-tabs">
-            <button
-              type="button"
-              data-selected={view === "notes" ? "true" : "false"}
-              onClick={() => onViewChange("notes")}
-            >
-              Notes
-            </button>
-            <button
-              type="button"
-              data-selected={view === "chat" ? "true" : "false"}
-              onClick={() => onViewChange("chat")}
-            >
-              Chat
-            </button>
-          </div>
-        )}
         {library.mutationError ? (
           <div className="error-text" role="alert">
             {library.mutationError}{" "}
@@ -421,25 +392,8 @@ export function Sidebar({
             </button>
           </div>
         ) : null}
-        {collapsed ? null : view === "chat" ? (
-          <ChatSidebar
-            selectedConversation={selectedConversation}
-            onSelect={onSelectConversation}
-          />
-        ) : (
+        {collapsed ? null : (
           <>
-            <div className="field library-search">
-              <label htmlFor="library-search">Search</label>
-              <div>
-                <Search size={15} className="muted" />
-                <input
-                  id="library-search"
-                  value={library.search}
-                  onChange={(event) => library.setSearch(event.target.value)}
-                  placeholder="Filter notes"
-                />
-              </div>
-            </div>
             {library.notes.some((note) => note.favorite) ? (
               <div className="sidebar-section">
                 <div className="sidebar-section-title">
@@ -448,61 +402,6 @@ export function Sidebar({
                 {library.notes.filter((note) => note.favorite).map(renderNote)}
               </div>
             ) : null}
-            <div className="sidebar-section">
-              <button
-                type="button"
-                className="sidebar-section-title"
-                aria-expanded={trashExpanded}
-                onClick={() => setTrashExpanded((expanded) => !expanded)}
-              >
-                <Trash2 size={12} /> Trash ({library.trashedNotes.length})
-              </button>
-              {trashExpanded ? (
-                library.trashedNotes.length > 0 ? (
-                  library.trashedNotes.map((note) => (
-                    <div className="tree-item" key={note.id}>
-                      <div
-                        className="tree-row tree-row-main"
-                        title={note.title}
-                      >
-                        <FileText size={16} className="muted" />
-                        <span className="label">
-                          {note.title || "Untitled"}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        className="tree-action"
-                        aria-label={`Restore ${note.title || "Untitled"}`}
-                        onClick={() =>
-                          void library
-                            .restoreNote(note.id)
-                            .catch(() => undefined)
-                        }
-                      >
-                        <RotateCcw size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="tree-action danger"
-                        aria-label={`Delete ${note.title || "Untitled"} permanently`}
-                        onClick={() =>
-                          setDialog({
-                            kind: "confirm-note-delete",
-                            id: note.id,
-                            value: note.title || "Untitled",
-                          })
-                        }
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <div className="tree-row muted">Trash is empty</div>
-                )
-              ) : null}
-            </div>
             <div className="sidebar-section">
               <div className="sidebar-section-title">Projects</div>
               {library.projects.map(renderProject)}
@@ -522,6 +421,36 @@ export function Sidebar({
           </>
         )}
       </aside>
+      {collapsed ? null : (
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          {...resize.handleProps}
+        />
+      )}
+      {overlay === "search" ? (
+        <SearchDialog
+          onOpen={(id) => {
+            library.selectNote(id);
+            setOverlay(null);
+          }}
+          onClose={() => setOverlay(null)}
+        />
+      ) : null}
+      {overlay === "trash" ? (
+        <TrashDialog
+          onDeleteForever={(note) =>
+            setDialog({
+              kind: "confirm-note-delete",
+              id: note.id,
+              value: note.title || "Untitled",
+            })
+          }
+          onClose={() => setOverlay(null)}
+        />
+      ) : null}
       <input
         ref={pdfInputRef}
         type="file"

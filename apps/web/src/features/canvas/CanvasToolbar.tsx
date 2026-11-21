@@ -1,4 +1,5 @@
 // Floating tool palette and zoom chrome for the canvas workspace. Presentation only; tool state stays in CanvasWorkspace.
+// Undo, redo and paste only appear while they can do something.
 import { type ReactNode } from "react";
 import {
   ArrowUpRight,
@@ -108,39 +109,42 @@ export function CanvasToolbar({
         </div>
         <div className="canvas-toolbar-divider" />
         <div className="canvas-toolbar-group">
-          <button
-            type="button"
-            title="Undo (Ctrl+Z)"
-            aria-label="Undo"
-            disabled={!canUndo}
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={onUndo}
-          >
-            <Undo2 size={16} />
-          </button>
-          <button
-            type="button"
-            title="Redo (Ctrl+Shift+Z)"
-            aria-label="Redo"
-            disabled={!canRedo}
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={onRedo}
-          >
-            <Redo2 size={16} />
-          </button>
-          <button
-            type="button"
-            title="Paste (Ctrl+V)"
-            aria-label="Paste"
-            disabled={!canPaste}
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-            onClick={onPaste}
-          >
-            <ClipboardPaste size={16} />
-          </button>
+          {canUndo ? (
+            <button
+              type="button"
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onClick={onUndo}
+            >
+              <Undo2 size={16} />
+            </button>
+          ) : null}
+          {canRedo ? (
+            <button
+              type="button"
+              title="Redo (Ctrl+Shift+Z)"
+              aria-label="Redo"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onClick={onRedo}
+            >
+              <Redo2 size={16} />
+            </button>
+          ) : null}
+          {canPaste ? (
+            <button
+              type="button"
+              title="Paste (Ctrl+V)"
+              aria-label="Paste"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onClick={onPaste}
+            >
+              <ClipboardPaste size={16} />
+            </button>
+          ) : null}
           <button
             type="button"
             title="Scan with camera"

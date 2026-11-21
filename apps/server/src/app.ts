@@ -19,7 +19,6 @@ import { registerFileRoutes } from "./files/routes.js";
 import { registerSearchRoutes } from "./search/search.js";
 import { registerSnapshotRoutes } from "./history/snapshots.js";
 import { registerExportRoutes } from "./backup/export.js";
-import { registerAiRoutes } from "./ai/routes.js";
 import { registerPracticeRoutes } from "./practice/routes.js";
 import { registerPracticeMcpRoute } from "./practice/mcp.js";
 import "./http/request-context.js";
@@ -95,7 +94,6 @@ export async function buildServer(
   registerSearchRoutes(app);
   registerSnapshotRoutes(app);
   registerExportRoutes(app);
-  registerAiRoutes(app, env);
   registerPracticeRoutes(app);
   registerPracticeMcpRoute(app, env);
 

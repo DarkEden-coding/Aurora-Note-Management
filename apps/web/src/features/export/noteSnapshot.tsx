@@ -1,4 +1,4 @@
-// Offscreen read-only note rendering for AI screenshots and PDF download export.
+// Offscreen read-only note rendering for PDF download export.
 import { createRoot } from "react-dom/client";
 import type {
   Background,
@@ -22,7 +22,6 @@ import type { PDFDocument } from "pdf-lib";
 import "../canvas/canvasStyles.css";
 
 const MAX_WIDTH = 1600;
-const TILE_HEIGHT = 1600;
 const PDF_RENDER_TIMEOUT = 30_000;
 
 const NOOP = {
@@ -406,54 +405,6 @@ export async function exportNoteToPdf(
     new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/pdf" }),
     pdfFilename(title),
   );
-}
-
-/** Renders one tile used by the AI screenshot tool. */
-export async function screenshotNote(
-  noteId: string,
-  tile = 0,
-  signal?: AbortSignal,
-): Promise<{ images: string[]; tileCount: number; truncated: boolean }> {
-  const response = await loadNoteObjects(noteId, signal);
-  const objects = response.objects;
-  const minX = Math.min(0, ...objects.map((object) => object.bounds.x));
-  const minY = Math.min(0, ...objects.map((object) => object.bounds.y));
-  const maxX = Math.max(
-    800,
-    ...objects.map((object) => object.bounds.x + object.bounds.width),
-  );
-  const maxY = Math.max(
-    600,
-    ...objects.map((object) => object.bounds.y + object.bounds.height),
-  );
-  const width = Math.max(1, maxX - minX);
-  const height = Math.max(1, maxY - minY);
-  const scale = Math.min(1, MAX_WIDTH / width);
-  const renderHeight = Math.ceil(height * scale);
-  const tileCount = Math.max(1, Math.ceil(renderHeight / TILE_HEIGHT));
-  if (!Number.isInteger(tile) || tile < 0 || tile >= tileCount) {
-    throw new Error(`Screenshot tile ${tile} is outside 0-${tileCount - 1}`);
-  }
-  const y = (tile * TILE_HEIGHT) / scale;
-  const clipHeight = Math.min(TILE_HEIGHT / scale, height - y);
-  const background: Background = {
-    pattern: "solid",
-    color: "#1b1d21",
-    patternColor: "#1b1d21",
-    spacing: 24,
-  };
-  const png = await renderNoteRegion(objects, {
-    x: minX,
-    y: minY + y,
-    width,
-    height: clipHeight,
-    background,
-  });
-  return {
-    images: [png],
-    tileCount,
-    truncated: response.truncated || tile + 1 < tileCount,
-  };
 }
 
 /** Paints the note background as SVG so browser rasterizers retain its pattern. */

@@ -91,6 +91,12 @@ import {
 import { shouldRejectTouch } from "./pointerInput";
 import { SelectionActions } from "./SelectionActions";
 import {
+  applyMoveOffsets,
+  clampedMoveOffsets,
+  clearMoveOffsets,
+  MOVE_TARGET_ATTRIBUTE,
+} from "./selectionDrag";
+import {
   boxPolygon,
   cloneObjects,
   objectsInRegion,
@@ -181,6 +187,8 @@ function isInkTool(tool: CanvasTool): tool is "pen" | "highlighter" {
   return tool === "pen" || tool === "highlighter";
 }
 const VIEWPORT_STATE_PREFIX = "aurora.viewport.";
+/** Where an infinite note opens before it has a saved camera on this device. */
+const DEFAULT_INFINITE_VIEWPORT = { x: -64, y: -96, zoom: 1 };
 const HANDLE_SCREEN_SIZE = 9;
 const HANDLE_HIT_TOLERANCE_SCREEN = 12;
 /** Screen space kept above a page top so the floating toolbar does not cover it. */
@@ -194,7 +202,14 @@ type Gesture =
       last: Point;
       removed: Map<string, CanvasObject>;
     }
-  | { kind: "move"; ids: string[]; start: Point; origins: Map<string, Bounds> }
+  | {
+      kind: "move";
+      ids: string[];
+      start: Point;
+      origins: Map<string, Bounds>;
+      /** Latest pointer offset; shown with transforms and applied on release. */
+      delta: Point;
+    }
   | {
       kind: "resize";
       id: string;
@@ -329,6 +344,18 @@ function saveViewport(
   }
 }
 
+/** SVG `points` for a marquee: the dragged box, or the lasso path so far. */
+function marqueeOutlinePoints(marquee: {
+  shape: "box" | "lasso";
+  points: Point[];
+}): string {
+  const points =
+    marquee.shape === "box"
+      ? boxPolygon(marquee.points[0]!, marquee.points.at(-1)!)
+      : marquee.points;
+  return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
 function isCreateTool(tool: CanvasTool): tool is CreateTool {
   return CREATE_TOOLS.includes(tool);
 }
@@ -402,13 +429,7 @@ export function CanvasWorkspace({
     zoomAt,
     toCanvas,
   } = useViewport(
-    {
-      x: -64,
-      y: -96,
-      width: 0,
-      height: 0,
-      zoom: 1,
-    },
+    { ...DEFAULT_INFINITE_VIEWPORT, width: 0, height: 0 },
     {
       x: canLockX && axisLocks.x,
       y: canLockY && axisLocks.y,
@@ -632,6 +653,51 @@ export function CanvasWorkspace({
   const setActiveGesture = useCallback((next: Gesture | null): void => {
     gestureRef.current = next;
     setGesture(next);
+  }, []);
+  const activeModeRef = useRef(activeMode);
+  activeModeRef.current = activeMode;
+  const movePreviewFrameRef = useRef<number | null>(null);
+  /** Draws the latest drag offset on the next frame, at most once per frame. */
+  const scheduleMovePreview = useCallback((): void => {
+    if (movePreviewFrameRef.current !== null) return;
+    movePreviewFrameRef.current = requestAnimationFrame(() => {
+      movePreviewFrameRef.current = null;
+      const current = gestureRef.current;
+      const root = containerRef.current;
+      if (current?.kind !== "move" || root === null) return;
+      applyMoveOffsets(
+        root,
+        clampedMoveOffsets(
+          current.origins,
+          current.delta,
+          activeModeRef.current,
+        ),
+      );
+    });
+  }, [containerRef]);
+  const endMovePreview = useCallback(
+    (ids: readonly string[]): void => {
+      if (movePreviewFrameRef.current !== null) {
+        cancelAnimationFrame(movePreviewFrameRef.current);
+        movePreviewFrameRef.current = null;
+      }
+      const root = containerRef.current;
+      if (root !== null) clearMoveOffsets(root, ids);
+    },
+    [containerRef],
+  );
+  const marqueeOutlineRef = useRef<SVGPolygonElement | null>(null);
+  const marqueeFrameRef = useRef<number | null>(null);
+  /** Redraws the box or lasso outline on the next frame from the live gesture. */
+  const scheduleMarqueeOutline = useCallback((): void => {
+    if (marqueeFrameRef.current !== null) return;
+    marqueeFrameRef.current = requestAnimationFrame(() => {
+      marqueeFrameRef.current = null;
+      const current = gestureRef.current;
+      const outline = marqueeOutlineRef.current;
+      if (current?.kind !== "marquee" || outline === null) return;
+      outline.setAttribute("points", marqueeOutlinePoints(current));
+    });
   }, []);
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
@@ -1473,6 +1539,7 @@ export function CanvasWorkspace({
           origins: new Map(
             selected.map((object) => [object.id, object.bounds]),
           ),
+          delta: { x: 0, y: 0 },
         });
         return true;
       };
@@ -1599,6 +1666,7 @@ export function CanvasWorkspace({
             ids: [...origins.keys()],
             start: canvasPoint,
             origins,
+            delta: { x: 0, y: 0 },
           });
         }
         return;
@@ -1719,35 +1787,29 @@ export function CanvasWorkspace({
         return;
       }
       if (current.kind === "marquee") {
-        const first = current.points[0]!;
+        // Points grow in place and the outline is redrawn directly, so a long
+        // lasso does not re-render the canvas for every pointer event.
         const last = current.points.at(-1)!;
         if (current.shape === "box") {
-          setActiveGesture({ ...current, points: [first, canvasPoint] });
+          current.points = [current.points[0]!, canvasPoint];
         } else if (
           Math.hypot(canvasPoint.x - last.x, canvasPoint.y - last.y) *
             viewportRef.current.zoom >=
           2
         ) {
-          setActiveGesture({
-            ...current,
-            points: [...current.points, canvasPoint],
-          });
+          current.points.push(canvasPoint);
+        } else {
+          return;
         }
+        scheduleMarqueeOutline();
         return;
       }
       if (current.kind === "move") {
-        const dx = canvasPoint.x - current.start.x;
-        const dy = canvasPoint.y - current.start.y;
-        const next = objectsRef.current.map((o) => {
-          const origin = current.origins.get(o.id);
-          if (origin === undefined) return o;
-          return moveObjectToBounds(
-            o,
-            translateBoundsInMode(origin, dx, dy, activeMode),
-          );
-        });
-        objectsRef.current = next;
-        setMirror(next);
+        current.delta = {
+          x: canvasPoint.x - current.start.x,
+          y: canvasPoint.y - current.start.y,
+        };
+        scheduleMovePreview();
         return;
       }
       if (current.kind === "resize") {
@@ -1782,6 +1844,8 @@ export function CanvasWorkspace({
       eraseStrokeBetween,
       panBy,
       pen,
+      scheduleMarqueeOutline,
+      scheduleMovePreview,
       setActiveGesture,
       tool,
       zoomAt,
@@ -1880,18 +1944,37 @@ export function CanvasWorkspace({
         return;
       }
       if (current.kind === "move") {
+        endMovePreview(current.ids);
+        const offsets = clampedMoveOffsets(
+          current.origins,
+          current.delta,
+          activeMode,
+        );
         const before: CanvasObject[] = [];
         const after: CanvasObject[] = [];
-        for (const o of objectsRef.current) {
+        const next = objectsRef.current.map((o) => {
           const origin = current.origins.get(o.id);
-          if (origin === undefined) continue;
-          if (o.bounds.x === origin.x && o.bounds.y === origin.y) continue;
-          const moved = { ...o, updatedAt: new Date().toISOString() };
-          before.push(moveObjectToBounds(o, origin));
+          const offset = offsets.get(o.id);
+          if (origin === undefined || offset === undefined) return o;
+          if (offset.x === 0 && offset.y === 0) return o;
+          const moved = {
+            ...moveObjectToBounds(o, {
+              ...origin,
+              x: origin.x + offset.x,
+              y: origin.y + offset.y,
+            }),
+            updatedAt: new Date().toISOString(),
+          };
+          before.push(o);
           after.push(moved);
-          commitUpsert(moved);
+          return moved;
+        });
+        if (after.length > 0) {
+          objectsRef.current = next;
+          setMirror(next);
+          for (const moved of after) commitUpsert(moved);
+          recordHistory({ before, after });
         }
-        if (after.length > 0) recordHistory({ before, after });
         return;
       }
       if (current.kind === "resize") {
@@ -1939,8 +2022,10 @@ export function CanvasWorkspace({
       }
     },
     [
+      activeMode,
       commitUpsert,
       createObject,
+      endMovePreview,
       eraseStrokeBetween,
       noteId,
       pen,
@@ -1974,13 +2059,8 @@ export function CanvasWorkspace({
         objectsRef.current = next;
         setMirror(next);
       } else if (current?.kind === "move") {
-        // Roll back to gesture-start positions; nothing was committed.
-        const next = objectsRef.current.map((o) => {
-          const origin = current.origins.get(o.id);
-          return origin === undefined ? o : moveObjectToBounds(o, origin);
-        });
-        objectsRef.current = next;
-        setMirror(next);
+        // Objects never left their origins; only the preview moved.
+        endMovePreview(current.ids);
       } else if (current?.kind === "resize") {
         const next = objectsRef.current.map((o) =>
           o.id === current.id ? current.startObject : o,
@@ -1990,7 +2070,7 @@ export function CanvasWorkspace({
       }
       setActiveGesture(null);
     },
-    [setActiveGesture],
+    [endMovePreview, setActiveGesture],
   );
 
   const updateObjectWithPayload = useCallback(
@@ -2117,22 +2197,55 @@ export function CanvasWorkspace({
     [displayObjects, activeMode, view.width, view.height, pageCount],
   );
   const initializedModeRef = useRef("");
+  /** The note and mode whose camera is currently on screen; guards saving. */
+  const [viewportOwner, setViewportOwner] = useState("");
+  /** A restored camera stays put until the user moves it, even while content loads. */
+  const restoredViewportRef = useRef<Pick<Viewport, "x" | "y"> | null>(null);
 
   useLayoutEffect(() => {
-    if (scrollBounds === null) return;
     const identity = `${noteId}:${activeMode}`;
-    const shouldInitialize = initializedModeRef.current !== identity;
-    if (shouldInitialize) initializedModeRef.current = identity;
-    const saved = shouldInitialize ? readSavedViewport(noteId) : null;
+    if (initializedModeRef.current !== identity) {
+      const saved = readSavedViewport(noteId);
+      if (saved !== null) {
+        restoredViewportRef.current = saved;
+        setViewport((current) => ({ ...current, ...saved }));
+      } else if (activeMode === "infinite") {
+        restoredViewportRef.current = null;
+        setViewport((current) => ({ ...current, ...DEFAULT_INFINITE_VIEWPORT }));
+      } else {
+        // Centring a new bounded note needs the container size.
+        if (scrollBounds === null) return;
+        restoredViewportRef.current = null;
+        setViewport((current) => ({
+          ...current,
+          x: (scrollBounds.contentWidth - view.width) / 2,
+          y: Math.max(scrollBounds.minY, -TOOLBAR_CLEARANCE / current.zoom),
+        }));
+      }
+      initializedModeRef.current = identity;
+      setViewportOwner(identity);
+      return;
+    }
+
+    if (scrollBounds === null) return;
+    const restored = restoredViewportRef.current;
+    if (
+      restored !== null &&
+      restored.x === viewport.x &&
+      restored.y === viewport.y
+    ) {
+      return;
+    }
+    restoredViewportRef.current = null;
     setViewport((current) => {
-      if (saved !== null) return { ...current, ...saved };
-      const nextX = shouldInitialize
-        ? (scrollBounds.contentWidth - view.width) / 2
-        : Math.max(scrollBounds.minX, Math.min(current.x, scrollBounds.maxX));
-      const preferredTop = -TOOLBAR_CLEARANCE / current.zoom;
-      const nextY = shouldInitialize
-        ? Math.max(scrollBounds.minY, preferredTop)
-        : Math.max(scrollBounds.minY, Math.min(current.y, scrollBounds.maxY));
+      const nextX = Math.max(
+        scrollBounds.minX,
+        Math.min(current.x, scrollBounds.maxX),
+      );
+      const nextY = Math.max(
+        scrollBounds.minY,
+        Math.min(current.y, scrollBounds.maxY),
+      );
       return nextX === current.x && nextY === current.y
         ? current
         : { ...current, x: nextX, y: nextY };
@@ -2147,11 +2260,45 @@ export function CanvasWorkspace({
     viewport.y,
   ]);
 
+  // Saving is debounced so panning does not write storage every frame; a
+  // pending save is flushed when the note changes or the canvas unmounts.
+  const pendingViewportSaveRef = useRef<{
+    noteId: string;
+    viewport: Pick<Viewport, "x" | "y" | "zoom">;
+  } | null>(null);
+  const flushViewportSave = useCallback((): void => {
+    const pending = pendingViewportSaveRef.current;
+    pendingViewportSaveRef.current = null;
+    if (pending !== null) saveViewport(pending.noteId, pending.viewport);
+  }, []);
   useEffect(() => {
-    if (initializedModeRef.current === `${noteId}:${activeMode}`) {
-      saveViewport(noteId, viewport);
-    }
-  }, [activeMode, noteId, viewport]);
+    // Skips the commit where the previous note's camera is still in state.
+    if (viewportOwner !== `${noteId}:${activeMode}`) return;
+    pendingViewportSaveRef.current = {
+      noteId,
+      viewport: { x: viewport.x, y: viewport.y, zoom: viewport.zoom },
+    };
+    const timer = window.setTimeout(flushViewportSave, 300);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeMode,
+    flushViewportSave,
+    noteId,
+    viewport.x,
+    viewport.y,
+    viewport.zoom,
+    viewportOwner,
+  ]);
+  useEffect(() => {
+    const onHidden = (): void => {
+      if (document.visibilityState === "hidden") flushViewportSave();
+    };
+    document.addEventListener("visibilitychange", onHidden);
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      flushViewportSave();
+    };
+  }, [flushViewportSave, noteId]);
 
   const surfaceFrames = canvasSurfaceFrames(
     displayObjects,
@@ -2359,10 +2506,6 @@ export function CanvasWorkspace({
     };
   }
   const marquee = gesture?.kind === "marquee" ? gesture : null;
-  const marqueeBox =
-    marquee?.shape === "box"
-      ? dragBoundsFree(marquee.points[0]!, marquee.points.at(-1)!)
-      : null;
 
   return (
     <div
@@ -2490,7 +2633,9 @@ export function CanvasWorkspace({
                 o.kind === "line" ||
                 o.kind === "arrow" ||
                 o.kind === "matrix" ? (
-                  <SceneObject key={o.id} object={o} />
+                  <g key={o.id} {...{ [MOVE_TARGET_ATTRIBUTE]: o.id }}>
+                    <SceneObject object={o} />
+                  </g>
                 ) : null,
               )}
               {previewShape !== null ? (
@@ -2544,12 +2689,12 @@ export function CanvasWorkspace({
               }}
               viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
             >
-              {[...selection.selectedIds].map((id) => {
-                const o = displayObjects.find((c) => c.id === id);
-                if (o === undefined) return null;
+              {displayObjects.map((o) => {
+                if (!selection.isSelected(o.id)) return null;
                 return (
                   <rect
                     key={`outline-${o.id}`}
+                    {...{ [MOVE_TARGET_ATTRIBUTE]: o.id }}
                     className="canvas-selection-outline"
                     x={o.bounds.x}
                     y={o.bounds.y}
@@ -2560,7 +2705,9 @@ export function CanvasWorkspace({
                   />
                 );
               })}
-              {selectedObjects.length > 1 && selectionBounds !== null ? (
+              {selectedObjects.length > 1 &&
+              selectionBounds !== null &&
+              gesture?.kind !== "move" ? (
                 <rect
                   className="canvas-selection-group"
                   x={selectionBounds.x - 6 / zoom}
@@ -2571,23 +2718,12 @@ export function CanvasWorkspace({
                   vectorEffect="non-scaling-stroke"
                 />
               ) : null}
-              {marqueeBox !== null ? (
-                <rect
-                  className="canvas-marquee"
-                  x={marqueeBox.x}
-                  y={marqueeBox.y}
-                  width={marqueeBox.width}
-                  height={marqueeBox.height}
-                  rx={3 / zoom}
-                  vectorEffect="non-scaling-stroke"
-                />
-              ) : marquee !== null ? (
+              {marquee !== null ? (
                 <polygon
+                  ref={marqueeOutlineRef}
                   className="canvas-marquee"
-                  data-shape="lasso"
-                  points={marquee.points
-                    .map((point) => `${point.x},${point.y}`)
-                    .join(" ")}
+                  data-shape={marquee.shape}
+                  points={marqueeOutlinePoints(marquee)}
                   vectorEffect="non-scaling-stroke"
                 />
               ) : null}
@@ -2595,7 +2731,8 @@ export function CanvasWorkspace({
               !primaryObject.locked &&
               primaryObject.kind !== "stroke" &&
               selectedObjects.length === 1 &&
-              tool === "select"
+              tool === "select" &&
+              gesture?.kind !== "move"
                 ? handlePositions(primaryObject.bounds).map(
                     ({ handle, point }) => (
                       <circle

@@ -31,9 +31,6 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-aurora}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aurora}
       # Must be the browser-visible origin; requests from any other site are rejected.
       AURORA_ORIGIN: ${AURORA_ORIGIN:-http://localhost:8080}
-      # Optional platform-key fallback; ChatGPT device login stores tokens in Postgres.
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      AURORA_AI_MODEL: ${AURORA_AI_MODEL:-gpt-5.5}
       # Longest practice_wait an MCP client may request, in seconds.
       AURORA_PRACTICE_WAIT_MAX_SECONDS: ${AURORA_PRACTICE_WAIT_MAX_SECONDS:-900}
     # Aurora has no login. Publish on loopback only and reach it through

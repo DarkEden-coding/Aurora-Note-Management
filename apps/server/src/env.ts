@@ -27,11 +27,6 @@ const envSchema = z.object({
   AURORA_TRASH_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
   AURORA_OPERATION_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
   AURORA_SNAPSHOT_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
-  OPENAI_API_KEY: z.preprocess(
-    (value) => (value === "" ? undefined : value),
-    z.string().min(1).optional(),
-  ),
-  AURORA_AI_MODEL: z.string().min(1).default("gpt-5.5"),
   // Longest practice_wait an MCP client may ask for; the default wait stays under 60 s.
   AURORA_PRACTICE_WAIT_MAX_SECONDS: z.coerce
     .number()

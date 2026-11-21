@@ -66,12 +66,21 @@ export function objectsInRegion(
   polygon: Point[],
 ): CanvasObject[] {
   if (polygon.length < 3) return [];
+  const region = unionBounds(
+    polygon.map((point) => ({ bounds: { ...point, width: 0, height: 0 } })),
+  )!;
+  // Points outside the region's box cannot be inside it; skipping them keeps
+  // a lasso fast on notes with many strokes far from it.
+  const isInside = (point: Point): boolean =>
+    point.x >= region.x &&
+    point.x <= region.x + region.width &&
+    point.y >= region.y &&
+    point.y <= region.y + region.height &&
+    pointInPolygon(point, polygon);
   return objects.filter((object) => {
     if (object.locked) return false;
     const points = samplePoints(object);
-    const inside = points.filter((point) =>
-      pointInPolygon(point, polygon),
-    ).length;
+    const inside = points.filter(isInside).length;
     return object.kind === "stroke"
       ? inside >= Math.max(1, points.length * STROKE_INSIDE_RATIO)
       : inside === points.length;
@@ -79,7 +88,9 @@ export function objectsInRegion(
 }
 
 /** Smallest bounds containing every object, or null for an empty list. */
-export function unionBounds(objects: CanvasObject[]): Bounds | null {
+export function unionBounds(
+  objects: readonly Pick<CanvasObject, "bounds">[],
+): Bounds | null {
   if (objects.length === 0) return null;
   let left = Infinity;
   let top = Infinity;

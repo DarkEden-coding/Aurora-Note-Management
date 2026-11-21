@@ -122,8 +122,8 @@ select:focus-visible {
 }
 
 .sidebar {
-  width: 280px;
-  min-width: 280px;
+  width: var(--sidebar-width, 280px);
+  min-width: var(--sidebar-width, 280px);
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -142,14 +142,44 @@ select:focus-visible {
   overflow: hidden;
 }
 
+.sidebar.resizing {
+  transition: none;
+}
+
+/* A thin grab strip centred in the gap between the sidebar and the main column. */
+.sidebar-resizer {
+  flex: none;
+  width: 10px;
+  margin-inline: calc((var(--gap) + 10px) / -2);
+  cursor: col-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 5;
+}
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 30% 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer:active::after {
+  opacity: 0.55;
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 2px;
   padding: 4px;
 }
 
 .sidebar-header h1 {
+  flex: 1;
   font-size: 15px;
   margin: 0 0 0 6px;
   white-space: nowrap;
@@ -388,6 +418,19 @@ button.tree-action.danger:hover {
   padding-left: 0;
   background: transparent;
   box-shadow: none;
+}
+.overlay-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(420px, 60dvh);
+  overflow-y: auto;
+}
+.overlay-path {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 .favorite-mark {
   color: var(--accent);
@@ -834,6 +877,9 @@ button.tree-action.danger:hover {
   .sidebar.collapsed {
     width: 48px;
     min-width: 48px;
+  }
+  .sidebar-resizer {
+    display: none;
   }
   .main-column {
     margin-left: calc(48px + var(--gap));
