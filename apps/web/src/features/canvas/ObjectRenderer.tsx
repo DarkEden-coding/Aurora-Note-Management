@@ -1,6 +1,6 @@
 // Renders individual canvas objects: SVG shapes and pressure strokes for the scene layer, HTML for rich text, media, attachments, embedded PDF references, and practice cards. Renderer stays presentation-only; mutations flow through callbacks.
 import { lazy, memo, Suspense, type ReactNode, useRef, useState } from "react";
-import type { CanvasObject } from "@aurora/shared";
+import { textStyleOf, type CanvasObject } from "@aurora/shared";
 import { FileText, GripHorizontal } from "lucide-react";
 import { pressureStrokePaths } from "./strokeGeometry";
 import { EMPTY_DOC } from "../editor/document";
@@ -37,6 +37,7 @@ import {
   getStrokeBaseWidth,
   getStrokeColor,
   getStrokePoints,
+  richTextStyle,
   HIGHLIGHTER_OPACITY,
   isHighlighterStroke,
   getPdfPageReference,
@@ -314,7 +315,8 @@ function HtmlContent({
             <RichTextBlock
               content={doc}
               editable={editable}
-              color={getShapeColor(object)}
+              textStyle={richTextStyle(object.payload)}
+              maxFontSize={textStyleOf(object.payload).fontSize}
               autoFocus={editable}
               onChange={(json) => callbacks.onRichTextChange(object.id, json)}
             />

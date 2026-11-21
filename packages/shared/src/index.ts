@@ -2,3 +2,4 @@
 export * from "./contracts.js";
 export * from "./practice.js";
 export * from "./practiceCardStyles.js";
+export * from "./textStyle.js";

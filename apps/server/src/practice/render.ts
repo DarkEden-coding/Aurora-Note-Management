@@ -1,6 +1,13 @@
 // Renders one page (user ink, shapes, typed text, practice cards, marks, coordinate grid) to SVG and rasterizes it to PNG for Claude.
 import { renderAsync } from "@resvg/resvg-js";
-import type { Bounds, CanvasObject, PracticeCardRegion } from "@aurora/shared";
+import {
+  TEXT_FONT_STACKS,
+  textStyleOf,
+  type Bounds,
+  type CanvasObject,
+  type PracticeCardRegion,
+  type TextStyle,
+} from "@aurora/shared";
 import { objectText } from "../canvas/text.js";
 import { MARK_COLOR, practiceTagOf } from "./marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect, pageFrame } from "./page.js";
@@ -201,12 +208,21 @@ function regionsSvg(regions: PracticeCardRegion[], frame: Bounds): string {
     .join("");
 }
 
+// SVG font attributes for a stored text style; the stacks name DejaVu fonts, which the server image has.
+function fontAttributes(style: TextStyle): string {
+  const family = style.fontFamily
+    ? `font-family='${TEXT_FONT_STACKS[style.fontFamily]}'`
+    : FONT;
+  return `${family}${style.fontWeight === "bold" ? ` font-weight="bold"` : ""}${style.fontStyle === "italic" ? ` font-style="italic"` : ""}`;
+}
+
 // Wraps plain text roughly by character count; enough for Claude to read typed text and red labels.
 function textBlockSvg(
   b: Bounds,
   text: string,
   color: string,
   fontSize: number,
+  style: TextStyle = {},
 ): string {
   const lineHeight = Math.round(fontSize * 1.4);
   const perLine = Math.max(1, Math.floor(b.width / (fontSize / 2)));
@@ -216,7 +232,7 @@ function textBlockSvg(
   return lines
     .map(
       (line, i) =>
-        `<text x="${r(b.x)}" y="${r(b.y + fontSize + 2 + i * lineHeight)}" ${FONT} font-size="${fontSize}" fill="${color}">${escapeXml(line)}</text>`,
+        `<text x="${r(b.x)}" y="${r(b.y + fontSize + 2 + i * lineHeight)}" ${fontAttributes(style)} font-size="${fontSize}" fill="${color}">${escapeXml(line)}</text>`,
     )
     .join("");
 }
@@ -232,7 +248,13 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
   const tag = practiceTagOf(object);
   const faded =
     tag !== null && tag.role !== "prompt" && tag.attempt < target.attempt;
-  const color = tag ? MARK_COLOR : inkColor(object.payload.color);
+  // Agent marks keep the color they were given; user ink is darkened for the white page.
+  const color = tag
+    ? typeof object.payload.color === "string"
+      ? object.payload.color
+      : MARK_COLOR
+    : inkColor(object.payload.color);
+  const style = textStyleOf(object.payload);
   let svg: string;
   const raster = target.rasters?.get(object.id);
   if (raster) {
@@ -258,8 +280,9 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
           ? textBlockSvg(
               object.bounds,
               objectText(object) ?? "",
-              MARK_COLOR,
-              20,
+              style.color ?? MARK_COLOR,
+              style.fontSize ?? 20,
+              style,
             )
           : variant === "prompt"
             ? labelledBox(
@@ -278,7 +301,13 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
       break;
     }
     case "rich-text":
-      svg = textBlockSvg(object.bounds, objectText(object) ?? "", color, 16);
+      svg = textBlockSvg(
+        object.bounds,
+        objectText(object) ?? "",
+        color,
+        style.fontSize ?? 16,
+        style,
+      );
       break;
     case "sticky-note":
       svg =

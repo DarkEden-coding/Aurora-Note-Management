@@ -4,6 +4,7 @@ import {
   PAGE_HEIGHT,
   PAGE_GAP,
   PAGE_WIDTH,
+  boundsIntersect,
   pageFrame,
 } from "../practice/page.js";
 
@@ -72,4 +73,14 @@ export function toPageBounds(page: NotePage, bounds: Bounds): Bounds {
     width: round(bounds.width),
     height: round(bounds.height),
   };
+}
+
+/** The page an object belongs to: the one holding its top-left corner, else the first it overlaps, else the first page. */
+export function pageOf(pages: NotePage[], bounds: Bounds): NotePage {
+  const corner = { x: bounds.x, y: bounds.y, width: 1, height: 1 };
+  return (
+    pages.find((page) => boundsIntersect(corner, pageWorldFrame(page))) ??
+    pages.find((page) => boundsIntersect(bounds, pageWorldFrame(page))) ??
+    pages[0]!
+  );
 }

@@ -144,20 +144,41 @@ marks stay visible on top of an opaque card. The runtime Docker image installs
 
 ## Library tools (notes_*)
 
-The same MCP server also gives Claude read access to the whole library and a
-few additive edits. Code: `apps/server/src/agent/`.
+The same MCP server also gives Claude read access to the whole library, and
+lets it add to notes and edit or delete objects by id. Code:
+`apps/server/src/agent/`.
 
-| Tool             | Purpose                                                                                                                                                                                                                                                                                               |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `notes_list`     | `{ project?, folder?, archived?, limit?, offset? }` → notes (newest update first) with title, project, folder path, canvas mode, created/updated times. Names match case-insensitively; a folder lists only the notes directly in it.                                                                 |
-| `notes_search`   | `{ query, limit? }` → case-insensitive substring search over titles and typed text (rich text, sticky notes, practice cards), with snippets. Handwriting is not searchable.                                                                                                                           |
-| `notes_read`     | `{ noteId, pages?, scale? = 1 }` → note metadata, each page's typed text with page-relative bounds, and PNG images of the requested pages (default the first 3, max 8), handwriting included. Practice notes also return `practiceSessionId` and per-page `practiceQuestionId`.                       |
-| `notes_create`   | `{ title, project, folder?, canvasMode? = paged }` → new empty note; missing project/folders are created, as in `practice_start`.                                                                                                                                                                     |
-| `notes_rename`   | `{ noteId, title }` → renames a note.                                                                                                                                                                                                                                                                 |
-| `notes_add_page` | `{ noteId }` → appends a page to a paged note.                                                                                                                                                                                                                                                        |
-| `notes_annotate` | `{ noteId, pageIndex, marks[], texts[], dryRun?, scale? }` → adds red marks and comments (same shapes as `practice_grade`) and typed text boxes `{ x, y, width, height?, text }` to one page. Added objects are unlocked so the user can move or delete them. Returns the new ids and the page image. |
+| Tool                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notes_list`           | `{ project?, folder?, archived?, limit?, offset? }` → notes (newest update first) with title, project, folder path, canvas mode, created/updated times. Names match case-insensitively; a folder lists only the notes directly in it.                                                                                                                                                                                                                          |
+| `notes_search`         | `{ query, limit? }` → case-insensitive substring search over titles and typed text (rich text, sticky notes, practice cards), with snippets. Handwriting is not searchable.                                                                                                                                                                                                                                                                                    |
+| `notes_read`           | `{ noteId, pages?, includeInk? = false, scale? = 1 }` → note metadata, each page's objects (`id`, `kind`, `variant` for cards, `author` user/agent, `locked`, page-relative `x/y/width/height`, `style`, `text`) and `inkStrokeCount`, and PNG images of the requested pages (default the first 3, max 8), handwriting included. `includeInk` also lists the user's strokes. Practice notes also return `practiceSessionId` and per-page `practiceQuestionId`. |
+| `notes_get_objects`    | `{ noteId, ids? \| pageIndex? }` → the same object details for chosen ids, or for everything on a page including handwriting.                                                                                                                                                                                                                                                                                                                                  |
+| `notes_create`         | `{ title, project, folder?, canvasMode? = paged }` → new empty note; missing project/folders are created, as in `practice_start`.                                                                                                                                                                                                                                                                                                                              |
+| `notes_rename`         | `{ noteId, title }` → renames a note.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `notes_add_page`       | `{ noteId }` → appends a page to a paged note.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `notes_annotate`       | `{ noteId, pageIndex, marks[], texts[], dryRun?, scale? }` → adds marks and comments (same shapes as `practice_grade`, each with optional `color`/`strokeWidth`; text marks take the text style below) and typed text boxes `{ x, y, width, height?, text, ...textStyle }` to one page. Added objects are unlocked. Returns the new ids and the page image.                                                                                                    |
+| `notes_edit_objects`   | `{ noteId, edits: [{ id, pageIndex?, x?, y?, width?, height?, text?, style? }], dryRun?, scale? }` → moves/resizes (ink and line endpoints scale with the bounds), replaces text (rich-text as plain paragraphs, sticky notes, text marks) and restyles. Returns the edited objects and their page images.                                                                                                                                                     |
+| `notes_restyle`        | `{ noteId, style, targets? = ["text"], author? = "agent", dryRun? }` → one style on every matching object: `text` = rich-text boxes and text marks, `marks` = agent-drawn marks. User handwriting and shapes are never restyled; `author: "any"` includes the user's typed text and saves a snapshot first.                                                                                                                                                    |
+| `notes_delete_objects` | `{ noteId, ids, dryRun? }` → deletes objects by explicit id only; all ids must belong to the note. Saves a snapshot ("Before agent deleted N objects") first and returns its `snapshotId`; `POST /api/snapshots/:id/restore` brings the note back.                                                                                                                                                                                                             |
 
-There are no delete tools. Every note is read as 816 × 1056 pages in the same
+Text style (`packages/shared/src/textStyle.ts`), stored as flat payload fields
+on rich-text boxes and label cards and honoured by the web app, the Android
+renderer and server page images:
+
+- `fontFamily`: `sans` (default for agent text), `serif`, `mono`, `handwriting`
+  (the cursive font older text marks used)
+- `fontSize`: 8–96. A text mark uses it as is (default 20). A rich-text box
+  still shrinks its text to fit the box, so it is the largest size (agent
+  boxes default to 18 and a height that fits; without it the text fills the box)
+- `fontWeight`: `normal` | `bold`; `fontStyle`: `normal` | `italic`
+- `color`: six-digit hex. Drawn objects (ink, lines, arrows, boxes, ellipses)
+  take `color` and `strokeWidth`.
+
+Agent text boxes carry `author: "agent"` in their payload, so `notes_read`
+and `notes_restyle` can tell them apart from the user's text.
+
+Every note is read as 816 × 1056 pages in the same
 page-relative coordinates and grid as submission images: paged notes use their
 pages; infinite and fixed canvases are cut into page-sized tiles on a grid
 anchored at the world origin, keeping only tiles with content, in reading

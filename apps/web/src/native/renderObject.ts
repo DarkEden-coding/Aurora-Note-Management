@@ -9,6 +9,8 @@ import { Editor } from "@tiptap/core";
 import { EDITOR_EXTENSIONS } from "../features/editor/extensions";
 import { fitText } from "../features/editor/fitText";
 import { cardVariant, mountCard } from "../features/practice/mountCard";
+import { textStyleOf } from "@aurora/shared";
+import { richTextStyle } from "../features/canvas/objects";
 
 declare global {
   interface Window {
@@ -46,13 +48,14 @@ function practiceCard(frame: HTMLElement, payload: Record<string, unknown>) {
     host,
     variant,
     typeof payload.html === "string" ? payload.html : "",
+    payload,
   );
 }
 
 function richText(frame: HTMLElement, payload: Record<string, unknown>) {
   const block = document.createElement("div");
   block.className = "rich-text-block";
-  if (typeof payload.color === "string") block.style.color = payload.color;
+  Object.assign(block.style, richTextStyle(payload));
   const content = document.createElement("div");
   content.className = "rich-text-content";
   block.append(content);
@@ -65,7 +68,9 @@ function richText(frame: HTMLElement, payload: Record<string, unknown>) {
     editable: false,
   });
   const surface = content.querySelector<HTMLElement>(".ProseMirror");
-  if (surface) fitText(block, surface, editor.isEmpty);
+  if (surface) {
+    fitText(block, surface, editor.isEmpty, textStyleOf(payload).fontSize);
+  }
 }
 
 /** The colour the app looks for to know the page now shows render `token`. */

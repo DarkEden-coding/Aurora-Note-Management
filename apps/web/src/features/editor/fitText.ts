@@ -1,8 +1,12 @@
-/** Fit the document using layout-space measurements so canvas zoom has no effect. */
+/**
+ * Fit the document using layout-space measurements so canvas zoom has no effect.
+ * maxFontSize (a box's chosen font size) caps the fitted size; text still shrinks to fit.
+ */
 export function fitText(
   block: HTMLElement,
   surface: HTMLElement,
   empty: boolean,
+  maxFontSize?: number,
 ): void {
   const width = block.clientWidth;
   const height = block.clientHeight;
@@ -10,11 +14,11 @@ export function fitText(
   // Empty boxes retain a comfortable insertion caret. Dense documents remain
   // scrollable at the minimum size instead of disappearing into unreadable text.
   if (empty) {
-    surface.style.fontSize = "16px";
+    surface.style.fontSize = `${maxFontSize ?? 16}px`;
     return;
   }
   let low = 8;
-  let high = Math.max(8, height / 1.2);
+  let high = Math.max(8, Math.min(height / 1.2, maxFontSize ?? Infinity));
   for (let i = 0; i < 14; i += 1) {
     const size = (low + high) / 2;
     surface.style.fontSize = `${size}px`;

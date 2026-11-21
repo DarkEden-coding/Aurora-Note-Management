@@ -2,7 +2,12 @@
 import crypto from "node:crypto";
 import type pg from "pg";
 import type { CanvasObject } from "@aurora/shared";
-import { deleteObject, touchNote, upsertObject } from "../canvas/objects.js";
+import {
+  deleteObject,
+  loadObjectForUpdate,
+  touchNote,
+  upsertObject,
+} from "../canvas/objects.js";
 import { broadcastToOwner } from "../sync/ws.js";
 
 export type ObjectChanges = {
@@ -11,17 +16,22 @@ export type ObjectChanges = {
   deletedObjectIds: string[];
 };
 
-/** Inserts and deletes practice objects inside the caller's transaction and bumps the note revision once. */
+/**
+ * Inserts or updates, and deletes, objects inside the caller's transaction and bumps the note revision once.
+ * An update gets the next revision so devices accept it over their copy.
+ */
 export async function writeObjects(
   client: pg.PoolClient,
   ownerId: string,
   noteId: string,
-  inserts: CanvasObject[],
+  upserts: CanvasObject[],
   deleteIds: string[] = [],
 ): Promise<ObjectChanges> {
   const objects: CanvasObject[] = [];
-  for (const object of inserts) {
-    objects.push(await upsertObject(client, ownerId, object, 0));
+  for (const object of upserts) {
+    const current = await loadObjectForUpdate(client, ownerId, object.id);
+    const revision = current ? current.revision + 1 : 0;
+    objects.push(await upsertObject(client, ownerId, object, revision));
   }
   const deletedObjectIds: string[] = [];
   for (const id of deleteIds) {

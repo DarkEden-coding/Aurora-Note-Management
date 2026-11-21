@@ -1,5 +1,5 @@
 // Canvas object domain helpers: payload conventions, factories, hit-testing, bounds math, and per-note object ceilings.
-import type { Bounds, CanvasObject } from "@aurora/shared";
+import { textStyleCss, type Bounds, type CanvasObject } from "@aurora/shared";
 import type { Point } from "./viewport";
 import { boundsContainPoint, unionBounds } from "./viewport";
 
@@ -216,6 +216,21 @@ export function setLineEndpointPayload(
 
 export function getStickyText(o: CanvasObject): string {
   return typeof o.payload.text === "string" ? o.payload.text : "";
+}
+
+/** Rich-text block style: its stored font, and its color (any CSS color the app stored, light ink by default). */
+export function richTextStyle(payload: Record<string, unknown>): {
+  color: string;
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+} {
+  // fontSize is a cap for fitText, not a fixed size, so it stays out of the CSS.
+  const { fontSize: _fontSize, ...font } = textStyleCss(payload);
+  return {
+    ...font,
+    color: typeof payload.color === "string" ? payload.color : "#e6e8ec",
+  };
 }
 
 export function getStickyColor(o: CanvasObject): string {

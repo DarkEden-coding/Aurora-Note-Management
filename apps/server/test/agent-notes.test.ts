@@ -167,9 +167,16 @@ describe("MCP discovery", () => {
         "notes_rename",
         "notes_add_page",
         "notes_annotate",
+        "notes_get_objects",
+        "notes_edit_objects",
+        "notes_restyle",
+        "notes_delete_objects",
       ]),
     );
     expect(client.getInstructions()).toContain("notes_read");
+    expect(client.getInstructions()).toContain("notes_delete_objects");
+    const annotate = tools.find((tool) => tool.name === "notes_annotate");
+    expect(JSON.stringify(annotate?.inputSchema)).toContain("fontFamily");
     await client.close();
   });
 });

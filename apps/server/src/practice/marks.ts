@@ -1,7 +1,13 @@
 // Converts Claude's page-relative grading marks and practice cards into locked, world-positioned canvas objects.
 import crypto from "node:crypto";
 import { z } from "zod";
-import type { Bounds, CanvasObject } from "@aurora/shared";
+import {
+  hexColorSchema,
+  textStyleSchema,
+  type Bounds,
+  type CanvasObject,
+  type TextStyle,
+} from "@aurora/shared";
 import { PAGE_HEIGHT, PAGE_WIDTH, pageFrame } from "./page.js";
 
 export const MARK_COLOR = "#ff5c5c";
@@ -24,6 +30,21 @@ export type PracticeTag = {
 const px = z.number().min(0).max(PAGE_WIDTH);
 const py = z.number().min(0).max(PAGE_HEIGHT);
 
+// Optional look of a drawn mark; defaults to red, 3 units wide.
+export const markStyleShape = {
+  color: hexColorSchema.optional().describe("Hex color, default #ff5c5c"),
+  strokeWidth: z
+    .number()
+    .min(0.5)
+    .max(40)
+    .optional()
+    .describe("Line width in page units, default 3"),
+};
+type MarkStyle = {
+  color?: string | undefined;
+  strokeWidth?: number | undefined;
+};
+
 export const markSchema = z.union([
   z
     .object({
@@ -32,6 +53,7 @@ export const markSchema = z.union([
       y: py.describe("Top edge"),
       width: z.number().positive().max(PAGE_WIDTH),
       height: z.number().positive().max(PAGE_HEIGHT),
+      ...markStyleShape,
     })
     .describe("Ellipse (circle) or rectangle (box) around a region"),
   z
@@ -41,6 +63,7 @@ export const markSchema = z.union([
       y1: py,
       x2: px,
       y2: py,
+      ...markStyleShape,
     })
     .describe("Straight line; arrow points from (x1,y1) to (x2,y2)"),
   z
@@ -49,6 +72,7 @@ export const markSchema = z.union([
       x: px.describe("Center x"),
       y: py.describe("Center y"),
       size: z.number().positive().max(200).default(28),
+      ...markStyleShape,
     })
     .describe("Tick or X centred on (x,y)"),
   z
@@ -58,6 +82,7 @@ export const markSchema = z.union([
         .array(z.tuple([px, py]))
         .min(2)
         .max(2000),
+      ...markStyleShape,
     })
     .describe("Freehand polyline through [x,y] points"),
   z
@@ -67,8 +92,11 @@ export const markSchema = z.union([
       y: py.describe("Top edge"),
       text: z.string().min(1).max(500),
       width: z.number().positive().max(PAGE_WIDTH).optional(),
+      ...textStyleSchema.shape,
     })
-    .describe("Short red handwritten-style note; wraps at width (default 220)"),
+    .describe(
+      "Short comment; wraps at width (default 220). Red 20px sans-serif unless fontFamily, fontSize, fontWeight, fontStyle or color say otherwise",
+    ),
 ]);
 
 export type Mark = z.infer<typeof markSchema>;
@@ -126,12 +154,13 @@ export function cardObject(
   html: string,
   pageBounds: Bounds,
   practice: PracticeTag,
+  style: TextStyle = {},
 ): CanvasObject {
   return practiceObject(
     ctx,
     "practice-card",
     toWorld(ctx, pageBounds),
-    { variant, html },
+    { variant, html, ...style },
     practice,
   );
 }
@@ -149,6 +178,11 @@ function boundsAround(points: Point[], pad: number): Bounds {
   };
 }
 
+/** Label card HTML for plain text (one line per line). */
+export function labelHtml(text: string): string {
+  return escapeHtml(text).replace(/\n/g, "<br>");
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -157,26 +191,34 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Rough handwriting-label metrics, enough to give the card a sensible height.
+// Rough label metrics at the default 20px size, enough to give the card a sensible height.
+const LABEL_FONT_SIZE = 20;
 const LABEL_CHAR_WIDTH = 10;
 const LABEL_LINE_HEIGHT = 28;
 
-function labelHeight(text: string, width: number): number {
-  const perLine = Math.max(1, Math.floor(width / LABEL_CHAR_WIDTH));
+export function labelHeight(
+  text: string,
+  width: number,
+  fontSize = LABEL_FONT_SIZE,
+): number {
+  const ratio = fontSize / LABEL_FONT_SIZE;
+  const perLine = Math.max(1, Math.floor(width / (LABEL_CHAR_WIDTH * ratio)));
   const lines = text
     .split("\n")
     .reduce(
       (sum, line) => sum + Math.max(1, Math.ceil(line.length / perLine)),
       0,
     );
-  return lines * LABEL_LINE_HEIGHT + 8;
+  return Math.ceil(lines * LABEL_LINE_HEIGHT * ratio + 8);
 }
 
 function strokeObject(
   ctx: ObjectContext,
   pagePoints: Point[],
   practice: PracticeTag,
+  style: MarkStyle,
 ): CanvasObject {
+  const width = style.strokeWidth ?? MARK_WIDTH;
   const origin = pageOrigin(ctx);
   const world = pagePoints.map((p) => ({
     x: p.x + origin.x,
@@ -185,11 +227,11 @@ function strokeObject(
   return practiceObject(
     ctx,
     "stroke",
-    boundsAround(world, MARK_WIDTH),
+    boundsAround(world, width),
     {
       points: world.map((p) => [p.x, p.y, 0.5]),
-      color: MARK_COLOR,
-      baseWidth: MARK_WIDTH,
+      color: style.color ?? MARK_COLOR,
+      baseWidth: width,
     },
     practice,
   );
@@ -201,19 +243,21 @@ function lineObject(
   start: Point,
   end: Point,
   practice: PracticeTag,
+  style: MarkStyle,
 ): CanvasObject {
+  const width = style.strokeWidth ?? MARK_WIDTH;
   const origin = pageOrigin(ctx);
   const s = { x: start.x + origin.x, y: start.y + origin.y };
   const e = { x: end.x + origin.x, y: end.y + origin.y };
   return practiceObject(
     ctx,
     kind,
-    boundsAround([s, e], MARK_WIDTH),
+    boundsAround([s, e], width),
     {
       start: s,
       end: e,
-      color: MARK_COLOR,
-      strokeWidth: MARK_WIDTH,
+      color: style.color ?? MARK_COLOR,
+      strokeWidth: width,
       lineStyle: "solid",
     },
     practice,
@@ -242,10 +286,10 @@ export function markToObjects(
             height: mark.height,
           }),
           {
-            color: MARK_COLOR,
+            color: mark.color ?? MARK_COLOR,
             fill: null,
             fillOpacity: 100,
-            strokeWidth: MARK_WIDTH,
+            strokeWidth: mark.strokeWidth ?? MARK_WIDTH,
             lineStyle: "solid",
           },
           tag,
@@ -261,6 +305,7 @@ export function markToObjects(
           { x: mark.x1, y: mark.y1 },
           { x: mark.x2, y: mark.y2 },
           tag,
+          mark,
         ),
       ];
     case "check": {
@@ -274,6 +319,7 @@ export function markToObjects(
             { x: mark.x + 0.5 * s, y: mark.y - 0.45 * s },
           ],
           tag,
+          mark,
         ),
       ];
     }
@@ -287,6 +333,7 @@ export function markToObjects(
             { x: mark.x + h, y: mark.y + h },
           ],
           tag,
+          mark,
         ),
         strokeObject(
           ctx,
@@ -295,6 +342,7 @@ export function markToObjects(
             { x: mark.x - h, y: mark.y + h },
           ],
           tag,
+          mark,
         ),
       ];
     }
@@ -304,22 +352,21 @@ export function markToObjects(
           ctx,
           mark.points.map(([x, y]) => ({ x, y })),
           tag,
+          mark,
         ),
       ];
     case "text": {
       const width = mark.width ?? 220;
+      const { type, x, y, text, width: _width, ...style } = mark;
       return [
         cardObject(
           ctx,
           "label",
-          escapeHtml(mark.text).replace(/\n/g, "<br>"),
-          {
-            x: mark.x,
-            y: mark.y,
-            width,
-            height: labelHeight(mark.text, width),
-          },
+          labelHtml(text),
+          { x, y, width, height: labelHeight(text, width, style.fontSize) },
           { questionId, attempt, role: "label" },
+          // Agent comments read in a plain sans-serif unless asked otherwise.
+          { fontFamily: "sans", ...style },
         ),
       ];
     }

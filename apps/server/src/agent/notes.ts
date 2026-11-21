@@ -1,9 +1,18 @@
-// Agent-facing note flows for the MCP tools: list, read (page text + rendered page images), search, and additive edits.
+// Agent-facing note flows for the MCP tools: list, read (page objects + rendered page images), search, and additive edits.
 import crypto from "node:crypto";
-import type { Bounds, CanvasMode, CanvasObject } from "@aurora/shared";
+import type {
+  Bounds,
+  CanvasMode,
+  CanvasObject,
+  TextStyle,
+} from "@aurora/shared";
 import { conflict, notFound } from "../errors.js";
 import { getPool, query, withTransaction } from "../db/pool.js";
-import { mapCanvasObject, queryRegionalObjects } from "../canvas/objects.js";
+import {
+  mapCanvasObject,
+  queryRegionalObjects,
+  type CanvasObjectRow,
+} from "../canvas/objects.js";
 import { objectText, textToDoc } from "../canvas/text.js";
 import {
   createNote,
@@ -21,17 +30,18 @@ import {
   folderPathById,
   resolveLocation,
 } from "../practice/location.js";
-import { markToObjects, practiceTagOf, type Mark } from "../practice/marks.js";
+import { markToObjects, type Mark } from "../practice/marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect } from "../practice/page.js";
 import { renderPagePng } from "../practice/render.js";
 import { objectRasters } from "./rasters.js";
 import { broadcastObjectChanges, writeObjects } from "../practice/publish.js";
 import { listQuestions, loadSessionByNote } from "../practice/store.js";
+import { describeObject } from "./objects.js";
 import {
   canvasTiles,
   pagedNotePages,
+  pageOf,
   pageWorldFrame,
-  toPageBounds,
   type NotePage,
 } from "./pages.js";
 
@@ -42,7 +52,8 @@ const OBJECT_TEXT_SQL = `concat_ws(' ', o.payload ->> 'text', o.payload ->> 'htm
   jsonb_path_query_array(o.payload -> 'doc', 'lax $.**.text')::text)`;
 // Agent-typed text sits above existing content, like practice marks.
 const AGENT_Z_INDEX = 100_000;
-const TEXT_LINE_HEIGHT = 24;
+// Agent text boxes read in a plain sans-serif at this size unless asked otherwise.
+const AGENT_TEXT_STYLE = { fontFamily: "sans", fontSize: 18 } as const;
 
 // uploadDir locates image and PDF files so page images show them.
 export type PageImageOptions = { scale: number; uploadDir: string };
@@ -143,7 +154,7 @@ async function contentBoxes(
 }
 
 /** The note's pages: real pages for paged notes, content tiles for other canvases. */
-async function notePages(
+export async function notePages(
   ownerId: string,
   noteId: string,
 ): Promise<{ note: NoteJson; pages: NotePage[]; boxes: Bounds[] }> {
@@ -159,7 +170,7 @@ async function notePages(
   };
 }
 
-function pageAt(pages: NotePage[], index: number): NotePage {
+export function pageAt(pages: NotePage[], index: number): NotePage {
   const page = pages[index];
   if (!page) {
     throw notFound(`Page ${index} (the note has ${pages.length} pages)`);
@@ -167,7 +178,7 @@ function pageAt(pages: NotePage[], index: number): NotePage {
   return page;
 }
 
-async function pageObjects(
+export async function pageObjects(
   ownerId: string,
   noteId: string,
   page: NotePage,
@@ -179,7 +190,7 @@ async function pageObjects(
   return result.objects;
 }
 
-async function renderNotePage(
+export async function renderNotePage(
   ownerId: string,
   objects: CanvasObject[],
   page: NotePage,
@@ -198,62 +209,91 @@ async function renderNotePage(
   );
 }
 
-async function textObjects(
+/**
+ * The note's objects in reading order, without stroke points (bounds and style are enough to
+ * list them). User handwriting is left out unless includeInk.
+ */
+export async function noteObjects(
   ownerId: string,
   noteId: string,
+  options: { includeInk: boolean; ids?: string[] },
 ): Promise<CanvasObject[]> {
-  const result = await query<Parameters<typeof mapCanvasObject>[0]>(
+  const result = await query<CanvasObjectRow>(
     `SELECT id, owner_id, note_id, page_id, kind, x, y, width, height, rotation,
-            z_index, locked, group_id, payload, revision, created_at, updated_at
+            z_index, locked, group_id, payload - 'points' AS payload, revision,
+            created_at, updated_at
      FROM canvas_objects
-     WHERE owner_id = $1 AND note_id = $2 AND kind = ANY($3)
+     WHERE owner_id = $1 AND note_id = $2
+       AND ($3 OR kind <> 'stroke' OR payload ? 'practice')
+       AND ($4::uuid[] IS NULL OR id = ANY($4))
      ORDER BY y, x`,
-    [ownerId, noteId, TEXT_KINDS],
+    [ownerId, noteId, options.includeInk, options.ids ?? null],
   );
   return result.rows.map(mapCanvasObject);
 }
 
-/** Who wrote an object: the user, or the agent's practice/annotation marks. */
-function authorOf(object: CanvasObject): "user" | "agent" {
-  return practiceTagOf(object) ? "agent" : "user";
+/** Counts user ink strokes per page, so notes_read can say how much handwriting each page has. */
+async function inkCounts(
+  ownerId: string,
+  noteId: string,
+  pages: NotePage[],
+): Promise<Map<number, number>> {
+  const result = await query<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>(
+    `SELECT x, y, width, height FROM canvas_objects
+     WHERE owner_id = $1 AND note_id = $2 AND kind = 'stroke' AND NOT payload ? 'practice'`,
+    [ownerId, noteId],
+  );
+  const counts = new Map<number, number>();
+  for (const row of result.rows) {
+    const page = pageOf(pages, {
+      x: Number(row.x),
+      y: Number(row.y),
+      width: Number(row.width),
+      height: Number(row.height),
+    });
+    counts.set(page.index, (counts.get(page.index) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export async function readNote(
   ownerId: string,
   noteId: string,
-  input: { pages?: number[] | undefined; image: PageImageOptions },
+  input: {
+    pages?: number[] | undefined;
+    includeInk: boolean;
+    image: PageImageOptions;
+  },
 ) {
   const { note, pages, boxes } = await notePages(ownerId, noteId);
   const label = (await locationLabels(ownerId))(note);
-  const texts = await textObjects(ownerId, noteId);
+  const objects = await noteObjects(ownerId, noteId, {
+    includeInk: input.includeInk,
+  });
+  const ink = await inkCounts(ownerId, noteId, pages);
   const session = await loadSessionByNote(getPool(), ownerId, noteId);
   const questions = session ? await listQuestions(getPool(), session.id) : [];
 
   const pageInfo = pages.map((page) => {
     const frame = pageWorldFrame(page);
-    // Each text object is listed on the page that holds its top-left corner.
-    const pageTexts = texts.filter((object) =>
-      boundsIntersect(
-        { x: object.bounds.x, y: object.bounds.y, width: 1, height: 1 },
-        frame,
-      ),
-    );
     return {
       index: page.index,
       origin: page.origin,
       objectCount: boxes.filter((box) => boundsIntersect(box, frame)).length,
+      inkStrokeCount: ink.get(page.index) ?? 0,
       practiceQuestionId:
         questions.find(
           (q) => q.page_index === page.index && note.canvasMode === "paged",
         )?.id ?? null,
-      text: pageTexts
-        .map((object) => ({
-          kind: object.kind,
-          author: authorOf(object),
-          ...toPageBounds(page, object.bounds),
-          text: objectText(object) ?? "",
-        }))
-        .filter((item) => item.text.length > 0),
+      // Each object is listed on the page that holds its top-left corner.
+      objects: objects
+        .filter((object) => pageOf(pages, object.bounds) === page)
+        .map((object) => describeObject(object, page)),
     };
   });
 
@@ -409,13 +449,25 @@ export async function appendPage(ownerId: string, noteId: string) {
   return { pageIndex: result.page.pageIndex, pageCount: result.pageCount };
 }
 
-export type TextBlock = {
+export type TextBlock = TextStyle & {
   x: number;
   y: number;
   width: number;
   height?: number | undefined;
   text: string;
 };
+
+/** Height that fits plain text at a font size in a box of the given width (rich-text lines are 1.2em). */
+function textHeight(text: string, width: number, fontSize: number): number {
+  const perLine = Math.max(1, Math.floor(width / (fontSize * 0.55)));
+  const lines = text
+    .split("\n")
+    .reduce(
+      (sum, line) => sum + Math.max(1, Math.ceil(line.length / perLine)),
+      0,
+    );
+  return Math.ceil(lines * fontSize * 1.2 + 8);
+}
 
 function textBlockObject(
   ownerId: string,
@@ -424,25 +476,23 @@ function textBlockObject(
   block: TextBlock,
 ): CanvasObject {
   const now = new Date().toISOString();
+  const { x, y, width, height: givenHeight, text, ...style } = block;
+  const textStyle = { ...AGENT_TEXT_STYLE, ...style };
   const height =
-    block.height ?? block.text.split("\n").length * TEXT_LINE_HEIGHT + 16;
+    givenHeight ??
+    textHeight(text, width, style.fontSize ?? AGENT_TEXT_STYLE.fontSize);
   return {
     id: crypto.randomUUID(),
     ownerId,
     noteId,
     pageId: null,
     kind: "rich-text",
-    bounds: {
-      x: page.origin.x + block.x,
-      y: page.origin.y + block.y,
-      width: block.width,
-      height,
-    },
+    bounds: { x: page.origin.x + x, y: page.origin.y + y, width, height },
     rotation: 0,
     zIndex: AGENT_Z_INDEX,
     locked: false,
     groupId: null,
-    payload: { doc: textToDoc(block.text) },
+    payload: { doc: textToDoc(text), ...textStyle, author: "agent" },
     revision: 0,
     createdAt: now,
     updatedAt: now,

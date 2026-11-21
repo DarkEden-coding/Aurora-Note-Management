@@ -8,17 +8,19 @@ import "./practice.css";
 function CardShadow({
   variant,
   html,
+  payload,
 }: {
   variant: CardVariant;
   html: string;
+  payload: Record<string, unknown>;
 }): ReactNode {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (host === null) return;
-    mountCard(host, variant, html);
-  }, [html, variant]);
+    mountCard(host, variant, html, payload);
+  }, [html, variant, payload]);
 
   return <div ref={hostRef} className="practice-card-host" />;
 }
@@ -33,10 +35,12 @@ export function PracticeCard({
   const [revealed, setRevealed] = useState(false);
 
   if (variant !== "solution")
-    return <CardShadow variant={variant} html={html} />;
+    return <CardShadow variant={variant} html={html} payload={payload} />;
   return (
     <div className="practice-solution">
-      {revealed ? <CardShadow variant={variant} html={html} /> : null}
+      {revealed ? (
+        <CardShadow variant={variant} html={html} payload={payload} />
+      ) : null}
       <button
         type="button"
         className="practice-solution-toggle"

@@ -1,5 +1,11 @@
 // Rich-text block surface: Tiptap editor bound to a serialized ProseMirror JSON document. Never exposes editor instances; consumers see serialized JSON only.
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { fitText } from "./fitText";
 import { EDITOR_EXTENSIONS } from "./extensions";
@@ -18,7 +24,10 @@ export interface RichTextBlockProps {
   editable?: boolean;
   /** Focuses the editor when it becomes editable. */
   autoFocus?: boolean;
-  color?: string;
+  /** Text color, font family, weight and style of the whole block. */
+  textStyle?: CSSProperties;
+  /** Largest font size; the text shrinks below it to fit the box. */
+  maxFontSize?: number | undefined;
   /** Emits the serialized ProseMirror JSON after every content update. */
   onChange?: (json: Record<string, unknown>) => void;
   onFocusChange?: (focused: boolean) => void;
@@ -29,7 +38,8 @@ export function RichTextBlock({
   content,
   editable = true,
   autoFocus = false,
-  color,
+  textStyle,
+  maxFontSize,
   onChange,
   onFocusChange,
 }: RichTextBlockProps): ReactNode {
@@ -39,6 +49,8 @@ export function RichTextBlock({
   const onFocusChangeRef = useRef(onFocusChange);
   onChangeRef.current = onChange;
   onFocusChangeRef.current = onFocusChange;
+  // Refit when the font changes, not only when the box or text does.
+  const fitKey = JSON.stringify([maxFontSize, textStyle]);
 
   const blockRef = useRef<HTMLDivElement>(null);
 
@@ -89,7 +101,7 @@ export function RichTextBlock({
       frame = requestAnimationFrame(() => {
         const surface = block.querySelector<HTMLElement>(".ProseMirror");
         if (surface && !editor.isDestroyed && !editor.view.composing) {
-          fitText(block, surface, editor.isEmpty);
+          fitText(block, surface, editor.isEmpty, maxFontSize);
         }
       });
     };
@@ -106,7 +118,8 @@ export function RichTextBlock({
       editor.off("transaction", update);
       cancelAnimationFrame(frame);
     };
-  }, [editor]);
+    // fitKey stands in for maxFontSize and textStyle.
+  }, [editor, fitKey]);
 
   useEffect(() => {
     if (!editable) setToolbarOpen(false);
@@ -119,7 +132,7 @@ export function RichTextBlock({
       ref={blockRef}
       className="rich-text-block"
       data-rich-text-block=""
-      {...(color ? { style: { color } } : {})}
+      {...(textStyle ? { style: textStyle } : {})}
     >
       {editable ? (
         <div
