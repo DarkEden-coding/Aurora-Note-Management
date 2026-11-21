@@ -135,19 +135,32 @@ class SceneRenderer {
                 val clip = Path().apply { addRoundRect(rect, 4f, 4f, Path.Direction.CW) }
                 Prepared(o) { c ->
                     c.drawRoundRect(rect, 4f, 4f, imageBackdrop)
-                    val bitmap = fileId?.let { images?.get(it) } ?: return@Prepared
-                    val scale = min(rect.width() / bitmap.width, rect.height() / bitmap.height)
-                    val w = bitmap.width * scale; val h = bitmap.height * scale
-                    val dst = RectF(rect.centerX() - w / 2, rect.centerY() - h / 2, rect.centerX() + w / 2, rect.centerY() + h / 2)
-                    c.save(); c.clipPath(clip); c.drawBitmap(bitmap, null, dst, bitmapPaint); c.restore()
+                    val bitmap = fileId?.let { images?.image(it) } ?: return@Prepared
+                    c.save(); c.clipPath(clip); c.drawBitmap(bitmap, null, containIn(bitmap, rect), bitmapPaint); c.restore()
+                }
+            }
+            "pdf-page-reference" -> {
+                // Imported PDF pages fill their bounds edge to edge (.pdf-document-page).
+                val rect = RectF(b.x.toFloat(), b.y.toFloat(), b.right.toFloat(), b.bottom.toFloat())
+                val page = o.pdfPage
+                Prepared(o) { c ->
+                    val bitmap = page?.let { (fileId, number) -> images?.pdfPage(fileId, number, b.width) }
+                    if (bitmap == null) c.drawRect(rect, imageBackdrop)
+                    else c.drawBitmap(bitmap, null, containIn(bitmap, rect), bitmapPaint)
                 }
             }
             else -> {
-                // Rich text, PDFs, and practice cards are not drawn natively yet.
+                // Rich text and practice cards are not drawn natively yet.
                 val rect = RectF(b.x.toFloat(), b.y.toFloat(), b.right.toFloat(), b.bottom.toFloat())
                 Prepared(o) { c -> c.drawRect(rect, placeholderPaint); c.drawText(o.kind, rect.left + 6, rect.top + 16, labelPaint) }
             }
         }
+    }
+
+    private fun containIn(bitmap: android.graphics.Bitmap, rect: RectF): RectF {
+        val scale = min(rect.width() / bitmap.width, rect.height() / bitmap.height)
+        val w = bitmap.width * scale; val h = bitmap.height * scale
+        return RectF(rect.centerX() - w / 2, rect.centerY() - h / 2, rect.centerX() + w / 2, rect.centerY() + h / 2)
     }
 
     private fun prepareStroke(o: CanvasObject): Prepared {

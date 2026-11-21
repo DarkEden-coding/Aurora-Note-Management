@@ -49,6 +49,12 @@ val CanvasObject.shapeFill get() = payload.str("fill")
 val CanvasObject.shapeFillOpacity get() = (payload.num("fillOpacity") ?: 100.0).coerceIn(0.0, 100.0)
 val CanvasObject.lineStyle get() = payload.str("lineStyle")?.takeIf { it == "dashed" || it == "dotted" } ?: "solid"
 val CanvasObject.imageFileId get() = payload.str("fileId")?.takeIf { it.isNotEmpty() }
+/** File and 1-based page of an imported PDF page, or null for anything else. */
+val CanvasObject.pdfPage: Pair<String, Int>? get() {
+    val fileId = payload.str("fileId")?.takeIf { it.isNotEmpty() } ?: return null
+    val page = payload.num("pageNumber")?.toInt()?.takeIf { it >= 1 } ?: return null
+    return fileId to page
+}
 val CanvasObject.cornerRadius get() = (payload.num("cornerRadius") ?: 2.0).coerceIn(0.0, 64.0)
 
 const val HIGHLIGHTER_OPACITY = 0.38f

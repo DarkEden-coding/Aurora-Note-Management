@@ -1,7 +1,6 @@
 // Aurora's library tree, creation dialogs, and pointer-positioned context menus.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  ChevronDown,
   ChevronRight,
   Download,
   FileText,
@@ -162,7 +161,10 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             }
             title={folder.name}
           >
-            {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <ChevronRight
+              size={15}
+              className={`tree-chevron${expanded ? " open" : ""}`}
+            />
             {expanded ? (
               <FolderOpen size={16} className="muted" />
             ) : (
@@ -216,7 +218,10 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             }
             title={project.name}
           >
-            {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <ChevronRight
+              size={15}
+              className={`tree-chevron${expanded ? " open" : ""}`}
+            />
             <FolderOpen size={16} className="muted" />
             <span className="label">
               <strong>{project.name}</strong>

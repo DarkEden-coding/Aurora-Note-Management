@@ -319,6 +319,30 @@ button.tree-action.danger:hover {
   margin-left: 14px;
   border-left: 1px solid var(--border);
   padding-left: 4px;
+  animation: tree-reveal 180ms ease-out;
+}
+@keyframes tree-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.tree-chevron {
+  flex: none;
+  transition: transform 180ms ease;
+}
+.tree-chevron.open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-children {
+    animation: none;
+  }
+  .tree-chevron {
+    transition: none;
+  }
 }
 
 .main-column {

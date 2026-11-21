@@ -73,7 +73,8 @@ class TileCache(private val renderer: SceneRenderer) {
                 }, true, frame)
             }
             tile.lastUsed = frame
-            if (tile.dirty) { record(tile.node, tx * size, ty * size, size, objects, excluded); tile.dirty = false }
+            // Android drops child display lists when the app is backgrounded or trimmed, so a "clean" tile may be empty.
+            if (tile.dirty || !tile.node.hasDisplayList()) { record(tile.node, tx * size, ty * size, size, objects, excluded); tile.dirty = false }
             canvas.save()
             canvas.translate((originX + tx * TILE_PX * ratio).toFloat(), (originY + ty * TILE_PX * ratio).toFloat())
             if (zooming) canvas.scale(ratio.toFloat(), ratio.toFloat())

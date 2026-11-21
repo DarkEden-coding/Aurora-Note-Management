@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.aurora.notes.canvas.CanvasDocument
 import app.aurora.notes.canvas.CanvasView
+import app.aurora.notes.canvas.hasImportedPdf
 import app.aurora.notes.data.Account
 import app.aurora.notes.data.AuroraApi
 import app.aurora.notes.data.LibraryNote
@@ -48,6 +49,8 @@ class AppState(context: Context) {
     var zoom by mutableStateOf(1.0)
         private set
     var currentPage by mutableStateOf(0)
+        private set
+    var importedPdf by mutableStateOf(false)
         private set
     var canPaste by mutableStateOf(false)
         private set
@@ -139,6 +142,7 @@ class AppState(context: Context) {
             val ownerId = account?.ownerId ?: runCatching { api.account().also { account = it } }.getOrNull()?.ownerId ?: return@launch
             val doc = CanvasDocument(noteId, ownerId) { upserts, deletes -> sync.submit(noteId, upserts, deletes) }
             doc.load(sync.cachedObjects(noteId))
+            importedPdf = doc.all.hasImportedPdf()
             pageCount = settings.pageCount(noteId)
             view.open(doc, note.canvasMode, pageCount, note.background, settings.camera(noteId))
             refreshHistory()
@@ -146,7 +150,10 @@ class AppState(context: Context) {
                 pageCount = it; settings.savePageCount(noteId, it); view.setPageCount(it)
             }
             runCatching { sync.refreshNote(noteId) }.onSuccess { objects ->
-                if (view.document === doc) doc.applyRemote(objects, doc.all.map { it.id }.filter { id -> objects.none { it.id == id } }, view.protectedIds())
+                if (view.document === doc) {
+                    doc.applyRemote(objects, doc.all.map { it.id }.filter { id -> objects.none { it.id == id } }, view.protectedIds())
+                    importedPdf = doc.all.hasImportedPdf()
+                }
             }.onFailure { error = "Showing the copy saved on this tablet: ${it.message}" }
         }
     }

@@ -19,8 +19,12 @@ fun pagedFrame(index: Int) = Bounds(0.0, index * (PAGE_HEIGHT + PAGE_GAP), PAGE_
 fun pageIndexAtY(y: Double): Int = if (y >= 0) floor((y + PAGE_GAP) / (PAGE_HEIGHT + PAGE_GAP)).toInt() else 0
 
 /** Patterned writing surfaces drawn under the content for each mode. */
+/** Imported PDF notes: the PDF pages are the surface, so no sheets are drawn and pages can't be added. */
+fun Collection<CanvasObject>.hasImportedPdf() =
+    any { it.kind == "pdf-page-reference" && it.payload["importedDocument"]?.toString() == "true" }
+
 fun surfaceFrames(objects: Collection<CanvasObject>, mode: String, pageCount: Int): List<Bounds> {
-    if (objects.any { it.kind == "pdf-page-reference" && it.payload["importedDocument"]?.toString() == "true" }) return emptyList()
+    if (objects.hasImportedPdf()) return emptyList()
     return when (mode) {
         "fixed-width" -> listOf(Bounds(0.0, 0.0, PAGE_WIDTH, OPEN_AXIS_EXTENT))
         "fixed-height" -> listOf(Bounds(0.0, 0.0, OPEN_AXIS_EXTENT, PAGE_HEIGHT))

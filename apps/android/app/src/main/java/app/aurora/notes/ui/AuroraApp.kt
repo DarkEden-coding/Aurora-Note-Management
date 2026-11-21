@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -82,6 +83,12 @@ private val LocalModalCount = androidx.compose.runtime.compositionLocalOf { muta
 fun AuroraApp(state: AppState) {
     var collapsed by remember { mutableStateOf(false) }
     var sidebarWidth by remember { mutableStateOf(state.settings.sidebarWidth) }
+    var resizing by remember { mutableStateOf(false) }
+    val shownWidth by androidx.compose.animation.core.animateDpAsState(
+        if (collapsed) 48.dp else sidebarWidth.dp,
+        if (resizing) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(180),
+        label = "sidebar",
+    )
     var settingsOpen by remember { mutableStateOf(false) }
     val modals = remember { mutableStateOf(0) }
 
@@ -92,11 +99,11 @@ fun AuroraApp(state: AppState) {
         Row(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp),
         ) {
-            Sidebar(state, collapsed, if (collapsed) 48.dp else sidebarWidth.dp, onToggle = { collapsed = !collapsed })
+            Sidebar(state, collapsed, shownWidth, onToggle = { collapsed = !collapsed })
             SidebarResizer(
                 enabled = !collapsed,
-                onDrag = { dx -> sidebarWidth = (sidebarWidth + dx).coerceIn(220f, 520f) },
-                onDone = { state.settings.sidebarWidth = sidebarWidth },
+                onDrag = { dx -> resizing = true; sidebarWidth = (sidebarWidth + dx).coerceIn(220f, 520f) },
+                onDone = { resizing = false; state.settings.sidebarWidth = sidebarWidth },
                 onReset = { sidebarWidth = 280f; state.settings.sidebarWidth = 280f },
             )
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(shellGap)) {
@@ -196,17 +203,19 @@ private fun Sidebar(state: AppState, collapsed: Boolean, width: Dp, onToggle: ()
                         IconButton(Lucide.FolderPlus, 15) { dialog = LibraryDialogKind.Folder(project.id) }
                         IconButton(Lucide.Plus, 15) { dialog = LibraryDialogKind.Note(project.id, null) }
                     }) {
-                        LucideIcon(if (open) Lucide.ChevronDown else Lucide.ChevronRight, 15)
+                        Chevron(open)
                         LucideIcon(if (open) Lucide.FolderOpen else Lucide.Folder, 16, Neo.muted)
                         Label(project.name, weight = FontWeight.Bold)
                     }
                 }
-                if (open) item("${project.id}-children") {
-                    TreeChildren {
-                        for (folder in tree.folders.filter { it.projectId == project.id && it.parentId == null }) {
-                            FolderTree(state, folder, tree.folders, notes, expanded) { dialog = LibraryDialogKind.Note(project.id, folder.id) }
+                item("${project.id}-children") {
+                    Reveal(open) {
+                        TreeChildren {
+                            for (folder in tree.folders.filter { it.projectId == project.id && it.parentId == null }) {
+                                FolderTree(state, folder, tree.folders, notes, expanded) { folderId -> dialog = LibraryDialogKind.Note(project.id, folderId) }
+                            }
+                            for (note in notes.filter { it.projectId == project.id && it.folderId == null }) NoteItem(state, note)
                         }
-                        for (note in notes.filter { it.projectId == project.id && it.folderId == null }) NoteItem(state, note)
                     }
                 }
             }
@@ -296,18 +305,39 @@ internal fun TreeItem(selected: Boolean, onClick: () -> Unit, actions: (@Composa
 @Composable
 private fun FolderTree(
     state: AppState, folder: LibraryFolder, folders: List<LibraryFolder>, notes: List<LibraryNote>,
-    expanded: MutableMap<String, Boolean>, onAddNote: () -> Unit,
+    expanded: MutableMap<String, Boolean>, onAddNote: (folderId: String) -> Unit,
 ) {
     val open = expanded[folder.id] ?: false
-    TreeItem(selected = false, onClick = { expanded[folder.id] = !open }, actions = { IconButton(Lucide.Plus, 15, onClick = onAddNote) }) {
-        LucideIcon(if (open) Lucide.ChevronDown else Lucide.ChevronRight, 15)
+    TreeItem(selected = false, onClick = { expanded[folder.id] = !open }, actions = { IconButton(Lucide.Plus, 15) { onAddNote(folder.id) } }) {
+        Chevron(open)
         LucideIcon(if (open) Lucide.FolderOpen else Lucide.Folder, 16, Neo.muted)
         Label(folder.name)
     }
-    if (open) TreeChildren {
-        for (child in folders.filter { it.parentId == folder.id }) FolderTree(state, child, folders, notes, expanded, onAddNote)
-        for (note in notes.filter { it.folderId == folder.id }) NoteItem(state, note)
+    Reveal(open) {
+        TreeChildren {
+            for (child in folders.filter { it.parentId == folder.id }) FolderTree(state, child, folders, notes, expanded, onAddNote)
+            for (note in notes.filter { it.folderId == folder.id }) NoteItem(state, note)
+        }
     }
+}
+
+/** Tree children slide open and fade in, and fold away the same way. */
+@Composable
+private fun Reveal(visible: Boolean, content: @Composable () -> Unit) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible,
+        enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(180)) +
+            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)),
+        exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(160)) +
+            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)),
+    ) { content() }
+}
+
+/** A right chevron that turns down as its row opens. */
+@Composable
+private fun Chevron(open: Boolean) {
+    val angle by androidx.compose.animation.core.animateFloatAsState(if (open) 90f else 0f, androidx.compose.animation.core.tween(180), label = "chevron")
+    LucideIcon(Lucide.ChevronRight, 15, modifier = Modifier.graphicsLayer { rotationZ = angle })
 }
 
 @Composable
@@ -538,7 +568,7 @@ private fun CanvasArea(state: AppState, modifier: Modifier) {
         Toolbar(state, tool, onTool = { tool = it }, onPaste = { view?.paste() }, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
         if (tool == Tool.Pen) PenPalette(palette, color, onColor = { state.penColor = it }, Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 82.dp))
         val note = state.openNote
-        if (note?.canvasMode == "paged" && state.selectionCount == 0) {
+        if (note?.canvasMode == "paged" && !state.importedPdf && state.selectionCount == 0) {
             Row(
                 Modifier.align(Alignment.BottomCenter).padding(bottom = 22.dp).heightIn(min = 38.dp)
                     .panel(radius = 999.dp, fill = Neo.surfaceRaised).clickable { state.addPageBelow() }.padding(horizontal = 14.dp, vertical = 8.dp),
