@@ -17,6 +17,9 @@ private const val PRESSURE_STEPS = 32
 private class Prepared(val source: CanvasObject, val draw: (Canvas) -> Unit)
 
 class SceneRenderer {
+    /** Source of decoded images; without one, images draw as their empty frame. */
+    var images: ImageStore? = null
+
     private val cache = HashMap<String, Prepared>()
     private val samplesCache = HashMap<String, Pair<CanvasObject, StrokeSamples>>()
 
@@ -31,6 +34,9 @@ class SceneRenderer {
         strokeWidth = 1f
         color = 0x55FFFFFF
     }
+    // .canvas-image: rgba(255,255,255,.06) behind an object-fit: contain image, 4px corners.
+    private val imageBackdrop = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x0FFFFFFF }
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99FFFFFF.toInt(); textSize = 12f }
 
     /** Stroke samples, parsed once per object instance. */
@@ -123,8 +129,21 @@ class SceneRenderer {
                 val line = outline(o, Paint.Cap.SQUARE)
                 Prepared(o) { c -> c.drawPath(path, line) }
             }
+            "image" -> {
+                val rect = RectF(b.x.toFloat(), b.y.toFloat(), b.right.toFloat(), b.bottom.toFloat())
+                val fileId = o.imageFileId
+                val clip = Path().apply { addRoundRect(rect, 4f, 4f, Path.Direction.CW) }
+                Prepared(o) { c ->
+                    c.drawRoundRect(rect, 4f, 4f, imageBackdrop)
+                    val bitmap = fileId?.let { images?.get(it) } ?: return@Prepared
+                    val scale = min(rect.width() / bitmap.width, rect.height() / bitmap.height)
+                    val w = bitmap.width * scale; val h = bitmap.height * scale
+                    val dst = RectF(rect.centerX() - w / 2, rect.centerY() - h / 2, rect.centerX() + w / 2, rect.centerY() + h / 2)
+                    c.save(); c.clipPath(clip); c.drawBitmap(bitmap, null, dst, bitmapPaint); c.restore()
+                }
+            }
             else -> {
-                // Rich text, images, PDFs, and practice cards are drawn by their own layers.
+                // Rich text, PDFs, and practice cards are not drawn natively yet.
                 val rect = RectF(b.x.toFloat(), b.y.toFloat(), b.right.toFloat(), b.bottom.toFloat())
                 Prepared(o) { c -> c.drawRect(rect, placeholderPaint); c.drawText(o.kind, rect.left + 6, rect.top + 16, labelPaint) }
             }

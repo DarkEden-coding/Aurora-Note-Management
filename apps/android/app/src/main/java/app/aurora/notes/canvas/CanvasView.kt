@@ -51,6 +51,14 @@ class CanvasView(context: Context) : View(context) {
     }
     private var shownExcluded: Set<String> = emptySet()
 
+    /** Image source shared with the renderer; a finished load redraws every tile. */
+    var images: ImageStore?
+        get() = renderer.images
+        set(value) {
+            renderer.images = value
+            value?.onLoaded = { tiles.invalidateAll(); invalidate() }
+        }
+
     var document: CanvasDocument? = null
         private set
     private var mode = "infinite"

@@ -37,6 +37,15 @@ class AuroraApi(private val settings: Settings) {
             }
         }
 
+    /** Raw bytes of an uploaded file (images on the canvas). */
+    suspend fun fileBytes(fileId: String): ByteArray = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(settings.serverUrl + "/api/files/" + java.net.URLEncoder.encode(fileId, "UTF-8")).build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, "GET file $fileId: ${response.code}")
+            response.body.bytes()
+        }
+    }
+
     suspend fun account(): Account = AuroraJson.decodeFromString(call("GET", "/api/account"))
 
     suspend fun library(): LibraryTree = AuroraJson.decodeFromString(call("GET", "/api/library"))

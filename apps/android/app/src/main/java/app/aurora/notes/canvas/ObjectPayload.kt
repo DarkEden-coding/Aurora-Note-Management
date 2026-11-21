@@ -48,6 +48,7 @@ val CanvasObject.shapeColor get() = payload.str("color") ?: "#e6e8ec"
 val CanvasObject.shapeFill get() = payload.str("fill")
 val CanvasObject.shapeFillOpacity get() = (payload.num("fillOpacity") ?: 100.0).coerceIn(0.0, 100.0)
 val CanvasObject.lineStyle get() = payload.str("lineStyle")?.takeIf { it == "dashed" || it == "dotted" } ?: "solid"
+val CanvasObject.imageFileId get() = payload.str("fileId")?.takeIf { it.isNotEmpty() }
 val CanvasObject.cornerRadius get() = (payload.num("cornerRadius") ?: 2.0).coerceIn(0.0, 64.0)
 
 const val HIGHLIGHTER_OPACITY = 0.38f

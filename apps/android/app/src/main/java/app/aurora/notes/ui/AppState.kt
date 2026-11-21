@@ -26,6 +26,7 @@ class AppState(context: Context) {
     private val store = LocalStore(context)
     val api = AuroraApi(settings)
     val sync = SyncEngine(api, store, settings)
+    private val images = app.aurora.notes.canvas.ImageStore(context, api)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     var library by mutableStateOf(LibraryTree())
@@ -80,6 +81,7 @@ class AppState(context: Context) {
 
     fun attach(view: CanvasView) {
         canvas = view
+        view.images = images
         view.onSelectionChanged = { selectionCount = it; refreshChrome() }
         view.onChromeChanged = { refreshChrome() }
         view.onDocumentChanged = { refreshHistory() }
