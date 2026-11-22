@@ -3,11 +3,11 @@ import { z } from "zod";
 import { idSchema, isoDateSchema } from "./contracts.js";
 
 // Which feedback and progress affordances a session uses; chosen per session by the MCP caller.
+// Retry is not an option: a graded question always offers Retry until the user presses Next.
 export const practiceFeedbackOptionsSchema = z.object({
   inkMarks: z.boolean().default(true),
   card: z.boolean().default(false),
   solution: z.boolean().default(false),
-  retry: z.boolean().default(false),
 });
 
 export const practiceProgressOptionsSchema = z.object({
@@ -22,7 +22,6 @@ export const practiceOptionsSchema = z.object({
     inkMarks: true,
     card: false,
     solution: false,
-    retry: false,
   }),
   progress: practiceProgressOptionsSchema.default({
     bar: true,

@@ -85,7 +85,7 @@ export function PracticeBar({
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [masteryOpen, setMasteryOpen] = useState(false);
-  const { progress, feedback } = session.options;
+  const { progress } = session.options;
   const question = openQuestion(session);
   const score = runningScore(session.questions);
   const topics = progress.mastery ? topicMastery(session.questions) : [];
@@ -162,19 +162,17 @@ export function PracticeBar({
   } else if (question?.state === "graded") {
     actions = (
       <>
-        {feedback.retry ? (
-          <button
-            type="button"
-            className="practice-action"
-            disabled={busy !== null}
-            onClick={() =>
-              void run(() => sendPracticeAction(question.id, "retry"), false)
-            }
-          >
-            <RotateCcw size={16} />
-            Retry
-          </button>
-        ) : null}
+        <button
+          type="button"
+          className="practice-action"
+          disabled={busy !== null}
+          onClick={() =>
+            void run(() => sendPracticeAction(question.id, "retry"), false)
+          }
+        >
+          <RotateCcw size={16} />
+          Retry
+        </button>
         <button
           type="button"
           className="primary practice-action"

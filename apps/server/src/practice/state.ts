@@ -69,9 +69,6 @@ export function planAction(
   requireActive(session);
   requireState(question, "graded");
   if (action === "retry") {
-    if (!session.options.feedback.retry) {
-      throw conflict("Retries are not enabled for this session");
-    }
     return {
       state: "awaiting_work",
       attempt: question.attempt + 1,
@@ -117,19 +114,23 @@ export type CardPage = "next" | "new" | "last";
 /**
  * The page for a card: an existing page index, or "append". Questions never share a page,
  * because each submission is the whole page's ink; reference cards may go anywhere.
+ * A "new" page reuses the last page when it is empty (no objects, no question), so a blank
+ * trailing page (e.g. one the user added for room) never ends up between two cards.
  */
 export function planCardPage(
   page: CardPage,
   facts: {
     questionIndex: number | null;
     lastPageIndex: number;
+    lastPageEmpty: boolean;
     questionPages: number[];
   },
 ): number | "append" {
-  if (page === "new") return "append";
+  const newPage = facts.lastPageEmpty ? facts.lastPageIndex : "append";
+  if (page === "new") return newPage;
   if (page === "next") {
     if (facts.questionIndex === null) return facts.lastPageIndex;
-    return facts.questionIndex === 0 ? 0 : "append";
+    return facts.questionIndex === 0 ? 0 : newPage;
   }
   if (
     facts.questionIndex !== null &&

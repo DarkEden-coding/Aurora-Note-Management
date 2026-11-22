@@ -143,10 +143,10 @@ describe("practice page render", () => {
 });
 
 describe("practice state transitions", () => {
-  const session = (retry: boolean): SessionFacts => ({
+  const session = (): SessionFacts => ({
     status: "active",
     totalQuestions: 2,
-    options: practiceOptionsSchema.parse({ feedback: { retry } }),
+    options: practiceOptionsSchema.parse({}),
   });
   const question = (patch: Partial<QuestionFacts>): QuestionFacts => ({
     index: 0,
@@ -157,7 +157,7 @@ describe("practice state transitions", () => {
     ...patch,
   });
 
-  it("keeps the first attempt's points and only allows retry when enabled", () => {
+  it("keeps the first attempt's points and always allows retry on a graded question", () => {
     expect(planGrade(question({ state: "submitted" }), 3)).toEqual({
       points: 3,
       latestPoints: 3,
@@ -172,32 +172,38 @@ describe("practice state transitions", () => {
       /exceeds/,
     );
 
-    expect(() => planAction(session(false), question({}), "retry")).toThrow(
-      /not enabled/,
-    );
-    expect(planAction(session(true), question({}), "retry")).toMatchObject({
+    // Sessions stored before retry stopped being an option still allow it.
+    const stored: SessionFacts = {
+      ...session(),
+      options: practiceOptionsSchema.parse({ feedback: { retry: false } }),
+    };
+    expect(stored.options.feedback).not.toHaveProperty("retry");
+    expect(planAction(stored, question({}), "retry")).toMatchObject({
+      attempt: 2,
+    });
+    expect(planAction(session(), question({}), "retry")).toMatchObject({
       state: "awaiting_work",
       attempt: 2,
       event: "retry",
     });
-    expect(
-      planAction(session(false), question({ index: 1 }), "next"),
-    ).toMatchObject({
-      state: "closed",
-      statusText: "Writing your summary…",
-      event: "next",
-    });
+    expect(planAction(session(), question({ index: 1 }), "next")).toMatchObject(
+      {
+        state: "closed",
+        statusText: "Writing your summary…",
+        event: "next",
+      },
+    );
   });
 
   it("posts a new question only after every earlier one is closed", () => {
-    expect(() => nextQuestionIndex(session(false), [question({})])).toThrow(
+    expect(() => nextQuestionIndex(session(), [question({})])).toThrow(
       /still graded/,
     );
-    expect(
-      nextQuestionIndex(session(false), [question({ state: "closed" })]),
-    ).toBe(1);
+    expect(nextQuestionIndex(session(), [question({ state: "closed" })])).toBe(
+      1,
+    );
     expect(() =>
-      nextQuestionIndex(session(false), [
+      nextQuestionIndex(session(), [
         question({ state: "closed" }),
         question({ index: 1, state: "closed" }),
       ]),

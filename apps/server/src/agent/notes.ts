@@ -17,6 +17,7 @@ import { objectText, textToDoc } from "../canvas/text.js";
 import {
   createNote,
   createPageBelow,
+  deleteEmptyPage,
   getNoteWithPages,
   listNotes,
   updateNote,
@@ -33,6 +34,7 @@ import {
 import { markToObjects, type Mark } from "../practice/marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect } from "../practice/page.js";
 import { renderPagePng } from "../practice/render.js";
+import { wrapText } from "../practice/textLayout.js";
 import { objectRasters } from "./rasters.js";
 import { broadcastObjectChanges, writeObjects } from "../practice/publish.js";
 import { listQuestions, loadSessionByNote } from "../practice/store.js";
@@ -449,6 +451,22 @@ export async function appendPage(ownerId: string, noteId: string) {
   return { pageIndex: result.page.pageIndex, pageCount: result.pageCount };
 }
 
+/** Deletes an empty page (no objects, no ink, no practice question) and moves later pages up. */
+export async function deletePage(
+  ownerId: string,
+  noteId: string,
+  pageIndex: number,
+) {
+  const result = await deleteEmptyPage(ownerId, noteId, pageIndex);
+  broadcastObjectChanges(
+    ownerId,
+    { noteId, objects: result.shiftedObjects, deletedObjectIds: [] },
+    `page-delete:${noteId}:${pageIndex}:${result.noteRevision}`,
+  );
+  broadcastLibraryChanged(ownerId);
+  return { deletedPageIndex: pageIndex, pageCount: result.pageCount };
+}
+
 export type TextBlock = TextStyle & {
   x: number;
   y: number;
@@ -457,16 +475,11 @@ export type TextBlock = TextStyle & {
   text: string;
 };
 
-/** Height that fits plain text at a font size in a box of the given width (rich-text lines are 1.2em). */
-function textHeight(text: string, width: number, fontSize: number): number {
-  const perLine = Math.max(1, Math.floor(width / (fontSize * 0.55)));
-  const lines = text
-    .split("\n")
-    .reduce(
-      (sum, line) => sum + Math.max(1, Math.ceil(line.length / perLine)),
-      0,
-    );
-  return Math.ceil(lines * fontSize * 1.2 + 8);
+/** Height that fits plain text in a box of the given width, wrapped like the app (rich-text lines are 1.2em). */
+function textHeight(text: string, width: number, style: TextStyle): number {
+  const fontSize = style.fontSize ?? AGENT_TEXT_STYLE.fontSize;
+  const lines = wrapText(text, width, style, fontSize);
+  return Math.ceil(lines.length * fontSize * 1.2 + 8);
 }
 
 /** A new unlocked object of the agent's, placed in page-relative bounds. */
@@ -509,9 +522,7 @@ function textBlockObject(
 ): CanvasObject {
   const { x, y, width, height: givenHeight, text, ...style } = block;
   const textStyle = { ...AGENT_TEXT_STYLE, ...style };
-  const height =
-    givenHeight ??
-    textHeight(text, width, style.fontSize ?? AGENT_TEXT_STYLE.fontSize);
+  const height = givenHeight ?? textHeight(text, width, textStyle);
   return agentObject(
     ownerId,
     noteId,

@@ -11,6 +11,7 @@ import {
   type PracticeQuestionState,
   type PracticeSession,
 } from "@aurora/shared";
+import { pageFrame } from "./page.js";
 
 export type Db = pg.Pool | pg.PoolClient;
 
@@ -393,7 +394,6 @@ export async function claimNextEvent(
   return result.rows[0] ?? null;
 }
 
-/** Appends a page after the note's last page, copying its size and background; returns the new index. */
 export async function lastNotePageIndex(
   db: Db,
   ownerId: string,
@@ -406,6 +406,7 @@ export async function lastNotePageIndex(
   return result.rows[0]?.last ?? 0;
 }
 
+/** Appends a page after the note's last page, copying its size and background; returns the new index. */
 export async function appendNotePage(
   db: Db,
   ownerId: string,
@@ -423,18 +424,54 @@ export async function appendNotePage(
   return result.rows[0].page_index;
 }
 
-/** Keeps questions on their pages when a page is inserted after `afterPageIndex`. */
+/** Keeps questions on their pages when a page is inserted (delta 1) or removed (delta -1) after `afterPageIndex`. */
 export async function shiftPracticePages(
   db: Db,
   ownerId: string,
   noteId: string,
   afterPageIndex: number,
+  delta: 1 | -1 = 1,
 ): Promise<void> {
   await db.query(
-    `UPDATE practice_questions q SET page_index = q.page_index + 1, updated_at = now()
+    `UPDATE practice_questions q SET page_index = q.page_index + $4, updated_at = now()
      FROM practice_sessions s
      WHERE q.session_id = s.id AND s.owner_id = $1 AND s.note_id = $2
        AND q.page_index > $3`,
-    [ownerId, noteId, afterPageIndex],
+    [ownerId, noteId, afterPageIndex, delta],
   );
+}
+
+/** Whether any object (ink included) overlaps the page's frame. */
+export async function pageHasObjects(
+  db: Db,
+  ownerId: string,
+  noteId: string,
+  pageIndex: number,
+): Promise<boolean> {
+  const frame = pageFrame(pageIndex);
+  const result = await db.query<{ found: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM canvas_objects
+       WHERE owner_id = $1 AND note_id = $2 AND y < $4 AND y + height > $3
+     ) AS found`,
+    [ownerId, noteId, frame.y, frame.y + frame.height],
+  );
+  return result.rows[0]?.found ?? false;
+}
+
+/** Whether a practice question of this note lives on the page. */
+export async function pageHoldsQuestion(
+  db: Db,
+  ownerId: string,
+  noteId: string,
+  pageIndex: number,
+): Promise<boolean> {
+  const result = await db.query<{ found: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM practice_questions q JOIN practice_sessions s ON s.id = q.session_id
+       WHERE s.owner_id = $1 AND s.note_id = $2 AND q.page_index = $3
+     ) AS found`,
+    [ownerId, noteId, pageIndex],
+  );
+  return result.rows[0]?.found ?? false;
 }

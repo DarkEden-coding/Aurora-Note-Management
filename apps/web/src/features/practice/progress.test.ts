@@ -40,7 +40,7 @@ function session(
     status: "active",
     statusText: null,
     options: {
-      feedback: { inkMarks: true, card: false, solution: false, retry: true },
+      feedback: { inkMarks: true, card: false, solution: false },
       progress: { bar: true, runningScore: true, mastery: true, status: true },
     },
     grading: null,

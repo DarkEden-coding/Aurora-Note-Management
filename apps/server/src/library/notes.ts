@@ -17,7 +17,11 @@ import {
   type Background,
   type CanvasMode,
 } from "@aurora/shared";
-import { shiftPracticePages } from "../practice/store.js";
+import {
+  pageHasObjects,
+  pageHoldsQuestion,
+  shiftPracticePages,
+} from "../practice/store.js";
 
 const NOTE_SELECT = `
   SELECT id, owner_id, project_id, folder_id, title, kind, canvas_mode, background,
@@ -223,6 +227,81 @@ export async function createPageBelow(
     return {
       page: mapPage(pageResult.rows[0]!),
       pageCount: pageCount + 1,
+      noteRevision: updatedNote.rows[0]!.revision,
+      shiftedObjects: shifted.rows.map(mapCanvasObject),
+    };
+  });
+}
+
+/**
+ * Removes a page that holds nothing (no objects or ink, no practice question) and moves
+ * later pages and their content up, the inverse of createPageBelow.
+ */
+export async function deleteEmptyPage(
+  ownerId: string,
+  noteId: string,
+  pageIndex: number,
+): Promise<{
+  pageCount: number;
+  noteRevision: number;
+  shiftedObjects: ReturnType<typeof mapCanvasObject>[];
+}> {
+  return withTransaction(async (client) => {
+    const noteResult = await client.query<NoteRow>(
+      `${NOTE_SELECT} WHERE owner_id = $1 AND id = $2 FOR UPDATE`,
+      [ownerId, noteId],
+    );
+    const note = noteResult.rows[0];
+    if (!note) throw notFound("Note");
+    if (note.canvas_mode !== "paged")
+      throw conflict("Note is not in page mode");
+
+    const countResult = await client.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM pages WHERE owner_id = $1 AND note_id = $2",
+      [ownerId, noteId],
+    );
+    const pageCount = Number(countResult.rows[0]?.count ?? 0);
+    if (pageIndex < 0 || pageIndex >= pageCount) {
+      throw conflict(`Page ${pageIndex} does not exist`);
+    }
+    if (pageCount === 1) throw conflict("A note keeps at least one page");
+    if (await pageHoldsQuestion(client, ownerId, noteId, pageIndex)) {
+      throw conflict(`Page ${pageIndex} holds a practice question`);
+    }
+    if (await pageHasObjects(client, ownerId, noteId, pageIndex)) {
+      throw conflict(`Page ${pageIndex} is not empty`);
+    }
+
+    await client.query(
+      "DELETE FROM pages WHERE owner_id = $1 AND note_id = $2 AND page_index = $3",
+      [ownerId, noteId, pageIndex],
+    );
+    // Two steps so the unique (note_id, page_index) never sees a duplicate mid-update.
+    await client.query(
+      `UPDATE pages SET page_index = -page_index
+       WHERE owner_id = $1 AND note_id = $2 AND page_index > $3`,
+      [ownerId, noteId, pageIndex],
+    );
+    await client.query(
+      `UPDATE pages SET page_index = -page_index - 1, updated_at = now()
+       WHERE owner_id = $1 AND note_id = $2 AND page_index < 0`,
+      [ownerId, noteId],
+    );
+    await shiftPracticePages(client, ownerId, noteId, pageIndex, -1);
+    const shifted = await client.query<CanvasObjectRow>(
+      `UPDATE canvas_objects SET y = y - 1080, revision = revision + 1, updated_at = now()
+       WHERE owner_id = $1 AND note_id = $2 AND y >= $3
+       RETURNING id, owner_id, note_id, page_id, kind, x, y, width, height, rotation,
+                 z_index, locked, group_id, payload, revision, created_at, updated_at`,
+      [ownerId, noteId, (pageIndex + 1) * 1080],
+    );
+    const updatedNote = await client.query<{ revision: number }>(
+      `UPDATE notes SET revision = revision + 1, updated_at = now()
+       WHERE owner_id = $1 AND id = $2 RETURNING revision`,
+      [ownerId, noteId],
+    );
+    return {
+      pageCount: pageCount - 1,
       noteRevision: updatedNote.rows[0]!.revision,
       shiftedObjects: shifted.rows.map(mapCanvasObject),
     };

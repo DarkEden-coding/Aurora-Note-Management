@@ -6,7 +6,8 @@ Claude (running in Claude Code / T3 Code) runs a practice session through an
 MCP server hosted by Aurora. Each question appears on a page of a practice
 note. You write your answer with the pen and press **Done**. Claude receives
 a rendered image of the page, grades it, and draws red marks on your work.
-Then you press **Next** (or **Retry** when allowed).
+Then you press **Next**, or **Retry** to answer again (always offered on a
+graded question).
 
 ## Connecting Claude
 
@@ -19,6 +20,13 @@ claude mcp add --transport http aurora https://power-server.tail14d560.ts.net:84
 ```
 
 All MCP actions act as the single Aurora owner.
+
+Because the endpoint is stateless there is no open stream on which the server
+could send `notifications/tools/list_changed`. After a deploy that changes the
+tools, a client sees them when it reconnects (e.g. `/mcp` reconnect in Claude
+Code). The server version in `initialize` (`aurora-practice`, in
+`apps/server/src/practice/mcp-tools.ts`) is bumped with each tool change, so a
+client can tell its cached list is stale.
 
 ## Data model
 
@@ -50,8 +58,11 @@ The note uses `canvas_mode = 'paged'`. Page `i` occupies world bounds
 `x=0, y=i*(1056+24), width=816, height=1056` (see
 `apps/web/src/features/canvas/pageLayout.ts`). By default (`page: "next"`) the
 first question uses page 0 and every later question and the summary append a
-new page row after the note's last page. `page: "new"` always appends a page,
-and `page: "last"` uses the note's last page as long as no question is on it
+new page row after the note's last page. `page: "new"` appends a page, and
+`page: "last"` uses the note's last page as long as no question is on it.
+`"new"` and `"next"` reuse the last page instead of appending when it is empty
+(no objects, no ink, no question), so a blank page the user added for room
+never ends up between two questions
 (rules in `planCardPage`, `apps/server/src/practice/state.ts`). Questions never
 share a page, because a submission is the whole page's ink. Each question stores its `page_index`; inserting a page with "add
 page below" shifts the stored indexes of later questions along with their
@@ -104,9 +115,10 @@ Every session/question change broadcasts `practice-changed { noteId, sessionId }
   KaTeX turned back into `$TeX$` text. Older clients send `{}`.
 - `POST /api/practice/questions/:questionId/action` body `{ action }` →
   requires `graded`. `next` → `closed`, status "Writing the next question…"
-  (or "Writing your summary…" after the last question). `retry` (only when
-  `options.feedback.retry`) → `awaiting_work`, `attempt + 1`. Both queue an
-  event. Returns `PracticeSession`.
+  (or "Writing your summary…" after the last question). `retry` →
+  `awaiting_work`, `attempt + 1`; it is always allowed (retry is no longer a
+  session option; migration `011` drops the old `feedback.retry` flag). Both
+  queue an event. Returns `PracticeSession`.
 
 The web client drains the note's sync outbox before calling submit, so the
 server renders the strokes the user sees.
@@ -166,6 +178,7 @@ lets it add to notes and edit or delete objects by id. Code:
 | `notes_create`         | `{ title, project, folder?, canvasMode? = paged }` → new empty note; missing project/folders are created, as in `practice_start`.                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `notes_rename`         | `{ noteId, title }` → renames a note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `notes_add_page`       | `{ noteId }` → appends a page to a paged note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `notes_delete_page`    | `{ noteId, page }` → deletes a page of a paged note only when it holds no objects, no ink and no practice question; later pages, their content and stored question page indexes move up by one.                                                                                                                                                                                                                                                                                                                                                        |
 | `notes_annotate`       | `{ noteId, pageIndex, marks[], texts[], dryRun?, scale? }` → adds marks and comments (same shapes as `practice_grade`, each with optional `color`/`strokeWidth`; text marks take the text style below) and typed text boxes `{ x, y, width, height?, text, ...textStyle }` to one page. Added objects are unlocked. Returns the new ids and the page image.                                                                                                                                                                                            |
 | `notes_insert_image`   | `{ noteId, pageIndex, x, y, width, height, data, alt?, scale? }` → places a picture: `data` is base64 PNG/JPEG/WebP/GIF/SVG (or a data: URL), at most 5 MB. SVG is rasterized to PNG with resvg (only `#id` and embedded raster `data:` links allowed). Stored through the uploads store (`files` row, content-addressed bytes), so it syncs and renders everywhere. Returns `{ objectId, fileId }` and the page image.                                                                                                                                |
 | `notes_insert_html`    | `{ noteId, pageIndex, x, y, width, height, html, scale? }` → an unlocked `practice-card` with variant `html` and `author: "agent"`, sanitized and KaTeX-rendered like practice cards. Returns `{ objectId }` and the page image.                                                                                                                                                                                                                                                                                                                       |
@@ -187,7 +200,15 @@ renderer and server page images:
   take `color` and `strokeWidth`.
 
 Agent text boxes carry `author: "agent"` in their payload, so `notes_read`
-and `notes_restyle` can tell them apart from the user's text.
+and `notes_restyle` can tell them apart from the user's text (migration `012`
+tags boxes agents wrote before that field existed).
+
+Server page images draw text with the Roboto files bundled in
+`apps/server/assets/fonts` (what `system-ui` is on an Android tablet; serif and
+mono use the image's DejaVu fonts) and wrap it by measured width at the app's
+line heights (rich text 1.2, labels 1.25), shrinking rich text to fit its box
+like the app (`apps/server/src/practice/textLayout.ts`). Label and text-box
+heights are computed with the same wrapping.
 
 Every note is read as 816 × 1056 pages in the same
 page-relative coordinates and grid as submission images: paged notes use their
@@ -233,7 +254,10 @@ its own (the note title is already in the top bar):
   `progress.runningScore`
 - per-topic mastery bars, expanding upward, when `progress.mastery`
 - action button: **Done** (awaiting_work), "Grading…" (submitted, disabled),
-  **Next** / **Retry** (graded; Retry only with `feedback.retry`)
+  **Next** / **Retry** (graded; Retry is always offered). On a narrow canvas
+  (a portrait tablet with the library open) the actions wrap onto their own
+  right-aligned line instead of overflowing the screen. The Android app has the
+  same bar under its canvas (`apps/android/.../ui/PracticeBar.kt`).
 
 When a new question appears, the canvas scrolls to its page.
 

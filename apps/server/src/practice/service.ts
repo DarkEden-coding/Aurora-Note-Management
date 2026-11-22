@@ -64,6 +64,7 @@ import {
   appendNotePage,
   insertQuestion,
   lastNotePageIndex,
+  pageHasObjects,
   insertSession,
   listQuestions,
   listSessionSummaries,
@@ -322,10 +323,19 @@ async function cardPageIndex(
   questionIndex: number | null,
 ): Promise<{ pageIndex: number; pageAdded: boolean }> {
   const questions = await listQuestions(client, session.id);
+  const questionPages = questions.map((q) => q.page_index);
+  const lastPageIndex = await lastNotePageIndex(
+    client,
+    ownerId,
+    session.note_id,
+  );
   const planned = planCardPage(page, {
     questionIndex,
-    lastPageIndex: await lastNotePageIndex(client, ownerId, session.note_id),
-    questionPages: questions.map((q) => q.page_index),
+    lastPageIndex,
+    lastPageEmpty:
+      !questionPages.includes(lastPageIndex) &&
+      !(await pageHasObjects(client, ownerId, session.note_id, lastPageIndex)),
+    questionPages,
   });
   if (planned !== "append") return { pageIndex: planned, pageAdded: false };
   return {

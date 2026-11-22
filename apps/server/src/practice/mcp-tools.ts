@@ -155,7 +155,7 @@ export function buildPracticeMcpServer(
   uploadDir: string,
 ): McpServer {
   const server = new McpServer(
-    { name: "aurora-practice", version: "1.3.0" },
+    { name: "aurora-practice", version: "1.4.0" },
     { instructions: INSTRUCTIONS },
   );
 
@@ -194,7 +194,7 @@ export function buildPracticeMcpServer(
     "practice_start",
     {
       description:
-        "Starts a session: creates a new paged note titled `title` in the chosen project and folder (missing ones are created; names match case-insensitively). Ask the user for the location first if they have not given one. Returns { sessionId, noteId, noteTitle, appUrl, session }. options toggles feedback (inkMarks, card, solution, retry) and the progress bar below the canvas (bar, runningScore, mastery, status); omitted fields use defaults. grading (optional) sets the session grading policy; it is returned by practice_get_session and with every submission, and practice_set_grading changes it later.",
+        "Starts a session: creates a new paged note titled `title` in the chosen project and folder (missing ones are created; names match case-insensitively). Ask the user for the location first if they have not given one. Returns { sessionId, noteId, noteTitle, appUrl, session }. options toggles feedback (inkMarks, card, solution; the user can always Retry a graded question) and the progress bar below the canvas (bar, runningScore, mastery, status); omitted fields use defaults. grading (optional) sets the session grading policy; it is returned by practice_get_session and with every submission, and practice_set_grading changes it later.",
       inputSchema: {
         title: z.string().min(1).max(200).describe("Session and note title"),
         totalQuestions: z.number().int().min(1).max(50),

@@ -166,6 +166,7 @@ describe("MCP discovery", () => {
         "notes_create",
         "notes_rename",
         "notes_add_page",
+        "notes_delete_page",
         "notes_annotate",
         "notes_get_objects",
         "notes_edit_objects",

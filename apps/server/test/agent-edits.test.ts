@@ -112,7 +112,7 @@ describe("styled annotations", () => {
       [],
     );
     const svg = buildPageSvg([comment!], { pageIndex: 0, attempt: 1 });
-    expect(svg).toContain("Georgia");
+    expect(svg).toContain("DejaVu Serif");
     expect(svg).toContain('fill="#00aa00"');
   });
 });

@@ -55,6 +55,13 @@ class SyncEngine(
     private val _libraryChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val libraryChanged: SharedFlow<Unit> = _libraryChanged
 
+    /** Note ids whose guided-practice session changed on the server. */
+    private val _practiceChanged = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val practiceChanged: SharedFlow<String> = _practiceChanged
+
+    /** Edits handed to [submit] that may not have reached the outbox yet. */
+    private val submitting = java.util.Collections.synchronizedSet(mutableSetOf<Job>())
+
     fun start() {
         if (running) return
         running = true
@@ -112,7 +119,7 @@ class SyncEngine(
     /** Records local upserts and deletes for a note and queues them for the server. */
     fun submit(noteId: String, upserts: List<CanvasObject>, deletes: List<CanvasObject>) {
         if (upserts.isEmpty() && deletes.isEmpty()) return
-        scope.launch {
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             lock.withLock {
                 val cache = cacheFor(noteId)
                 val now = Instant.now().toString()
@@ -133,6 +140,31 @@ class SyncEngine(
             delay(FLUSH_DEBOUNCE_MS)
             flush()
         }
+        submitting += job
+        job.invokeOnCompletion { submitting -= job }
+        job.start()
+    }
+
+    /**
+     * Sends the note's queued edits now and waits until the server has acknowledged all of them,
+     * e.g. before a practice submission, which the server renders from synced strokes.
+     */
+    suspend fun awaitNoteSynced(noteId: String, timeoutMs: Long = NOTE_SYNC_TIMEOUT_MS) {
+        synchronized(submitting) { submitting.toList() }.forEach { it.join() }
+        val synced = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            while (true) {
+                val pending = lock.withLock {
+                    // Skip any retry backoff for this note's edits: the user is waiting on them.
+                    outbox = outbox.map { if (it.op.noteId == noteId) it.copy(nextAttemptAt = 0) else it }.toMutableList()
+                    outbox.any { it.op.noteId == noteId }
+                }
+                if (!pending) break
+                flush()
+                delay(NOTE_SYNC_POLL_MS)
+            }
+            true
+        }
+        if (synced == null) throw java.io.IOException("Your latest strokes haven't synced yet. Check the connection and try again.")
     }
 
     // ---- Outbox ----------------------------------------------------------
@@ -276,6 +308,7 @@ class SyncEngine(
                 if (change.objects.isNotEmpty() || change.deletedIds.isNotEmpty()) _remote.emit(change)
             }
             "library-changed", "note-changed" -> _libraryChanged.emit(Unit)
+            "practice-changed" -> event["noteId"]?.jsonPrimitive?.content?.let { _practiceChanged.emit(it) }
         }
     }
 
@@ -288,5 +321,7 @@ class SyncEngine(
         private const val FLUSH_INTERVAL_MS = 3_000L
         private const val FLUSH_DEBOUNCE_MS = 100L
         private const val BATCH_SIZE = 50
+        private const val NOTE_SYNC_TIMEOUT_MS = 20_000L
+        private const val NOTE_SYNC_POLL_MS = 400L
     }
 }

@@ -127,3 +127,42 @@ data class FileEnvelope(val file: FileJson)
 
 @Serializable
 data class FileJson(val id: String)
+
+// Guided practice: mirror of packages/shared/src/practice.ts, limited to what the practice bar reads.
+
+@Serializable
+data class PracticeQuestion(
+    val id: String,
+    val index: Int,
+    val pageIndex: Int = 0,
+    /** awaiting_work, submitted, graded or closed. */
+    val state: String,
+    val maxPoints: Double = 1.0,
+    /** First graded attempt's score; retries never replace it. */
+    val points: Double? = null,
+    /** Latest graded attempt's score. */
+    val latestPoints: Double? = null,
+)
+
+@Serializable
+data class PracticeProgressOptions(
+    val bar: Boolean = true,
+    val runningScore: Boolean = false,
+    val mastery: Boolean = false,
+    val status: Boolean = false,
+)
+
+@Serializable
+data class PracticeOptions(val progress: PracticeProgressOptions = PracticeProgressOptions())
+
+@Serializable
+data class PracticeSession(
+    val id: String,
+    val noteId: String,
+    val totalQuestions: Int,
+    /** active or complete. */
+    val status: String,
+    val statusText: String? = null,
+    val options: PracticeOptions = PracticeOptions(),
+    val questions: List<PracticeQuestion> = emptyList(),
+)

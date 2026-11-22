@@ -186,7 +186,11 @@ describe("practice reference cards", () => {
   });
 
   it("picks the page: next keeps the original rule, last never joins a question page", () => {
-    const facts = { lastPageIndex: 2, questionPages: [1, 2] };
+    const facts = {
+      lastPageIndex: 2,
+      lastPageEmpty: false,
+      questionPages: [1, 2],
+    };
     expect(planCardPage("next", { ...facts, questionIndex: 0 })).toBe(0);
     expect(planCardPage("next", { ...facts, questionIndex: 2 })).toBe("append");
     expect(planCardPage("new", { ...facts, questionIndex: 0 })).toBe("append");
@@ -197,9 +201,21 @@ describe("practice reference cards", () => {
     expect(
       planCardPage("last", {
         lastPageIndex: 3,
+        lastPageEmpty: false,
         questionPages: [1, 2],
         questionIndex: 2,
       }),
     ).toBe(3);
+  });
+
+  it("reuses an empty last page for new and next instead of leaving a blank page behind", () => {
+    // Reference cards on pages 0 and 1, Q1 on page 2, and an empty page 3 the user added.
+    const facts = { lastPageIndex: 3, lastPageEmpty: true, questionPages: [2] };
+    expect(planCardPage("new", { ...facts, questionIndex: 1 })).toBe(3);
+    expect(planCardPage("next", { ...facts, questionIndex: 1 })).toBe(3);
+    expect(planCardPage("new", { ...facts, questionIndex: null })).toBe(3);
+    expect(
+      planCardPage("new", { ...facts, lastPageEmpty: false, questionIndex: 1 }),
+    ).toBe("append");
   });
 });

@@ -1,7 +1,6 @@
 // Renders one page (user ink, shapes, typed text, practice cards, marks, coordinate grid) to SVG and rasterizes it to PNG for Claude.
 import { renderAsync } from "@resvg/resvg-js";
 import {
-  TEXT_FONT_STACKS,
   textStyleOf,
   type Bounds,
   type CanvasObject,
@@ -11,12 +10,22 @@ import {
 import { objectText } from "../canvas/text.js";
 import { MARK_COLOR, practiceTagOf } from "./marks.js";
 import { PAGE_HEIGHT, PAGE_WIDTH, boundsIntersect, pageFrame } from "./page.js";
+import {
+  RENDER_FONT_OPTIONS,
+  escapeXml,
+  fitFontSize,
+  svgFontAttributes,
+  wrapText,
+} from "./textLayout.js";
 
 export const RENDER_SCALE = 1.5;
 const REGION_COLOR = "#2f6fd6";
 const FADED_OPACITY = 0.35;
-// resvg maps the generic "sans-serif" to Arial, which the Linux image lacks; name DejaVu (installed there) first.
-const FONT = `font-family="DejaVu Sans, Arial, sans-serif"`;
+// Chrome text (labels, grid numbers) uses the same bundled sans as typed text.
+const FONT = `font-family="Roboto"`;
+// Line heights of the app's text: rich-text boxes 1.2, practice labels 1.25 (sticky notes like labels).
+const RICH_TEXT_LINE_HEIGHT = 1.2;
+const LABEL_LINE_HEIGHT = 1.25;
 
 export type RenderTarget = {
   pageIndex: number;
@@ -37,14 +46,6 @@ export type RenderView = {
 };
 
 const r = (n: number): number => Math.round(n * 10) / 10;
-
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 function parseHex(color: string): [number, number, number] | null {
   const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
@@ -208,31 +209,23 @@ function regionsSvg(regions: PracticeCardRegion[], frame: Bounds): string {
     .join("");
 }
 
-// SVG font attributes for a stored text style; the stacks name DejaVu fonts, which the server image has.
-function fontAttributes(style: TextStyle): string {
-  const family = style.fontFamily
-    ? `font-family='${TEXT_FONT_STACKS[style.fontFamily]}'`
-    : FONT;
-  return `${family}${style.fontWeight === "bold" ? ` font-weight="bold"` : ""}${style.fontStyle === "italic" ? ` font-style="italic"` : ""}`;
-}
-
-// Wraps plain text roughly by character count; enough for Claude to read typed text and red labels.
+// Draws text wrapped by measured width, as the app wraps it. CSS centres each line in its line
+// box: the baseline sits half the leading plus the ascent (Roboto 0.928 of the 1.172em content
+// height) below the line's top.
 function textBlockSvg(
   b: Bounds,
   text: string,
   color: string,
   fontSize: number,
   style: TextStyle = {},
+  lineHeight = LABEL_LINE_HEIGHT,
 ): string {
-  const lineHeight = Math.round(fontSize * 1.4);
-  const perLine = Math.max(1, Math.floor(b.width / (fontSize / 2)));
-  const lines = text
-    .split("\n")
-    .flatMap((line) => line.match(new RegExp(`.{1,${perLine}}`, "g")) ?? [""]);
-  return lines
+  const lineBox = fontSize * lineHeight;
+  const baseline = (lineBox - fontSize * 1.172) / 2 + fontSize * 0.928;
+  return wrapText(text, b.width, style, fontSize)
     .map(
       (line, i) =>
-        `<text x="${r(b.x)}" y="${r(b.y + fontSize + 2 + i * lineHeight)}" ${fontAttributes(style)} font-size="${fontSize}" fill="${color}">${escapeXml(line)}</text>`,
+        `<text x="${r(b.x)}" y="${r(b.y + baseline + i * lineBox)}" ${svgFontAttributes(style, fontSize)} fill="${color}" xml:space="preserve">${escapeXml(line)}</text>`,
     )
     .join("");
 }
@@ -325,15 +318,25 @@ function objectSvg(object: CanvasObject, target: RenderTarget): string {
                 );
       break;
     }
-    case "rich-text":
+    case "rich-text": {
+      // Like the app, the text shrinks below its size until it fits the box.
+      const text = objectText(object) ?? "";
       svg = textBlockSvg(
         object.bounds,
-        objectText(object) ?? "",
+        text,
         color,
-        style.fontSize ?? 16,
+        fitFontSize(
+          text,
+          object.bounds,
+          style,
+          style.fontSize ?? 16,
+          RICH_TEXT_LINE_HEIGHT,
+        ),
         style,
+        RICH_TEXT_LINE_HEIGHT,
       );
       break;
+    }
     case "sticky-note":
       svg =
         `<rect x="${r(object.bounds.x)}" y="${r(object.bounds.y)}" width="${r(object.bounds.width)}" height="${r(object.bounds.height)}" rx="6" fill="#fdf3c4" stroke="#e5c85a"/>` +
@@ -426,8 +429,7 @@ export async function renderPagePng(
 ): Promise<Buffer> {
   const image = await renderAsync(buildPageSvg(objects, target, view), {
     fitTo: { mode: "zoom", value: scale },
-    // resvg's own system scan misses Debian's font folder, so name it (absent elsewhere, then ignored).
-    font: { loadSystemFonts: true, fontDirs: ["/usr/share/fonts"] },
+    font: RENDER_FONT_OPTIONS,
     logLevel: "off",
   });
   return image.asPng();

@@ -143,6 +143,21 @@ class AuroraApi(private val settings: Settings) {
             }),
         )
 
+    /** The note's guided-practice session, or null when the note has none. */
+    suspend fun practiceSession(noteId: String): PracticeSession? = try {
+        AuroraJson.decodeFromString(call("GET", "/api/practice/notes/$noteId"))
+    } catch (e: ApiException) {
+        if (e.status == 404) null else throw e
+    }
+
+    /** Hands the open question to the grader; the server renders the page from synced strokes. */
+    suspend fun submitPracticeQuestion(questionId: String): PracticeSession =
+        AuroraJson.decodeFromString(call("POST", "/api/practice/questions/$questionId/submit", JsonObject(emptyMap())))
+
+    /** "next" or "retry" on a graded question. */
+    suspend fun practiceAction(questionId: String, action: String): PracticeSession =
+        AuroraJson.decodeFromString(call("POST", "/api/practice/questions/$questionId/action", buildJsonObject { put("action", action) }))
+
     suspend fun sendOperations(operations: List<SyncOperation>): List<SyncAck> {
         val body = buildJsonObject {
             put("operations", AuroraJson.encodeToJsonElement(

@@ -8,10 +8,14 @@
   padding: 0 6px 0 14px;
 }
 
+/* Wraps on narrow canvases (a portrait tablet with the library open): the actions move to
+   their own right-aligned line instead of overflowing past the screen edge. */
 .practice-bar-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  column-gap: 16px;
+  row-gap: 4px;
   min-height: 44px;
 }
 
@@ -27,10 +31,11 @@
 
 .practice-progress {
   display: flex;
-  flex: 0 1 280px;
+  flex: 1 1 150px;
   align-items: center;
   gap: 10px;
   min-width: 150px;
+  max-width: 280px;
 }
 
 .practice-progress-label,
@@ -104,6 +109,7 @@ button.practice-topics-toggle {
 .practice-actions {
   display: flex;
   flex: none;
+  margin-left: auto;
   align-items: center;
   gap: 8px;
 }

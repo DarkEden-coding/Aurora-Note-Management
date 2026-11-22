@@ -22,6 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class AppState(context: Context) {
@@ -31,6 +33,8 @@ class AppState(context: Context) {
     val sync = SyncEngine(api, store, settings)
     private val images = app.aurora.notes.canvas.ImageStore(context, api)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    /** The open note's guided-practice session, shown in the practice bar. */
+    val practice = PracticeState(api, sync, scope)
 
     var library by mutableStateOf(LibraryTree())
         private set
@@ -86,7 +90,18 @@ class AppState(context: Context) {
             val doc = view.document ?: return@collect
             if (change.noteId == doc.noteId) doc.applyRemote(change.objects, change.deletedIds, view.protectedIds())
         } }
-        scope.launch { sync.libraryChanged.collect { refreshLibrary() } }
+        // The server appends pages (a new practice question) and announces it with these broadcasts.
+        scope.launch { sync.libraryChanged.collect { refreshLibrary(); refreshPageCount() } }
+        scope.launch { sync.practiceChanged.collect { noteId ->
+            if (noteId != openNoteId) return@collect
+            practice.load(noteId)
+            refreshPageCount()
+        } }
+        // Broadcasts sent while the socket was down are lost; catch up when it reconnects.
+        scope.launch { sync.status.map { it.connected }.distinctUntilChanged().collect { connected ->
+            val noteId = openNoteId
+            if (connected && noteId != null) { practice.load(noteId); refreshPageCount() }
+        } }
         scope.launch {
             store.readLibrary()?.let { library = it }
             refreshLibrary()
@@ -141,6 +156,23 @@ class AppState(context: Context) {
         canRedo = doc?.canRedo == true
     }
 
+    /** Re-reads the open paged note's page count, which the server changes when it appends pages. */
+    private suspend fun refreshPageCount() {
+        val noteId = openNoteId ?: return
+        val view = canvas ?: return
+        if (openNote?.canvasMode != "paged" || view.document?.noteId != noteId) return
+        val count = runCatching { api.pageCount(noteId) }.getOrNull() ?: return
+        if (openNoteId == noteId && view.document?.noteId == noteId) applyPageCount(view, noteId, count)
+    }
+
+    private fun applyPageCount(view: CanvasView, noteId: String, count: Int) {
+        settings.savePageCount(noteId, count)
+        if (count == pageCount) return
+        pageCount = count
+        view.setPageCount(count)
+        refreshPageChrome(view)
+    }
+
     suspend fun refreshLibrary() {
         try {
             val tree = api.library()
@@ -156,6 +188,7 @@ class AppState(context: Context) {
         flushCamera()
         openNoteId = noteId
         settings.lastNoteId = noteId
+        practice.load(noteId)
         val note = library.notes.firstOrNull { it.id == noteId } ?: return
         val view = canvas ?: return
         openJob?.cancel()
@@ -168,9 +201,7 @@ class AppState(context: Context) {
             view.open(doc, note.canvasMode, pageCount, note.background, settings.camera(noteId))
             refreshPageChrome(view)
             refreshHistory()
-            if (note.canvasMode == "paged") runCatching { api.pageCount(noteId) }.getOrNull()?.let {
-                pageCount = it; settings.savePageCount(noteId, it); view.setPageCount(it); refreshPageChrome(view)
-            }
+            if (note.canvasMode == "paged") runCatching { api.pageCount(noteId) }.getOrNull()?.let { applyPageCount(view, noteId, it) }
             runCatching { sync.refreshNote(noteId) }.onSuccess { objects ->
                 if (view.document === doc) {
                     doc.applyRemote(objects, doc.all.map { it.id }.filter { id -> objects.none { it.id == id } }, view.protectedIds())
@@ -186,7 +217,7 @@ class AppState(context: Context) {
         scope.launch {
             runCatching { api.addPageBelow(noteId, view.currentPageIndex()) }
                 .onSuccess {
-                    pageCount = it; settings.savePageCount(noteId, it); view.setPageCount(it)
+                    applyPageCount(view, noteId, it)
                     view.scrollToPage(view.currentPageIndex() + 1); refreshPageChrome(view)
                 }
                 .onFailure { error = "Could not add a page: ${it.message}" }

@@ -435,4 +435,19 @@ object Lucide {
             "M20 6 9 17l-5-5",
         )
     }
+
+    val ArrowRight: ImageVector by lazy {
+        lucide(
+            "ArrowRight",
+            "M5 12h14",
+        "m12 5 7 7-7 7",
+        )
+    }
+
+    val LoaderCircle: ImageVector by lazy {
+        lucide(
+            "LoaderCircle",
+            "M21 12a9 9 0 1 1-6.219-8.56",
+        )
+    }
 }

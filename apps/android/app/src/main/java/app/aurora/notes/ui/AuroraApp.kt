@@ -117,6 +117,8 @@ fun AuroraApp(state: AppState) {
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(shellGap)) {
                 TopBar(state, onSettings = { settingsOpen = true }, onCalculator = { calculatorOpen = !calculatorOpen })
                 CanvasArea(state, Modifier.weight(1f).fillMaxWidth())
+                // Below the canvas panel, so the canvas's own bottom chrome (Add page, zoom) stays clear of it.
+                PracticeBar(state.practice, Modifier.fillMaxWidth())
             }
         }
         if (calculatorOpen) CalculatorPopover(

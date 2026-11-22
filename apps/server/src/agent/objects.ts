@@ -292,7 +292,7 @@ export function editObject(
       height = labelHeight(
         objectText(next) ?? "",
         edit.width ?? object.bounds.width,
-        textStyleOf(next.payload).fontSize,
+        textStyleOf(next.payload),
       );
     }
   }

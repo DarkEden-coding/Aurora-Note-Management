@@ -9,6 +9,7 @@ import {
   type TextStyle,
 } from "@aurora/shared";
 import { PAGE_HEIGHT, PAGE_WIDTH, pageFrame } from "./page.js";
+import { wrapText } from "./textLayout.js";
 
 export const MARK_COLOR = "#ff5c5c";
 const MARK_WIDTH = 3;
@@ -193,25 +194,22 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Rough label metrics at the default 20px size, enough to give the card a sensible height.
 const LABEL_FONT_SIZE = 20;
-const LABEL_CHAR_WIDTH = 10;
-const LABEL_LINE_HEIGHT = 28;
 
+/** Height of a label card: its text wrapped like the app (20px, line-height 1.25) plus a little room. */
 export function labelHeight(
   text: string,
   width: number,
-  fontSize = LABEL_FONT_SIZE,
+  style: TextStyle = {},
 ): number {
-  const ratio = fontSize / LABEL_FONT_SIZE;
-  const perLine = Math.max(1, Math.floor(width / (LABEL_CHAR_WIDTH * ratio)));
-  const lines = text
-    .split("\n")
-    .reduce(
-      (sum, line) => sum + Math.max(1, Math.ceil(line.length / perLine)),
-      0,
-    );
-  return Math.ceil(lines * LABEL_LINE_HEIGHT * ratio + 8);
+  const fontSize = style.fontSize ?? LABEL_FONT_SIZE;
+  const lines = wrapText(
+    text,
+    width,
+    { fontFamily: "sans", ...style },
+    fontSize,
+  );
+  return Math.ceil(lines.length * fontSize * 1.25 + 8);
 }
 
 function strokeObject(
@@ -365,7 +363,7 @@ export function markToObjects(
           ctx,
           "label",
           labelHtml(text),
-          { x, y, width, height: labelHeight(text, width, style.fontSize) },
+          { x, y, width, height: labelHeight(text, width, style) },
           { questionId, attempt, role: "label" },
           // Agent comments read in a plain sans-serif unless asked otherwise.
           { fontFamily: "sans", ...style },

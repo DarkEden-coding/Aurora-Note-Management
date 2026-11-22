@@ -22,6 +22,7 @@ import {
 import {
   annotatePage,
   appendPage,
+  deletePage,
   createNoteForAgent,
   listNotesForAgent,
   readNote,
@@ -38,7 +39,7 @@ const FONT_LIST = textStyleSchema.shape.fontFamily
 export const HTML_BLOCK_RULES = `HTML blocks: plain HTML + CSS (inline style attributes and <style> elements, scoped to the block) with no <script>, event handlers or external URLs (links, src and url() may only use data: images or #ids). Tables, grid/flexbox, multi-column, borders, colors, fonts, inline <svg> and data: images all work. Math: $...$ inline, $$...$$ display (also \\(...\\), \\[...\\]), rendered with KaTeX. A block has no background or padding of its own: text is #e6e8ec, 18px/1.5 system-ui, on the note's dark page (#1b1d21), and content beyond its height is clipped; wrap it in your own styled element for a card look (the practice card look is background:#23262d; padding:20px 24px; border-radius:12px). Preview with practice_html_template (variant "html", your width). Server page images (notes_read, practice submissions) draw a block as a labelled outline with its text, not the full layout.`;
 
 export const NOTES_INSTRUCTIONS = `Library access: notes_list, notes_search and notes_read let you read everything the user has written, not just practice sessions. Every note is read as pages of ${PAGE_WIDTH} x ${PAGE_HEIGHT} units with the same page-relative coordinates and grid as practice images. Paged notes use their real pages; infinite and fixed canvases are cut into page-sized tiles that hold content (each page's origin gives its world position). notes_read returns each page's objects (id, kind, author, page-relative bounds, current style, typed text) plus PNG images of the pages showing everything on them (handwriting, imported PDF pages, pictures); handwriting is only in the images, so read it there (its strokes are counted, and listed with includeInk or notes_get_objects). Search matches titles and typed text, not handwriting. practice_list_sessions lists every past practice session; practice_get_session and practice_get_submission read any of them.
-Editing: notes_create, notes_rename, notes_add_page and notes_annotate add things (marks, comments and typed text boxes, with optional font and color). notes_insert_image places a picture and notes_insert_html an HTML+CSS block at any x, y, width, height on any page, so you can build any layout. notes_edit_objects moves, resizes, retexts, restyles, re-HTMLs or replaces pictures of objects by id; notes_restyle sets one style on all text and/or agent marks of a note; notes_delete_objects deletes objects by explicit id only (it saves a restore snapshot first). Fonts: ${FONT_LIST}; any six-digit hex color. Use dryRun first, never delete or change the user's own handwriting or text unless the user asked for that, and only edit when the user asks you to.
+Editing: notes_create, notes_rename, notes_add_page and notes_annotate add things (marks, comments and typed text boxes, with optional font and color). notes_insert_image places a picture and notes_insert_html an HTML+CSS block at any x, y, width, height on any page, so you can build any layout. notes_edit_objects moves, resizes, retexts, restyles, re-HTMLs or replaces pictures of objects by id; notes_restyle sets one style on all text and/or agent marks of a note; notes_delete_objects deletes objects by explicit id only (it saves a restore snapshot first); notes_delete_page removes a page only when it is empty (no objects, ink or practice question). Fonts: ${FONT_LIST}; any six-digit hex color. Use dryRun first, never delete or change the user's own handwriting or text unless the user asked for that, and only edit when the user asks you to.
 ${HTML_BLOCK_RULES}`;
 
 const noteId = z
@@ -172,6 +173,17 @@ export function registerNoteTools(server: McpServer, uploadDir: string): void {
       inputSchema: { noteId },
     },
     async ({ noteId }) => json(await appendPage(await ownerId(), noteId)),
+  );
+
+  server.registerTool(
+    "notes_delete_page",
+    {
+      description:
+        "Deletes one page of a paged note (page index as returned by notes_read), only when it is empty: no objects, no ink and no practice question. Later pages and their content move up by one page. Use it to remove a stray blank page. Returns { deletedPageIndex, pageCount }.",
+      inputSchema: { noteId, page: z.number().int().min(0) },
+    },
+    async ({ noteId, page }) =>
+      json(await deletePage(await ownerId(), noteId, page)),
   );
 
   server.registerTool(
