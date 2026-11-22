@@ -59,6 +59,11 @@ class AppState(context: Context) {
         private set
     var importedPdf by mutableStateOf(false)
         private set
+    /** Guided practice notes carry practice cards; their Add page button waits for the end of the note. */
+    var hasPracticeCards by mutableStateOf(false)
+        private set
+    var lastPageBottomVisible by mutableStateOf(false)
+        private set
     var canPaste by mutableStateOf(false)
         private set
     /** Bumped whenever floating canvas chrome (the selection bar) must be repositioned. */
@@ -96,10 +101,11 @@ class AppState(context: Context) {
         view.images = images
         view.onSelectionChanged = { selectionCount = it; refreshChrome() }
         view.onChromeChanged = { refreshChrome() }
-        view.onDocumentChanged = { refreshHistory() }
+        view.onDocumentChanged = { refreshHistory(); refreshPageChrome(view) }
         view.onCameraChanged = { camera ->
             zoom = camera.zoom
             currentPage = view.currentPageIndex()
+            lastPageBottomVisible = view.lastPageBottomVisible()
             val noteId = view.document?.noteId
             cameraSave?.cancel()
             if (noteId != null) cameraSave = scope.launch {
@@ -121,6 +127,12 @@ class AppState(context: Context) {
     fun refreshChrome() {
         chromeTick++
         canPaste = canvas?.canPaste == true
+    }
+
+    /** Re-reads what the Add page button depends on after the note, its objects or its page count change. */
+    private fun refreshPageChrome(view: CanvasView) {
+        hasPracticeCards = view.document?.all?.any { it.kind == "practice-card" } == true
+        lastPageBottomVisible = view.lastPageBottomVisible()
     }
 
     private fun refreshHistory() {
@@ -154,9 +166,10 @@ class AppState(context: Context) {
             importedPdf = doc.all.hasImportedPdf()
             pageCount = settings.pageCount(noteId)
             view.open(doc, note.canvasMode, pageCount, note.background, settings.camera(noteId))
+            refreshPageChrome(view)
             refreshHistory()
             if (note.canvasMode == "paged") runCatching { api.pageCount(noteId) }.getOrNull()?.let {
-                pageCount = it; settings.savePageCount(noteId, it); view.setPageCount(it)
+                pageCount = it; settings.savePageCount(noteId, it); view.setPageCount(it); refreshPageChrome(view)
             }
             runCatching { sync.refreshNote(noteId) }.onSuccess { objects ->
                 if (view.document === doc) {
@@ -172,7 +185,10 @@ class AppState(context: Context) {
         val view = canvas ?: return
         scope.launch {
             runCatching { api.addPageBelow(noteId, view.currentPageIndex()) }
-                .onSuccess { pageCount = it; settings.savePageCount(noteId, it); view.setPageCount(it); view.scrollToPage(view.currentPageIndex() + 1) }
+                .onSuccess {
+                    pageCount = it; settings.savePageCount(noteId, it); view.setPageCount(it)
+                    view.scrollToPage(view.currentPageIndex() + 1); refreshPageChrome(view)
+                }
                 .onFailure { error = "Could not add a page: ${it.message}" }
         }
     }

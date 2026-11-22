@@ -2458,6 +2458,13 @@ export function CanvasWorkspace({
       ),
     ),
   );
+  // Guided practice notes only offer a new page once the end of the last page is on screen.
+  const lastPageBottomVisible =
+    viewport.y + view.height >=
+    pageCount * (PAGE_HEIGHT + PAGE_GAP) - PAGE_GAP - 1;
+  const hasPracticeCards = displayObjects.some(
+    (object) => object.kind === "practice-card",
+  );
   const addPageBelow = async (): Promise<void> => {
     setImportError(null);
     try {
@@ -2781,6 +2788,7 @@ export function CanvasWorkspace({
           />
         ) : null}
         {activeMode === "paged" &&
+        (!hasPracticeCards || lastPageBottomVisible) &&
         !displayObjects.some(
           (object) =>
             object.kind === "pdf-page-reference" &&

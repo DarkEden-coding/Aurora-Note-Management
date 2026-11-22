@@ -186,6 +186,10 @@ class CanvasView(context: Context) : View(context) {
     }
 
     /** Zero-based page at the middle of the screen, for "add page below". */
+    /** True once the last page's bottom edge is on screen. */
+    fun lastPageBottomVisible(): Boolean =
+        camera.y + height / scale >= pagedFrame(max(1, pageCount) - 1).bottom - 1
+
     fun currentPageIndex(): Int = pageIndexAtY(worldY(height / 2f)).coerceIn(0, max(0, pageCount - 1))
 
     // ---- Gestures --------------------------------------------------------

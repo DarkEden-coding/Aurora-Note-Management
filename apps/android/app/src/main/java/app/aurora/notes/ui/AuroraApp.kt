@@ -661,7 +661,8 @@ private fun CanvasArea(state: AppState, modifier: Modifier) {
             )
         }
         val note = state.openNote
-        if (note?.canvasMode == "paged" && !state.importedPdf && state.selectionCount == 0) {
+        if (note?.canvasMode == "paged" && !state.importedPdf && state.selectionCount == 0 &&
+            (!state.hasPracticeCards || state.lastPageBottomVisible)) {
             Row(
                 // Above the zoom readout, which sits at the bottom centre.
                 Modifier.align(Alignment.BottomCenter).padding(bottom = 58.dp).heightIn(min = 38.dp)
