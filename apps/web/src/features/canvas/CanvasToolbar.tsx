@@ -1,4 +1,4 @@
-// Floating tool palette and zoom chrome for the canvas workspace. Presentation only; tool state stays in CanvasWorkspace.
+// Floating tool palette for the canvas workspace. Presentation only; tool state stays in CanvasWorkspace.
 // Undo, redo and paste only appear while they can do something.
 import { type ReactNode } from "react";
 import {
@@ -35,7 +35,6 @@ export type CanvasTool =
 
 export interface CanvasToolbarProps {
   tool: CanvasTool;
-  zoom: number;
   canUndo: boolean;
   canRedo: boolean;
   canPaste: boolean;
@@ -77,7 +76,6 @@ const TOOLS: ToolButton[] = [
 
 export function CanvasToolbar({
   tool,
-  zoom,
   canUndo,
   canRedo,
   canPaste,
@@ -156,9 +154,6 @@ export function CanvasToolbar({
             <Camera size={16} />
           </button>
         </div>
-      </div>
-      <div className="canvas-statusbar" data-testid="canvas-status">
-        <span>{Math.round(zoom * 100)}%</span>
       </div>
     </>
   );

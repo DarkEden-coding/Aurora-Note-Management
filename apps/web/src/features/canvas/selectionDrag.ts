@@ -30,7 +30,8 @@ function moveTargets(root: ParentNode, id: string): NodeListOf<Element> {
 function setOffset(element: Element, offset: Point | null): void {
   if (element instanceof SVGElement) {
     if (offset === null) element.removeAttribute("transform");
-    else element.setAttribute("transform", `translate(${offset.x} ${offset.y})`);
+    else
+      element.setAttribute("transform", `translate(${offset.x} ${offset.y})`);
   } else if (element instanceof HTMLElement) {
     // `translate` composes with the object's own `rotate` style.
     element.style.translate =

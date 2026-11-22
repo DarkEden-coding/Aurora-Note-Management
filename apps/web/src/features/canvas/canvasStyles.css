@@ -127,24 +127,72 @@
   letter-spacing: 0.04em;
 }
 
-.canvas-add-page {
+/* Zoom readout and Add page share one bottom-centre row; Add page slides open beside the
+   readout and folds away (width, opacity, scale) instead of popping in and out. */
+.canvas-bottom-bar {
   position: absolute;
-  z-index: 8;
+  z-index: 10;
+  bottom: 20px;
   left: 50%;
-  /* Sits above the zoom readout (.canvas-statusbar, bottom 24px, about 24px tall). */
-  bottom: 58px;
   display: flex;
   align-items: center;
-  gap: 6px;
   translate: -50% 0;
-  min-height: 38px;
-  padding: 8px 14px;
+  pointer-events: none;
+}
+
+.canvas-add-page {
+  display: flex;
+  overflow: hidden;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  min-height: 34px;
+  margin-left: 8px;
+  padding: 6px 14px;
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text);
   background: var(--surface-raised);
   box-shadow: var(--shadow-outset);
+  white-space: nowrap;
   cursor: pointer;
+  pointer-events: auto;
+  transform-origin: left center;
+  transition:
+    max-width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin-left 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms ease,
+    scale 320ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+.canvas-add-page svg {
+  flex: none;
+}
+
+.canvas-add-page[data-visible="false"] {
+  max-width: 0;
+  margin-left: 0;
+  padding-inline: 0;
+  border-width: 0;
+  opacity: 0;
+  scale: 0.85;
+  pointer-events: none;
+  transition:
+    max-width 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    margin-left 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    padding 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-width 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 140ms ease,
+    scale 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-add-page,
+  .canvas-add-page[data-visible="false"] {
+    transition: opacity 120ms ease;
+  }
 }
 
 .canvas-scene {
@@ -385,11 +433,7 @@
 }
 
 .canvas-statusbar {
-  position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;

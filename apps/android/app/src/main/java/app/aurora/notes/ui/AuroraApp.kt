@@ -2,6 +2,16 @@
 // library sidebar, top bar, and the canvas with its floating tool bar, pen palette, and selection bar.
 package app.aurora.notes.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -663,22 +673,29 @@ private fun CanvasArea(state: AppState, modifier: Modifier) {
             )
         }
         val note = state.openNote
-        if (note?.canvasMode == "paged" && !state.importedPdf && state.selectionCount == 0 &&
-            (!state.hasPracticeCards || state.lastPageBottomVisible)) {
-            Row(
-                // Above the zoom readout, which sits at the bottom centre.
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 58.dp).heightIn(min = 38.dp)
-                    .panel(radius = 999.dp, fill = Neo.surfaceRaised).clickable { state.addPageBelow() }.padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                LucideIcon(Lucide.Plus, 16)
-                Label("Add page below page ${state.currentPage + 1}")
+        // Zoom readout and Add page share one bottom-centre row; Add page slides open beside the
+        // readout and folds away, like the web's .canvas-bottom-bar.
+        Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.clip(CircleShape).background(Neo.surface.copy(alpha = 0.9f)).border(1.dp, Neo.border, CircleShape)
+                .padding(horizontal = 12.dp, vertical = 3.dp)) {
+                Label("${(state.zoom * 100).roundToInt()}%", 10.sp, Neo.muted)
             }
-        }
-        // .canvas-statusbar zoom readout
-        Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp).offset(y = 2.dp)
-            .clip(CircleShape).background(Neo.surface.copy(alpha = 0.9f)).border(1.dp, Neo.border, CircleShape).padding(horizontal = 12.dp, vertical = 3.dp)) {
-            Label("${(state.zoom * 100).roundToInt()}%", 10.sp, Neo.muted)
+            AnimatedVisibility(
+                visible = note?.canvasMode == "paged" && !state.importedPdf && state.selectionCount == 0 &&
+                    (!state.hasPracticeCards || state.lastPageBottomVisible),
+                enter = expandHorizontally(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow), expandFrom = Alignment.Start) +
+                    fadeIn(tween(200)) + scaleIn(spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.85f),
+                exit = shrinkHorizontally(tween(260), shrinkTowards = Alignment.Start) + fadeOut(tween(140)) + scaleOut(tween(260), targetScale = 0.85f),
+            ) {
+                Row(
+                    Modifier.padding(start = 8.dp).heightIn(min = 38.dp)
+                        .panel(radius = 999.dp, fill = Neo.surfaceRaised).clickable { state.addPageBelow() }.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    LucideIcon(Lucide.Plus, 16)
+                    Label("Add page below page ${state.currentPage + 1}")
+                }
+            }
         }
         if (note?.canvasMode == "paged" || note?.canvasMode == "fixed-width") {
             val locked = state.lockX

@@ -2787,22 +2787,30 @@ export function CanvasWorkspace({
             style={{ left: eraserPointer.x, top: eraserPointer.y }}
           />
         ) : null}
-        {activeMode === "paged" &&
-        (!hasPracticeCards || lastPageBottomVisible) &&
-        !displayObjects.some(
-          (object) =>
-            object.kind === "pdf-page-reference" &&
-            object.payload.importedDocument === true,
-        ) ? (
-          <button
-            type="button"
-            className="canvas-add-page"
-            data-canvas-controls="true"
-            onClick={() => void addPageBelow()}
-          >
-            <Plus size={16} /> Add page below page {currentPageIndex + 1}
-          </button>
-        ) : null}
+        <div className="canvas-bottom-bar">
+          <div className="canvas-statusbar" data-testid="canvas-status">
+            <span>{Math.round(zoom * 100)}%</span>
+          </div>
+          {activeMode === "paged" &&
+          !displayObjects.some(
+            (object) =>
+              object.kind === "pdf-page-reference" &&
+              object.payload.importedDocument === true,
+          ) ? (
+            // Stays mounted so it can slide in and out beside the zoom readout.
+            <button
+              type="button"
+              className="canvas-add-page"
+              data-canvas-controls="true"
+              data-visible={!hasPracticeCards || lastPageBottomVisible}
+              inert={hasPracticeCards && !lastPageBottomVisible}
+              onClick={() => void addPageBelow()}
+            >
+              <Plus size={16} />
+              <span>Add page below page {currentPageIndex + 1}</span>
+            </button>
+          ) : null}
+        </div>
         {selectionActions !== null ? (
           <SelectionActions
             count={selectedObjects.length}
@@ -2862,7 +2870,6 @@ export function CanvasWorkspace({
 
       <CanvasToolbar
         tool={tool}
-        zoom={zoom}
         canUndo={history.undo.length > 0}
         canRedo={history.redo.length > 0}
         canPaste={hasClipboard}
