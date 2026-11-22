@@ -148,6 +148,7 @@ class AppState(context: Context) {
     private fun refreshPageChrome(view: CanvasView) {
         hasPracticeCards = view.document?.all?.any { it.kind == "practice-card" } == true
         lastPageBottomVisible = view.lastPageBottomVisible()
+        currentPage = view.currentPageIndex()
     }
 
     private fun refreshHistory() {
