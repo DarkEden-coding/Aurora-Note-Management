@@ -35,6 +35,8 @@ export interface OutboxRow {
   /** The operation ID — the primary key makes enqueueing idempotent. */
   id: string;
   op: import("@aurora/shared").SyncOperation;
+  objectId?: string;
+  sent?: boolean;
   createdAt: number;
   attempts: number;
   nextAttemptAt: number;
@@ -85,6 +87,16 @@ export class AuroraDb extends Dexie {
       conflicts: "id, noteId, objectId, createdAt",
       meta: "key",
     });
+    this.version(3)
+      .stores({ outbox: "id, createdAt, nextAttemptAt, status, objectId" })
+      .upgrade((transaction) =>
+        transaction
+          .table<OutboxRow>("outbox")
+          .toCollection()
+          .modify((row) => {
+            row.objectId = row.op.objectId;
+          }),
+      );
   }
 }
 

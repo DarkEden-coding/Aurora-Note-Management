@@ -88,7 +88,7 @@ class AppState(context: Context) {
         scope.launch { sync.remoteChanges.collect { change ->
             val view = canvas ?: return@collect
             val doc = view.document ?: return@collect
-            if (change.noteId == doc.noteId) doc.applyRemote(change.objects, change.deletedIds, view.protectedIds())
+            if (change.noteId == doc.noteId) doc.applyRemote(change.objects, change.deletedIds, view.protectedIds(), change.localAcknowledgement)
         } }
         // The server appends pages (a new practice question) and announces it with these broadcasts.
         scope.launch { sync.libraryChanged.collect { refreshLibrary(); refreshPageCount() } }

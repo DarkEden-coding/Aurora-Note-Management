@@ -107,6 +107,20 @@ export async function queryRegionalObjects(
   };
 }
 
+// Match page and snapshot writes: lock notes before locking their canvas objects.
+export async function lockNotesForCanvasWrite(
+  client: pg.PoolClient,
+  ownerId: string,
+  noteIds: string[],
+): Promise<{ id: string; trashed_at: Date | null }[]> {
+  const { rows } = await client.query<{ id: string; trashed_at: Date | null }>(
+    `SELECT id, trashed_at FROM notes
+     WHERE owner_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR NO KEY UPDATE`,
+    [ownerId, noteIds],
+  );
+  return rows;
+}
+
 export async function loadObjectForUpdate(
   client: pg.PoolClient,
   ownerId: string,

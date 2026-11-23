@@ -16,6 +16,7 @@ data class OutboxEntry(
     val createdAt: Long,
     val attempts: Int = 0,
     val nextAttemptAt: Long = 0,
+    val sent: Boolean = false,
 )
 
 class LocalStore(context: Context) {

@@ -1,4 +1,4 @@
-// Canvas workspace composition: four canvas modes, viewport transform with overscan culling, backgrounds, selection/move/resize gestures, pen capture with palm rejection, mouse/touch navigation, paged page frames with programmatic page focus, and object creation. Edits emit coalesced SyncOperations through onOperation; object rendering is delegated to ObjectRenderer, and the sync cache supplies objects when the prop is omitted.
+// Canvas workspace composition: four canvas modes, viewport transform with overscan culling, backgrounds, selection/move/resize gestures, pen capture with palm rejection, mouse/touch navigation, paged page frames with programmatic page focus, and object creation. Edits emit coalesced SyncOperations through onOperations; object rendering is delegated to ObjectRenderer, and the sync cache supplies objects when the prop is omitted.
 import type React from "react";
 import {
   type ReactNode,
@@ -124,8 +124,8 @@ export interface CanvasWorkspaceProps {
   /** Account-synced colors available to drawing controls. */
   drawingPalette?: DrawingPalette;
   onDrawingPaletteChange?: (palette: DrawingPalette) => void | Promise<void>;
-  /** Receives every coalesced upsert/delete operation produced by editing gestures. */
-  onOperation?: (operation: SyncOperation) => void;
+  /** Receives the operations for one canvas edit. */
+  onOperations?: (operations: SyncOperation[]) => void;
   /** PDF selected while creating this note from the library. */
   importedPdf?: File;
   onPdfImported?: () => void;
@@ -406,7 +406,7 @@ export function CanvasWorkspace({
   objects,
   drawingPalette,
   onDrawingPaletteChange,
-  onOperation,
+  onOperations,
   importedPdf,
   onPdfImported,
   focusPage,
@@ -594,6 +594,7 @@ export function CanvasWorkspace({
         for (const objectId of event.deletedObjectIds) {
           if (
             byId.has(objectId) &&
+            !event.acknowledgement &&
             !gestureTouches(objectId) &&
             !pendingObjectsRef.current.has(objectId)
           ) {
@@ -603,11 +604,17 @@ export function CanvasWorkspace({
         }
         for (const remote of event.objects) {
           const local = byId.get(remote.id);
-          if (local === undefined) {
+          if (
+            local === undefined &&
+            !event.acknowledgement &&
+            !gestureTouches(remote.id)
+          ) {
             byId.set(remote.id, remote);
             changed = true;
           } else if (
-            remote.revision > local.revision &&
+            local !== undefined &&
+            (remote.revision > local.revision ||
+              (event.acknowledgement && remote.revision === local.revision)) &&
             !gestureTouches(remote.id)
           ) {
             const result = reconcileObject(
@@ -615,10 +622,12 @@ export function CanvasWorkspace({
               remote,
               pendingObjectsRef.current.get(remote.id),
             );
-            byId.set(remote.id, result.object);
             if (result.acknowledged)
               pendingObjectsRef.current.delete(remote.id);
-            changed = true;
+            if (result.object !== local) {
+              byId.set(remote.id, result.object);
+              changed = true;
+            }
           }
         }
         return changed ? [...byId.values()] : prev;
@@ -707,8 +716,8 @@ export function CanvasWorkspace({
   }, []);
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
-  const onOperationRef = useRef(onOperation);
-  onOperationRef.current = onOperation;
+  const onOperationsRef = useRef(onOperations);
+  onOperationsRef.current = onOperations;
 
   const primaryId = useMemo(() => {
     let last: string | null = null;
@@ -720,14 +729,36 @@ export function CanvasWorkspace({
     [displayObjects, primaryId],
   );
 
-  const commitUpsert = useCallback(
-    (object: CanvasObject): void => {
+  const upsertOperation = useCallback(
+    (object: CanvasObject): SyncOperation => {
       pendingObjectsRef.current.set(object.id, object);
-      onOperationRef.current?.(
-        makeUpsertOperation(object, noteId, deviceIdRef.current),
+      return makeUpsertOperation(object, noteId, deviceIdRef.current);
+    },
+    [noteId],
+  );
+  const deleteOperation = useCallback(
+    (object: CanvasObject): SyncOperation => {
+      pendingObjectsRef.current.delete(object.id);
+      return makeDeleteOperation(
+        object.id,
+        object.revision,
+        noteId,
+        deviceIdRef.current,
       );
     },
     [noteId],
+  );
+  const commitUpsert = useCallback(
+    (object: CanvasObject) =>
+      onOperationsRef.current?.([upsertOperation(object)]),
+    [upsertOperation],
+  );
+  const commitDeletes = useCallback(
+    (removed: CanvasObject[]) => {
+      if (removed.length > 0)
+        onOperationsRef.current?.(removed.map(deleteOperation));
+    },
+    [deleteOperation],
   );
 
   const recordHistory = useCallback((entry: HistoryEntry): void => {
@@ -753,21 +784,14 @@ export function CanvasWorkspace({
         (object) => !changedIds.has(object.id),
       );
       const now = new Date().toISOString();
+      const operations: SyncOperation[] = [];
 
       for (const id of changedIds) {
         const existing = current.get(id);
         const target = desired.get(id);
         if (target === undefined) {
-          if (existing !== undefined) {
-            onOperationRef.current?.(
-              makeDeleteOperation(
-                id,
-                existing.revision,
-                noteId,
-                deviceIdRef.current,
-              ),
-            );
-          }
+          if (existing !== undefined)
+            operations.push(deleteOperation(existing));
           continue;
         }
         const restored = {
@@ -776,13 +800,14 @@ export function CanvasWorkspace({
           updatedAt: now,
         };
         next.push(restored);
-        commitUpsert(restored);
+        operations.push(upsertOperation(restored));
       }
+      if (operations.length > 0) onOperationsRef.current?.(operations);
       objectsRef.current = next;
       setMirror(next);
       selection.clear();
     },
-    [commitUpsert, noteId, selection],
+    [deleteOperation, selection, upsertOperation],
   );
 
   const undo = useCallback((): void => {
@@ -1025,14 +1050,10 @@ export function CanvasWorkspace({
     );
     objectsRef.current = next;
     setMirror(next);
-    for (const o of removed) {
-      onOperationRef.current?.(
-        makeDeleteOperation(o.id, o.revision, noteId, deviceIdRef.current),
-      );
-    }
+    commitDeletes(removed);
     if (removed.length > 0) recordHistory({ before: removed, after: [] });
     selection.clear();
-  }, [noteId, recordHistory, selection]);
+  }, [commitDeletes, recordHistory, selection]);
 
   const [hasClipboard, setHasClipboard] = useState(
     () => canvasClipboard !== null,
@@ -1054,11 +1075,11 @@ export function CanvasWorkspace({
       const next = [...objectsRef.current, ...inserted];
       objectsRef.current = next;
       setMirror(next);
-      for (const object of inserted) commitUpsert(object);
+      onOperationsRef.current?.(inserted.map(upsertOperation));
       recordHistory({ before: [], after: inserted });
       selection.setSelection(inserted.map((object) => object.id));
     },
-    [commitUpsert, recordHistory, selection],
+    [recordHistory, selection, upsertOperation],
   );
 
   /** Replaces existing objects as one undoable step. */
@@ -1077,13 +1098,13 @@ export function CanvasWorkspace({
       );
       objectsRef.current = next;
       setMirror(next);
-      for (const object of after.values()) commitUpsert(object);
+      onOperationsRef.current?.([...after.values()].map(upsertOperation));
       recordHistory({
         before: changes.map(({ before }) => before),
         after: [...after.values()],
       });
     },
-    [commitUpsert, recordHistory],
+    [recordHistory, upsertOperation],
   );
 
   const copySelection = useCallback((): boolean => {
@@ -1379,38 +1400,32 @@ export function CanvasWorkspace({
     },
   });
 
-  const eraseStrokeAt = useCallback(
-    (point: Point, removed: Map<string, CanvasObject>): void => {
-      const hit = hitTestTopmostStroke(
-        objectsRef.current,
-        point,
-        ERASER_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom,
-      );
-      if (hit === null || removed.has(hit.id)) return;
-      removed.set(hit.id, hit);
-      const next = objectsRef.current.filter((object) => object.id !== hit.id);
-      objectsRef.current = next;
-      setMirror(next);
-    },
-    [],
-  );
-
   const eraseStrokeBetween = useCallback(
     (start: Point, end: Point, removed: Map<string, CanvasObject>): void => {
       const tolerance = ERASER_HIT_TOLERANCE_SCREEN / viewportRef.current.zoom;
       const distance = Math.hypot(end.x - start.x, end.y - start.y);
       const steps = Math.max(1, Math.ceil(distance / tolerance));
+      const objects = objectsRef.current;
+      const previousSize = removed.size;
       for (let index = 1; index <= steps; index += 1) {
-        eraseStrokeAt(
+        const hit = hitTestTopmostStroke(
+          objects,
           {
             x: start.x + ((end.x - start.x) * index) / steps,
             y: start.y + ((end.y - start.y) * index) / steps,
           },
+          tolerance,
           removed,
         );
+        if (hit) removed.set(hit.id, hit);
+      }
+      if (removed.size !== previousSize) {
+        const next = objects.filter((object) => !removed.has(object.id));
+        objectsRef.current = next;
+        setMirror(next);
       }
     },
-    [eraseStrokeAt],
+    [],
   );
 
   // ---- Pointer gestures ----------------------------------------------------
@@ -1574,7 +1589,7 @@ export function CanvasWorkspace({
       if (tool === "eraser") {
         const removed = new Map<string, CanvasObject>();
         setActiveGesture({ kind: "erase", last: canvasPoint, removed });
-        eraseStrokeAt(canvasPoint, removed);
+        eraseStrokeBetween(canvasPoint, canvasPoint, removed);
         try {
           el.setPointerCapture(e.pointerId);
         } catch {
@@ -1698,7 +1713,7 @@ export function CanvasWorkspace({
       tool,
       primaryId,
       createObject,
-      eraseStrokeAt,
+      eraseStrokeBetween,
       pen,
       setActiveGesture,
       selection,
@@ -1933,16 +1948,7 @@ export function CanvasWorkspace({
           current.removed,
         );
         const removed = [...current.removed.values()];
-        for (const object of removed) {
-          onOperationRef.current?.(
-            makeDeleteOperation(
-              object.id,
-              object.revision,
-              noteId,
-              deviceIdRef.current,
-            ),
-          );
-        }
+        commitDeletes(removed);
         if (removed.length > 0) {
           recordHistory({ before: removed, after: [] });
           selection.clear();
@@ -1978,7 +1984,7 @@ export function CanvasWorkspace({
         if (after.length > 0) {
           objectsRef.current = next;
           setMirror(next);
-          for (const moved of after) commitUpsert(moved);
+          onOperationsRef.current?.(after.map(upsertOperation));
           recordHistory({ before, after });
         }
         return;
@@ -2029,7 +2035,9 @@ export function CanvasWorkspace({
     },
     [
       activeMode,
+      commitDeletes,
       commitUpsert,
+      upsertOperation,
       createObject,
       endMovePreview,
       eraseStrokeBetween,

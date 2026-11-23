@@ -5,6 +5,7 @@ import type { CanvasObject } from "@aurora/shared";
 import {
   deleteObject,
   loadObjectForUpdate,
+  lockNotesForCanvasWrite,
   touchNote,
   upsertObject,
 } from "../canvas/objects.js";
@@ -27,6 +28,7 @@ export async function writeObjects(
   upserts: CanvasObject[],
   deleteIds: string[] = [],
 ): Promise<ObjectChanges> {
+  await lockNotesForCanvasWrite(client, ownerId, [noteId]);
   const objects: CanvasObject[] = [];
   for (const object of upserts) {
     const current = await loadObjectForUpdate(client, ownerId, object.id);

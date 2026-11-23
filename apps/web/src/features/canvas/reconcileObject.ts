@@ -34,10 +34,12 @@ export function reconcileObject(
   remote: CanvasObject,
   pending: CanvasObject | undefined,
 ): { object: CanvasObject; acknowledged: boolean } {
-  if (remote.revision <= local.revision)
+  if (remote.revision < local.revision)
     return { object: local, acknowledged: false };
   const acknowledged =
     pending !== undefined && contentKey(pending) === contentKey(remote);
+  if (remote.revision === local.revision)
+    return { object: local, acknowledged };
   return {
     object:
       pending && !acknowledged

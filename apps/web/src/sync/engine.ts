@@ -30,6 +30,7 @@ export interface RemoteChangeEvent {
   noteId: string;
   objects: CanvasObject[];
   deletedObjectIds: string[];
+  acknowledgement?: true;
 }
 
 /** A guided-practice session on a note changed on the server. */
@@ -241,14 +242,25 @@ class SyncEngine {
     if (event.type === "objects-changed") {
       // Never replace a newer local draft with a server snapshot. Its outbox
       // acknowledgement will advance the draft's revision without changing content.
-      const changes = filterChangesForPendingOperations(
-        event,
-        await db.outbox.toArray(),
+      const changes = await db.transaction(
+        "rw",
+        db.outbox,
+        db.objects,
+        async () => {
+          const ids = [
+            ...event.objects.map((object) => object.id),
+            ...event.deletedObjectIds,
+          ];
+          const pending = await db.outbox
+            .where("objectId")
+            .anyOf(ids)
+            .toArray();
+          const filtered = filterChangesForPendingOperations(event, pending);
+          await db.objects.bulkPut(filtered.objects);
+          await db.objects.bulkDelete(filtered.deletedObjectIds);
+          return filtered;
+        },
       );
-      await db.transaction("rw", db.objects, async () => {
-        await db.objects.bulkPut(changes.objects);
-        await db.objects.bulkDelete(changes.deletedObjectIds);
-      });
       const revision =
         event.noteRevision ??
         event.objects.reduce(
@@ -370,10 +382,9 @@ class SyncEngine {
     if (this.flushing || !navigator.onLine) return;
     this.flushing = true;
     try {
-      const result = await flushOutbox();
-      for (const change of result.changes) {
-        this.notifyRemoteChange(change);
-      }
+      await flushOutbox((changes) => {
+        for (const change of changes) this.notifyRemoteChange(change);
+      });
       await this.refreshCounts();
       this.setStatus({ lastSyncAt: Date.now() });
     } finally {

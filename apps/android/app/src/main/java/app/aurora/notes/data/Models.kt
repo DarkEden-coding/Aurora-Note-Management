@@ -67,6 +67,7 @@ data class SyncAck(
     val status: String,
     val `object`: CanvasObject? = null,
     val conflictId: String? = null,
+    val resultRevision: Int? = null,
 )
 
 @Serializable

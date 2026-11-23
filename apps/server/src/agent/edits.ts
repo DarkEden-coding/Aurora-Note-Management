@@ -4,7 +4,10 @@ import type pg from "pg";
 import type { CanvasObject } from "@aurora/shared";
 import { conflict, notFound } from "../errors.js";
 import { withTransaction } from "../db/pool.js";
-import { loadObjectForUpdate } from "../canvas/objects.js";
+import {
+  loadObjectForUpdate,
+  lockNotesForCanvasWrite,
+} from "../canvas/objects.js";
 import { createSnapshot } from "../history/snapshots.js";
 import { broadcastObjectChanges, writeObjects } from "../practice/publish.js";
 import {
@@ -66,6 +69,7 @@ async function commit(
   change: (objects: CanvasObject[]) => CanvasObject[],
 ): Promise<{ before: CanvasObject[]; after: CanvasObject[] }> {
   const result = await withTransaction(async (client) => {
+    await lockNotesForCanvasWrite(client, ownerId, [noteId]);
     const before = await lockObjects(client, ownerId, noteId, ids);
     const after = change(before);
     if (!dryRun) await writeObjects(client, ownerId, noteId, after);

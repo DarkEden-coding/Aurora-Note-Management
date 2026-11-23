@@ -1,14 +1,13 @@
-// Ingests client sync operations idempotently, assigning authoritative revisions and recording conflicts.
+// Ingests a batch in client order, assigning authoritative revisions and recording conflicts.
 import type { CanvasObject, SyncAck, SyncOperation } from "@aurora/shared";
+import type { PoolClient } from "pg";
 import { conflict, forbidden, invalid, notFound } from "../errors.js";
-import { query, withTransaction } from "../db/pool.js";
+import { withTransaction } from "../db/pool.js";
 import {
   deleteObject,
   loadObjectForUpdate,
-  mapCanvasObject,
-  touchNote,
+  lockNotesForCanvasWrite,
   upsertObject,
-  type CanvasObjectRow,
 } from "../canvas/objects.js";
 import {
   classifyOperation,
@@ -24,114 +23,97 @@ type OperationRow = {
   object_id: string;
   status: "applied" | "conflict";
   conflict_id: string | null;
+  result_revision: number | null;
 };
 
 function ack(
   op: SyncOperation,
   status: SyncAck["status"],
-  object?: CanvasObject,
-  conflictId?: string,
+  fields: Pick<SyncAck, "object" | "conflictId" | "resultRevision">,
 ): SyncAck {
   return {
     operationId: op.id,
     status,
-    object,
-    conflictId,
+    ...fields,
     serverTimestamp: new Date().toISOString(),
   };
-}
-
-// Every operation's note must exist and sit outside trash in the owner scope.
-export async function ensureNoteOwned(
-  ownerId: string,
-  noteId: string,
-): Promise<void> {
-  const result = await query<{ owner_id: string; trashed_at: Date | null }>(
-    "SELECT owner_id, trashed_at FROM notes WHERE owner_id = $1 AND id = $2",
-    [ownerId, noteId],
-  );
-  if (!result.rows[0]) throw notFound("Note");
-  if (result.rows[0].trashed_at) {
-    throw conflict("Note is in trash; restore it before syncing operations");
-  }
 }
 
 export async function ingestOperations(
   ownerId: string,
   operations: SyncOperation[],
+  legacyOrdering = false,
 ): Promise<SyncAck[]> {
-  // Validate ownership for each distinct note so a batch cannot smuggle foreign note IDs.
-  const checkedNotes = new Set<string>();
-  for (const op of operations) {
-    if (!checkedNotes.has(op.noteId)) {
-      await ensureNoteOwned(ownerId, op.noteId);
-      checkedNotes.add(op.noteId);
+  const { acks, changes } = await withTransaction(async (client) => {
+    // Serialize batches for an owner, including concurrent creates and retries.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [ownerId],
+    );
+    const noteIds = [...new Set(operations.map((op) => op.noteId))];
+    const notes = await lockNotesForCanvasWrite(client, ownerId, noteIds);
+    if (notes.length !== noteIds.length) throw notFound("Note");
+    if (notes.some((note) => note.trashed_at)) {
+      throw conflict("Note is in trash; restore it before syncing operations");
     }
-  }
-  const acks: SyncAck[] = [];
-  for (const op of operations) {
-    acks.push(await ingestOperation(ownerId, op));
-  }
-  return acks;
-}
 
-// Duplicate ingestion re-acks the recorded outcome without mutating state again.
-async function reackDuplicate(
-  op: SyncOperation,
-  ownerId: string,
-): Promise<SyncAck> {
-  const recorded = await query<OperationRow>(
-    "SELECT id, owner_id, note_id, object_id, status, conflict_id FROM operations WHERE id = $1 AND owner_id = $2",
-    [op.id, ownerId],
-  );
-  const row = recorded.rows[0];
-  if (!row) throw notFound("Operation");
-  const object = await loadCurrentObject(ownerId, op.objectId);
-  if (row.status === "applied") {
-    return ack(op, "duplicate", object ?? undefined);
-  }
-  return ack(op, "conflict", object ?? undefined, row.conflict_id ?? undefined);
-}
+    const existing = await client.query<OperationRow>(
+      `SELECT id, owner_id, note_id, object_id, status, conflict_id, result_revision
+       FROM operations WHERE id = ANY($1::uuid[])`,
+      [operations.map((op) => op.id)],
+    );
+    const recorded = new Map(existing.rows.map((row) => [row.id, row]));
 
-async function loadCurrentObject(
-  ownerId: string,
-  objectId: string,
-): Promise<CanvasObject | null> {
-  const result = await query<CanvasObjectRow>(
-    `SELECT id, owner_id, note_id, page_id, kind, x, y, width, height, rotation,
-            z_index, locked, group_id, payload, revision, created_at, updated_at
-     FROM canvas_objects WHERE owner_id = $1 AND id = $2`,
-    [ownerId, objectId],
-  );
-  const row = result.rows[0];
-  return row ? mapCanvasObject(row) : null;
-}
+    const pageIds = operations.flatMap((op) =>
+      op.mutation.type === "upsert" && op.mutation.object.pageId
+        ? [op.mutation.object.pageId]
+        : [],
+    );
+    const pages = new Map<string, string>();
+    if (pageIds.length > 0) {
+      const result = await client.query<{ id: string; note_id: string }>(
+        "SELECT id, note_id FROM pages WHERE owner_id = $1 AND id = ANY($2::uuid[])",
+        [ownerId, pageIds],
+      );
+      for (const page of result.rows) pages.set(page.id, page.note_id);
+    }
 
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { code?: unknown }).code === "23505"
-  );
-}
+    const acks: SyncAck[] = [];
+    const currentObjects = new Map<string, CanvasObject | null>();
+    const noteEdits = new Map<string, number>();
+    const changes = new Map<
+      string,
+      { operationId: string; objects: Map<string, CanvasObject | null> }
+    >();
+    for (const op of operations) {
+      if (!currentObjects.has(op.objectId)) {
+        currentObjects.set(
+          op.objectId,
+          await loadObjectForUpdate(client, ownerId, op.objectId),
+        );
+      }
+      const current = currentObjects.get(op.objectId) ?? null;
+      const duplicate = recorded.get(op.id);
+      if (duplicate) {
+        if (duplicate.owner_id !== ownerId) throw forbidden("Operation");
+        if (
+          duplicate.note_id !== op.noteId ||
+          duplicate.object_id !== op.objectId
+        ) {
+          throw invalid(
+            "Operation ID was already used for a different canvas object",
+          );
+        }
+        acks.push(
+          ack(op, duplicate.status === "applied" ? "duplicate" : "conflict", {
+            object: current ?? undefined,
+            conflictId: duplicate.conflict_id ?? undefined,
+            resultRevision: duplicate.result_revision ?? undefined,
+          }),
+        );
+        continue;
+      }
 
-export async function ingestOperation(
-  ownerId: string,
-  op: SyncOperation,
-): Promise<SyncAck> {
-  const duplicateCheck = await query<OperationRow>(
-    "SELECT id, owner_id, note_id, object_id, status, conflict_id FROM operations WHERE id = $1",
-    [op.id],
-  );
-  if (duplicateCheck.rows[0]) {
-    if (duplicateCheck.rows[0].owner_id !== ownerId)
-      throw forbidden("Operation");
-    return reackDuplicate(op, ownerId);
-  }
-
-  try {
-    const result = await withTransaction(async (client) => {
-      const current = await loadObjectForUpdate(client, ownerId, op.objectId);
       if (current && current.noteId !== op.noteId) {
         throw forbidden("Canvas object does not belong to this note");
       }
@@ -145,87 +127,143 @@ export async function ingestOperation(
             "Canvas object owner does not match the request owner",
           );
         }
-        if (incoming.pageId) {
-          const page = await client.query<{ id: string }>(
-            `SELECT id FROM pages
-             WHERE id = $1 AND owner_id = $2 AND note_id = $3`,
-            [incoming.pageId, ownerId, op.noteId],
-          );
-          if (!page.rows[0]) {
-            throw invalid(
-              "Canvas object page must belong to the operation note",
-            );
-          }
+        if (incoming.pageId && pages.get(incoming.pageId) !== op.noteId) {
+          throw invalid("Canvas object page must belong to the operation note");
         }
       }
-      const status = classifyOperation(current, op);
 
-      if (status === "apply") {
+      const fixesLegacyPrediction =
+        legacyOrdering &&
+        op.baseRevision === 1 &&
+        current?.revision === 0 &&
+        current.createdAt === current.updatedAt &&
+        (await wasCreatedByThisDevice(client, ownerId, op));
+      let result: SyncAck;
+      if (classifyOperation(current, op) === "apply" || fixesLegacyPrediction) {
+        let object: CanvasObject | null = null;
         if (op.mutation.type === "upsert") {
-          const revision = current ? current.revision + 1 : 0;
-          const applied = await upsertObject(
+          object = await upsertObject(
             client,
             ownerId,
             op.mutation.object,
-            revision,
+            current ? current.revision + 1 : 0,
           );
-          await insertOperationRow(client, ownerId, op, "applied", null);
-          await touchNote(client, ownerId, op.noteId);
-          return ack(op, "applied", applied);
+        } else if (current) {
+          await deleteObject(client, ownerId, op.objectId);
         }
-        const existed = await deleteObject(client, ownerId, op.objectId);
-        await insertOperationRow(client, ownerId, op, "applied", null);
-        if (existed) {
-          await touchNote(client, ownerId, op.noteId);
+        currentObjects.set(op.objectId, object);
+        if (object || current)
+          noteEdits.set(op.noteId, (noteEdits.get(op.noteId) ?? 0) + 1);
+        result = ack(op, "applied", {
+          object: object ?? undefined,
+          resultRevision: object?.revision ?? 0,
+        });
+        let change = changes.get(op.noteId);
+        if (!change) {
+          change = { operationId: op.id, objects: new Map() };
+          changes.set(op.noteId, change);
         }
-        return ack(op, "applied");
+        change.objects.set(op.objectId, object);
+      } else {
+        const conflictId = await insertConflictRow(
+          client,
+          ownerId,
+          op,
+          toConflictRecord(current, op),
+        );
+        noteEdits.set(op.noteId, (noteEdits.get(op.noteId) ?? 0) + 1);
+        result = ack(op, "conflict", {
+          object: current ?? undefined,
+          conflictId,
+        });
       }
-
-      // Conflict: keep complete base and incoming versions; the owner resolves explicitly later.
-      const conflictRecord = toConflictRecord(current, op);
-      const conflictId = await insertConflictRow(
+      const status = result.status === "conflict" ? "conflict" : "applied";
+      const conflictId = result.conflictId ?? null;
+      const revision = result.resultRevision ?? null;
+      await insertOperationRow(
         client,
         ownerId,
         op,
-        conflictRecord,
+        status,
+        conflictId,
+        revision,
       );
-      await insertOperationRow(client, ownerId, op, "conflict", conflictId);
-      await touchNote(client, ownerId, op.noteId);
-      return ack(op, "conflict", current ?? undefined, conflictId);
-    });
-    // Broadcast after commit so other devices converge within the sync latency budget.
-    if (result.status === "applied") {
-      broadcastToOwner(ownerId, {
-        type: "objects-changed",
-        noteId: op.noteId,
-        objects: result.object ? [result.object] : [],
-        deletedObjectIds:
-          op.mutation.type === "delete" && !result.object ? [op.objectId] : [],
-        originOperationId: op.id,
-        serverTimestamp: result.serverTimestamp,
+      recorded.set(op.id, {
+        id: op.id,
+        owner_id: ownerId,
+        note_id: op.noteId,
+        object_id: op.objectId,
+        status,
+        conflict_id: conflictId,
+        result_revision: revision,
       });
+      acks.push(result);
     }
-    return result;
-  } catch (error) {
-    // A concurrent delivery of the same operation ID hit the operations primary key;
-    // treat it as the duplicate it is instead of failing the batch.
-    if (isUniqueViolation(error)) {
-      return reackDuplicate(op, ownerId);
+
+    if (noteEdits.size > 0) {
+      await client.query(
+        `UPDATE notes SET updated_at = now(), revision = notes.revision + edits.count
+         FROM unnest($2::uuid[], $3::int[]) AS edits(id, count)
+         WHERE notes.owner_id = $1 AND notes.id = edits.id`,
+        [ownerId, [...noteEdits.keys()], [...noteEdits.values()]],
+      );
     }
-    throw error;
+    return { acks, changes };
+  });
+
+  for (const [noteId, change] of changes) {
+    broadcastToOwner(ownerId, {
+      type: "objects-changed",
+      noteId,
+      objects: [...change.objects.values()].filter((object) => object !== null),
+      deletedObjectIds: [...change.objects]
+        .filter(([, object]) => object === null)
+        .map(([id]) => id),
+      originOperationId: change.operationId,
+      serverTimestamp: new Date().toISOString(),
+    });
   }
+  return acks;
+}
+
+// Old clients predict creation at revision 1. Repair that prediction only when
+// the ledger proves this device created the unchanged object before this edit.
+async function wasCreatedByThisDevice(
+  client: PoolClient,
+  ownerId: string,
+  op: SyncOperation,
+): Promise<boolean> {
+  const { rows } = await client.query<{ matches: boolean }>(
+    `SELECT count(*) = 1 AND bool_and(
+       previous.device_id = $4 AND previous.base_revision = 0
+       AND (previous.result_revision = 0 OR previous.result_revision IS NULL)
+       AND previous.client_timestamp <= $5
+     ) AS matches
+     FROM canvas_objects AS current
+     JOIN operations AS previous
+       ON previous.owner_id = current.owner_id
+       AND previous.note_id = current.note_id
+       AND previous.object_id = current.id
+       AND previous.created_at = current.created_at
+       AND previous.status = 'applied'
+     WHERE current.owner_id = $1 AND current.note_id = $2 AND current.id = $3
+       AND current.revision = 0 AND current.updated_at = current.created_at`,
+    [ownerId, op.noteId, op.objectId, op.deviceId, op.clientTimestamp],
+  );
+  return rows[0]?.matches === true;
 }
 
 async function insertOperationRow(
-  client: import("pg").PoolClient,
+  client: PoolClient,
   ownerId: string,
   op: SyncOperation,
   status: "applied" | "conflict",
   conflictId: string | null,
+  resultRevision: number | null,
 ): Promise<void> {
   await client.query(
-    `INSERT INTO operations (id, owner_id, device_id, note_id, object_id, base_revision, client_timestamp, status, conflict_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    `INSERT INTO operations (id, owner_id, device_id, note_id, object_id, base_revision, client_timestamp, status, conflict_id, result_revision)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       op.id,
       ownerId,
@@ -236,12 +274,13 @@ async function insertOperationRow(
       op.clientTimestamp,
       status,
       conflictId,
+      resultRevision,
     ],
   );
 }
 
 async function insertConflictRow(
-  client: import("pg").PoolClient,
+  client: PoolClient,
   ownerId: string,
   op: SyncOperation,
   record: ReturnType<typeof toConflictRecord>,
