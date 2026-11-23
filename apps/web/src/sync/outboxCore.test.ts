@@ -1,15 +1,15 @@
-// These Vitest checks cover Aurora's pure outbox logic — retry backoff, due-batch selection, and acknowledgement reduction — without IndexedDB or network.
+// These Vitest checks cover Aurora's pure outbox logic — retry backoff, due-ordering and revision reconciliation — without IndexedDB or network.
 import { describe, expect, it } from "vitest";
 import type { CanvasObject, SyncAck, SyncOperation } from "@aurora/shared";
 import {
-  applyAck,
+  acknowledgedRevision,
   buildOperation,
   computeBackoffMs,
   filterChangesForPendingOperations,
   markAttemptFailed,
-  OUTBOX_BATCH_SIZE,
-  preserveLocalDraft,
-  selectDueBatch,
+  isDueObjectHead,
+  queueMutation,
+  rebaseOperation,
 } from "./outboxCore.js";
 import type { OutboxRow } from "./db.js";
 
@@ -75,34 +75,110 @@ describe("server change reconciliation", () => {
     expect(changes.objects.map((object) => object.id)).toEqual([remoteId]);
     expect(changes.deletedObjectIds).toEqual([remoteId]);
   });
+});
 
-  it("advances a newer draft revision without replacing its content", () => {
-    const objectId = "33333333-3333-4333-8333-333333333333";
-    const draft = makeRow("newer", {
-      createdAt: 2_000,
-      op: {
-        ...makeOp("newer", 2_000),
-        baseRevision: 4,
+describe("queued object edits", () => {
+  const objectId = makeOp("add", 1000).objectId;
+  const create: SyncOperation = {
+    ...makeOp("add", 1000),
+    baseRevision: 0,
+    mutation: {
+      type: "upsert",
+      object: makeObject(objectId, 0, "first stroke"),
+    },
+  };
+
+  it("sends an erase after the create with the server's actual revision zero", () => {
+    const head = { ...queueMutation(create, undefined, 1000), sent: true };
+    const erase = queueMutation(
+      { ...makeOp("erase", 1000), baseRevision: 1 },
+      head,
+      1000,
+    );
+    expect(erase.id).toBe("erase");
+    expect(erase.createdAt).toBeGreaterThan(head.createdAt);
+
+    const revision = acknowledgedRevision(create, {
+      operationId: create.id,
+      status: "applied",
+      object: makeObject(objectId, 0, "first stroke"),
+      resultRevision: 0,
+      serverTimestamp: create.clientTimestamp,
+    });
+    expect(revision).toBe(0);
+    expect(rebaseOperation(erase.op, revision!)).toMatchObject({
+      baseRevision: 0,
+      mutation: { type: "delete" },
+    });
+  });
+
+  it("keeps later edits behind a retrying head and allows other objects through", () => {
+    const head = makeRow("head", { nextAttemptAt: 2000, sent: true });
+    const successor = makeRow("successor", { createdAt: 1001 });
+    const unrelated = makeRow("other", {
+      op: { ...makeOp("other", 1002), objectId: "other-object" },
+    });
+    const seen = new Set<string>();
+    expect(
+      [head, successor, unrelated].filter((row) =>
+        isDueObjectHead(row, 1000, seen),
+      ),
+    ).toEqual([unrelated]);
+  });
+
+  it("coalesces unsent changes while preserving the first edit's base and ID", () => {
+    const first = queueMutation(create, undefined, 1000);
+    const move = {
+      ...create,
+      id: "move",
+      baseRevision: 1,
+      mutation: { type: "upsert", object: makeObject(objectId, 1, "moved") },
+    } satisfies SyncOperation;
+    expect(queueMutation(move, first, 1001)).toMatchObject({
+      id: create.id,
+      createdAt: 1000,
+      op: { id: create.id, baseRevision: 0, mutation: move.mutation },
+    });
+  });
+
+  it("rebases undo of a sent delete to zero and retains the draft content", () => {
+    const erase = makeOp("erase", 1000);
+    const revision = acknowledgedRevision(erase, {
+      operationId: erase.id,
+      status: "duplicate",
+      resultRevision: 0,
+      serverTimestamp: erase.clientTimestamp,
+    });
+    const restored = rebaseOperation(
+      {
+        ...create,
+        baseRevision: 3,
         mutation: {
           type: "upsert",
-          object: makeObject(objectId, 3, "latest local text"),
+          object: makeObject(objectId, 3, "restored"),
         },
       },
-    });
-
-    const result = preserveLocalDraft(
-      makeObject(objectId, 4, "older acknowledged text"),
-      [draft],
-      "acknowledged",
+      revision!,
     );
-
-    expect(result.object.payload).toEqual({ text: "latest local text" });
-    expect(result.object.revision).toBe(4);
-    expect(result.updatedRow?.op.baseRevision).toBe(4);
-    expect(result.updatedRow?.op.mutation).toEqual({
-      type: "upsert",
-      object: result.object,
+    expect(restored).toMatchObject({
+      baseRevision: 0,
+      mutation: { object: { revision: 0, payload: { text: "restored" } } },
     });
+  });
+
+  it("uses the original revision on retry even if another device has edited the object", () => {
+    const laterServerObject = makeObject(objectId, 3, "other device edit");
+    const ack: SyncAck = {
+      operationId: create.id,
+      status: "duplicate",
+      object: laterServerObject,
+      resultRevision: 0,
+      serverTimestamp: create.clientTimestamp,
+    };
+    expect(acknowledgedRevision(create, ack)).toBe(0);
+    expect(
+      acknowledgedRevision(create, { ...ack, status: "conflict" }),
+    ).toBeUndefined();
   });
 });
 
@@ -119,26 +195,6 @@ describe("computeBackoffMs", () => {
   });
 });
 
-describe("selectDueBatch", () => {
-  it("returns only due rows in enqueue order and respects the batch size", () => {
-    const rows = [
-      makeRow("a", { createdAt: 3 }),
-      makeRow("b", { createdAt: 1 }),
-      makeRow("c", { createdAt: 2, nextAttemptAt: 5_000 }),
-      makeRow("d", { createdAt: 4, status: "conflict" }),
-      ...Array.from({ length: OUTBOX_BATCH_SIZE }, (_, i) =>
-        makeRow(`filler-${i}`, { createdAt: 10 + i }),
-      ),
-    ];
-    const due = selectDueBatch(rows, 2_000);
-    expect(due.length).toBe(OUTBOX_BATCH_SIZE);
-    expect(due[0]!.id).toBe("b");
-    expect(due[1]!.id).toBe("a");
-    expect(due.some((row) => row.id === "c")).toBe(false);
-    expect(due.some((row) => row.id === "d")).toBe(false);
-  });
-});
-
 describe("markAttemptFailed", () => {
   it("increments attempts and schedules the next retry with backoff", () => {
     const row = makeRow("x", { attempts: 2 });
@@ -147,57 +203,5 @@ describe("markAttemptFailed", () => {
     expect(updated.status).toBe("failed");
     expect(updated.lastError).toBe("network down");
     expect(updated.nextAttemptAt).toBe(14_000);
-  });
-});
-
-describe("applyAck", () => {
-  it("drops the operation when it was applied", () => {
-    const rows = [makeRow("a"), makeRow("b")];
-    const ack: SyncAck = {
-      operationId: "a",
-      status: "applied",
-      serverTimestamp: new Date().toISOString(),
-    };
-    const result = applyAck(rows, ack);
-    expect(result.ackedIds).toEqual(["a"]);
-    expect(result.remaining.map((row) => row.id)).toEqual(["b"]);
-  });
-
-  it("drops the operation when it was a duplicate (idempotent replay)", () => {
-    const rows = [makeRow("a")];
-    const ack: SyncAck = {
-      operationId: "a",
-      status: "duplicate",
-      serverTimestamp: new Date().toISOString(),
-    };
-    expect(applyAck(rows, ack).remaining).toEqual([]);
-  });
-
-  it("parks the operation instead of retrying when it conflicts", () => {
-    const rows = [makeRow("a")];
-    const ack: SyncAck = {
-      operationId: "a",
-      status: "conflict",
-      conflictId: "44444444-4444-4444-8444-444444444444",
-      serverTimestamp: new Date().toISOString(),
-    };
-    const result = applyAck(rows, ack);
-    expect(result.ackedIds).toEqual([]);
-    expect(result.remaining[0]!.status).toBe("conflict");
-    expect(selectDueBatch(result.remaining, Number.MAX_SAFE_INTEGER)).toEqual(
-      [],
-    );
-  });
-
-  it("leaves the queue untouched for unknown operation IDs", () => {
-    const rows = [makeRow("a")];
-    const ack: SyncAck = {
-      operationId: "99999999-9999-4999-8999-999999999999",
-      status: "applied",
-      serverTimestamp: new Date().toISOString(),
-    };
-    const result = applyAck(rows, ack);
-    expect(result.ackedIds).toEqual([]);
-    expect(result.remaining).toHaveLength(1);
   });
 });

@@ -13,6 +13,13 @@ const object = makeCanvasObject({
 });
 
 describe("live draft reconciliation", () => {
+  it("recognizes a newly created object's acknowledgement at revision zero", () => {
+    expect(reconcileObject(object, { ...object }, object)).toEqual({
+      object,
+      acknowledged: true,
+    });
+  });
+
   it("preserves rapid backspaces through older acknowledgements, then accepts the latest save", () => {
     const draft = { ...object, payload: { doc: { text: "he" } } };
     const older = {

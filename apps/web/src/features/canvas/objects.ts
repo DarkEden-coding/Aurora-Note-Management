@@ -399,14 +399,25 @@ export function hitTestTopmostStroke(
   objects: CanvasObject[],
   p: Point,
   tolerance: number,
+  excluded?: Pick<ReadonlySet<string>, "has">,
 ): CanvasObject | null {
   let best: CanvasObject | null = null;
   for (const object of objects) {
-    if (object.kind !== "stroke" || object.locked) continue;
-    const points = getStrokePoints(object);
+    if (object.kind !== "stroke" || object.locked || excluded?.has(object.id))
+      continue;
     const reach = isHighlighterStroke(object)
       ? tolerance + getStrokeBaseWidth(object) / 2
       : tolerance;
+    const { x, y, width, height } = object.bounds;
+    if (
+      p.x < x - reach ||
+      p.x > x + width + reach ||
+      p.y < y - reach ||
+      p.y > y + height + reach
+    ) {
+      continue;
+    }
+    const points = getStrokePoints(object);
     const hit = points.some((point, index) => {
       const previous = points[index - 1];
       return previous === undefined

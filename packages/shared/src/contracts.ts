@@ -90,10 +90,14 @@ export const syncOperationSchema = z.object({
   ]),
 });
 
+export const SYNC_REQUEST_BODY_LIMIT = 8 * 1024 * 1024;
+
 export const syncAckSchema = z.object({
   operationId: idSchema,
   status: z.enum(["applied", "duplicate", "conflict"]),
   object: canvasObjectSchema.optional(),
+  // The revision originally produced by this operation, even on a retry.
+  resultRevision: z.number().int().nonnegative().optional(),
   conflictId: idSchema.optional(),
   serverTimestamp: isoDateSchema,
 });

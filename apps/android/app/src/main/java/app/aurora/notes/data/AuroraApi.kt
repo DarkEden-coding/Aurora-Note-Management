@@ -160,6 +160,7 @@ class AuroraApi(private val settings: Settings) {
 
     suspend fun sendOperations(operations: List<SyncOperation>): List<SyncAck> {
         val body = buildJsonObject {
+            put("orderedEdits", true)
             put("operations", AuroraJson.encodeToJsonElement(
                 kotlinx.serialization.builtins.ListSerializer(SyncOperation.serializer()), operations,
             ))

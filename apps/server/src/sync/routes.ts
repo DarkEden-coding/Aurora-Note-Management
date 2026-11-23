@@ -9,6 +9,7 @@ import { broadcastToOwner } from "./ws.js";
 import {
   deleteObject,
   loadObjectForUpdate,
+  lockNotesForCanvasWrite,
   touchNote,
   upsertObject,
 } from "../canvas/objects.js";
@@ -17,6 +18,7 @@ import type { DeleteMarker } from "./classify.js";
 
 const ingestBodySchema = z.object({
   operations: z.array(syncOperationSchema).min(1),
+  orderedEdits: z.literal(true).optional(),
 });
 
 const resolveBodySchema = z.object({
@@ -39,8 +41,12 @@ export function registerSyncRoutes(app: FastifyInstance): void {
   const preHandler = ownerPreHandler();
 
   app.post("/api/sync/operations", { preHandler }, async (request) => {
-    const { operations } = ingestBodySchema.parse(request.body);
-    const acks = await ingestOperations(request.ownerId!, operations);
+    const { operations, orderedEdits } = ingestBodySchema.parse(request.body);
+    const acks = await ingestOperations(
+      request.ownerId!,
+      operations,
+      !orderedEdits,
+    );
     return { acks, serverTimestamp: new Date().toISOString() };
   });
 
@@ -92,6 +98,7 @@ export function registerSyncRoutes(app: FastifyInstance): void {
         if (!row) throw notFound("Conflict");
         if (row.resolved_at) throw invalid("Conflict is already resolved");
 
+        await lockNotesForCanvasWrite(client, row.owner_id, [row.note_id]);
         const current = await loadObjectForUpdate(
           client,
           row.owner_id,

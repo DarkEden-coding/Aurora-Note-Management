@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Fastify from "fastify";
+import { SYNC_REQUEST_BODY_LIMIT } from "@aurora/shared";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
@@ -45,7 +46,7 @@ export async function buildServer(
   const app = Fastify({
     logger: options.logger ?? false,
     trustProxy: true,
-    bodyLimit: 8_388_608,
+    bodyLimit: SYNC_REQUEST_BODY_LIMIT,
   });
 
   registerOriginGuard(app, env);

@@ -51,11 +51,17 @@ class CanvasDocument(
     }
 
     /** Applies server changes, leaving objects in the protected set untouched. */
-    fun applyRemote(objects: List<CanvasObject>, deletedIds: List<String>, protectedIds: Set<String>) {
+    fun applyRemote(objects: List<CanvasObject>, deletedIds: List<String>, protectedIds: Set<String>, localAcknowledgement: Boolean = false) {
         var any = false
         for (o in objects) {
-            if (o.id in protectedIds) continue
             val current = byId[o.id]
+            if (localAcknowledgement) {
+                if (current != null && o.revision >= current.revision) {
+                    byId[o.id] = current.copy(revision = o.revision, createdAt = o.createdAt)
+                }
+                continue
+            }
+            if (o.id in protectedIds) continue
             if (current == null || o.revision >= current.revision) {
                 current?.let { dirty += it.bounds }
                 dirty += o.bounds
@@ -105,7 +111,7 @@ class CanvasDocument(
         to.forEach { t -> byId[t.id]?.let { dirty += it.bounds }; dirty += t.bounds }
         val upserts = to.map { target ->
             // Keep the current revision so the server sees an edit of the latest version.
-            val revision = byId[target.id]?.revision ?: target.revision
+            val revision = byId[target.id]?.revision ?: 0
             target.copy(revision = revision, updatedAt = now).also { byId[it.id] = it }
         }
         changed()

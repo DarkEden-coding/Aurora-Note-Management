@@ -1,5 +1,5 @@
 // This component hosts the canvas feature for the selected note. It bridges the
-// canvas to the sync layer: editing operations flow through enqueueObjectMutation
+// canvas to the sync layer: editing operations flow through enqueueObjectMutations
 // (durable outbox + local cache) and the note's canvas mode comes from the library
 // cache. Viewport rendering, modes, culling, and object editing stay in the canvas.
 // When the note has a practice session, the practice bar sits below the canvas
@@ -14,7 +14,7 @@ import {
 import type { SyncOperation } from "@aurora/shared";
 import type { Background, CanvasMode, DrawingPalette } from "@aurora/shared";
 import { syncEngine } from "../sync/engine.js";
-import { enqueueObjectMutation } from "../sync/outbox.js";
+import { enqueueObjectMutations } from "../sync/outbox.js";
 import { useLibrary } from "../features/library/LibraryContext.js";
 
 export function MainEditor({
@@ -41,16 +41,8 @@ export function MainEditor({
       : undefined;
   const practice = usePracticeSession(noteId);
 
-  // Every coalesced canvas operation enters the durable outbox; the upserted
-  // object is already the local cache version, so acknowledgements can advance
-  // revisions locally once the server responds.
-  const handleOperation = useCallback((operation: SyncOperation) => {
-    void enqueueObjectMutation({
-      op: operation,
-      ...(operation.mutation.type === "upsert"
-        ? { upsertedObject: operation.mutation.object }
-        : {}),
-    })
+  const handleOperations = useCallback((operations: SyncOperation[]) => {
+    void enqueueObjectMutations(operations)
       .then(() => {
         setPersistenceError(null);
         syncEngine.requestFlush();
@@ -90,7 +82,7 @@ export function MainEditor({
                 onPdfImported: () => library.clearPendingPdfImport(noteId),
               }
             : {})}
-          onOperation={handleOperation}
+          onOperations={handleOperations}
           focusPage={
             practice.session !== null ? focusPageIndex(practice.session) : null
           }

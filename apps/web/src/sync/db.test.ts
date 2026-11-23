@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AuroraDb } from "./db.js";
 
 describe("offline database schema", () => {
-  it("includes project and folder stores for offline library navigation", () => {
+  it("keeps the offline library stores and indexes queued edits by object", () => {
     const database = new AuroraDb();
 
     expect(database.tables.map((table) => table.name).sort()).toEqual([
@@ -15,7 +15,7 @@ describe("offline database schema", () => {
       "outbox",
       "projects",
     ]);
-    expect(database.verno).toBe(2);
+    expect(database.outbox.schema.idxByName.objectId).toBeDefined();
     database.close();
   });
 });
